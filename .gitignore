@@ -1,0 +1,24 @@
+# Credenciais
+.env
+
+# Backup local do sistema de login antes da migração para Postgres (contém hashes de senha reais)
+data/
+
+# Configuração local do Claude Code
+.claude/
+
+# Dependências
+node_modules/
+
+# Build
+dist/
+public/*.js
+public/*.js.map
+
+# Cobertura de testes
+coverage/
+
+# Diversos
+*.log
+.DS_Store
+Thumbs.db

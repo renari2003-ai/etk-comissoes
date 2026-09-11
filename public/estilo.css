@@ -1,0 +1,1550 @@
+:root {
+  --cor-fundo: #f6f7fb;
+  --cor-superficie: #ffffff;
+  --cor-superficie-alt: #fbfbfd;
+  --cor-borda: #e6e8ee;
+  --cor-borda-forte: #d7dae3;
+  --cor-texto: #171b24;
+  --cor-texto-suave: #6b7280;
+  --cor-texto-fraco: #9aa1af;
+  --cor-primaria: #4640de;
+  --cor-primaria-escura: #3732b0;
+  --cor-primaria-fundo: #eeecfd;
+  --cor-positivo: #0a8a4a;
+  --cor-positivo-fundo: #e9f9f0;
+  --cor-negativo: #d1293d;
+  --cor-negativo-fundo: #fdedef;
+  --cor-alerta: #92620a;
+  --cor-alerta-fundo: #fdf3e0;
+  --cor-alerta-borda: #f0d9a6;
+  --fonte-principal: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  --raio: 10px;
+  --raio-sm: 7px;
+  --sombra-1: 0 1px 2px rgba(23, 27, 36, 0.05);
+  --sombra-2: 0 4px 16px rgba(23, 27, 36, 0.06), 0 1px 3px rgba(23, 27, 36, 0.05);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * Sem esta regra, qualquer elemento cuja classe declare `display` (grid,
+ * flex etc.) empata em especificidade com o `[hidden] { display: none }`
+ * padrão do navegador — e a regra de autor vence o empate, fazendo o
+ * elemento aparecer mesmo com o atributo `hidden` presente.
+ */
+[hidden] {
+  display: none !important;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--cor-fundo);
+  color: var(--cor-texto);
+  font-family: var(--fonte-principal);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+.rotulo-oculto {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+/* Cabeçalho */
+.cabecalho {
+  background: var(--cor-superficie);
+  border-bottom: 1px solid var(--cor-borda);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  box-shadow: var(--sombra-1);
+}
+
+.cabecalho-conteudo {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 14px 28px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.marca-logo {
+  height: 52px;
+  width: auto;
+  display: block;
+}
+
+.marca-icone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--raio-sm);
+  background: var(--cor-primaria);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.marca-texto {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.marca-titulo {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--cor-texto);
+}
+
+.marca-subtitulo {
+  font-size: 12px;
+  color: var(--cor-texto-suave);
+}
+
+.form-busca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.form-busca input[type="text"] {
+  padding: 10px 16px 10px 36px;
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: 999px;
+  font-size: 13.5px;
+  width: 250px;
+  background-color: var(--cor-superficie-alt);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23949aad' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 13px center;
+  color: var(--cor-texto);
+  box-shadow: var(--sombra-1);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-busca input[type="text"]:focus {
+  border-color: var(--cor-primaria);
+  box-shadow: 0 0 0 3px var(--cor-primaria-fundo);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--cor-primaria);
+  outline-offset: 2px;
+}
+
+.opcao-por-codigo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cor-texto-suave);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.opcao-por-codigo input[type="checkbox"] {
+  accent-color: var(--cor-primaria);
+}
+
+.form-busca button[type="submit"] {
+  padding: 10px 22px;
+  background: var(--cor-primaria);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+  box-shadow: var(--sombra-1);
+  transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+}
+
+.form-busca button[type="submit"]:hover {
+  background: var(--cor-primaria-escura);
+  box-shadow: var(--sombra-2);
+}
+
+.form-busca button[type="submit"]:active {
+  transform: translateY(1px);
+}
+
+.botao-secundario {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 13px;
+  background: var(--cor-superficie);
+  color: var(--cor-texto);
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: var(--raio-sm);
+  font-weight: 600;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.botao-secundario:hover {
+  background: var(--cor-superficie-alt);
+  border-color: var(--cor-texto-fraco);
+}
+
+/* Conteúdo */
+.conteudo {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* Linha das abas Pedidos/Orçamentos + busca (só no modo Consulta — Relatórios já tem seu próprio
+   campo "Buscar" nos filtros, então o formulário de busca de documento nunca aparece duplicado). */
+.linha-abas-e-busca {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.abas-modo {
+  display: flex;
+  gap: 3px;
+  width: fit-content;
+  padding: 4px;
+  background: var(--cor-superficie-alt);
+  border: 1px solid var(--cor-borda);
+  border-radius: 999px;
+}
+
+.aba-modo {
+  padding: 7px 18px;
+  background: none;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.aba-modo:hover {
+  color: var(--cor-texto);
+  background: var(--cor-superficie);
+}
+
+.aba-modo.aba-modo-ativa {
+  color: #fff;
+  background: var(--cor-primaria);
+  box-shadow: var(--sombra-1);
+}
+
+.aba-modo.aba-modo-ativa:hover {
+  background: var(--cor-primaria);
+}
+
+/* Filtros do relatório */
+.filtros-relatorio {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 16px 18px;
+  box-shadow: var(--sombra-1);
+}
+
+.campo-filtro {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.campo-filtro label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.campo-filtro input,
+.campo-filtro select {
+  padding: 8px 10px;
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: var(--raio-sm);
+  font-size: 13px;
+  background: var(--cor-superficie-alt);
+  color: var(--cor-texto);
+  min-width: 130px;
+}
+
+.campo-filtro-busca input {
+  min-width: 200px;
+}
+
+/* Campo de data digitável (com máscara automática) + botão de calendário ao lado. */
+.campo-data-com-calendario {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.campo-data-com-calendario input[type='text'] {
+  min-width: 100px;
+  font-variant-numeric: tabular-nums;
+}
+
+.botao-calendario {
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: var(--raio-sm);
+  background: var(--cor-superficie-alt);
+  font-size: 15px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.botao-calendario:hover {
+  background: var(--cor-primaria-fundo);
+  border-color: var(--cor-primaria);
+}
+
+/* Input de data nativo, invisível — só existe para abrir o seletor de calendário do navegador; o valor visível/editável é o campo de texto ao lado. */
+.seletor-calendario-oculto {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.botao-aplicar-filtro {
+  height: 36px;
+}
+
+.filtro-data-legenda {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--cor-texto-fraco);
+}
+
+/* Indicadores do relatório (reaproveita .metrica / .faixa-totais) */
+.relatorio-indicadores {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 14px;
+}
+
+.relatorio-area-tabela table {
+  min-width: 760px;
+}
+
+.relatorio-area-tabela thead th {
+  cursor: default;
+}
+
+/* Comissionamento: linha expansível de parcelas */
+.linha-comissionamento-clicavel {
+  cursor: pointer;
+}
+
+.badge-faturamento-parcial {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #ff8c1a 18%, transparent);
+  color: #ff8c1a;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.col-fatura-parcial {
+  font-weight: 700;
+  color: var(--cor-primaria);
+}
+
+.linha-parcelas td {
+  background: var(--cor-superficie-alt);
+  padding: 14px 16px !important;
+}
+
+.parcelas-vazio {
+  color: var(--cor-texto-suave);
+  font-style: italic;
+}
+
+/*
+ * Cada par rótulo+valor é um único item flex (não dt/dd soltos numa grid) —
+ * garante que o rótulo e o valor nunca se separam nem sobrepõem a linha
+ * vizinha quando o texto quebra em telas estreitas.
+ */
+.detalhe-calculo-comissao {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px 24px;
+  max-width: min(100%, 78vw);
+  margin: 0 0 14px 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.detalhe-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 150px;
+  max-width: 260px;
+}
+
+.detalhe-item-rotulo {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--cor-texto-suave);
+  font-weight: 700;
+}
+
+.detalhe-item-valor {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cor-texto);
+  font-variant-numeric: tabular-nums;
+}
+
+.impostos-embutidos-titulo {
+  margin: 0 0 8px 0;
+  font-size: 11px;
+  color: var(--cor-texto-fraco);
+  font-style: italic;
+}
+
+.botao-expandir-relatorio {
+  align-self: flex-end;
+  white-space: nowrap;
+}
+
+.saldo-a-faturar {
+  margin: 0 0 16px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--cor-alerta-fundo);
+  border: 1px solid var(--cor-alerta-borda);
+  color: var(--cor-alerta);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.detalhe-impostos-embutidos {
+  margin-bottom: 18px;
+}
+
+.detalhe-impostos-embutidos .detalhe-item {
+  min-width: 90px;
+}
+
+.detalhe-impostos-embutidos .detalhe-item-valor {
+  color: var(--cor-texto-suave);
+  font-weight: 500;
+}
+
+.tabela-parcelas {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.tabela-parcelas th {
+  text-align: left;
+  padding: 6px 10px;
+  color: var(--cor-texto-suave);
+  font-weight: 700;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.tabela-parcelas td {
+  padding: 6px 10px !important;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.situacao-elegivel {
+  color: var(--cor-positivo);
+  font-weight: 600;
+}
+
+.situacao-pendente {
+  color: var(--cor-alerta);
+  font-weight: 600;
+}
+
+/* Abas Pedidos / Orçamentos — separação obrigatória entre as duas categorias */
+.abas-tipo-documento {
+  display: flex;
+  gap: 4px;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 4px;
+  width: fit-content;
+  box-shadow: var(--sombra-1);
+}
+
+.aba-tipo-documento {
+  padding: 9px 16px;
+  background: none;
+  border: none;
+  border-radius: var(--raio-sm);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.aba-tipo-documento .aba-subtitulo {
+  font-weight: 500;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.aba-tipo-documento:hover {
+  background: var(--cor-superficie-alt);
+  color: var(--cor-texto);
+}
+
+.aba-tipo-documento.aba-ativa {
+  background: var(--cor-primaria);
+  color: #fff;
+}
+
+.aba-tipo-documento.aba-ativa .aba-subtitulo {
+  opacity: 0.85;
+}
+
+/* Identificação do pedido/orçamento consultado (número + cliente) */
+.cabecalho-pedido {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: -8px 0 0 0;
+  padding: 14px 18px;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.cabecalho-pedido-numero {
+  flex-shrink: 0;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--cor-texto);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.cabecalho-pedido-cliente {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.cabecalho-pedido-aviso-cliente {
+  flex-basis: 100%;
+  font-size: 11.5px;
+  color: var(--cor-texto-fraco);
+  font-style: italic;
+  overflow-wrap: anywhere;
+}
+
+.cabecalho-pedido-faturamento {
+  flex-basis: 100%;
+  padding-top: 8px;
+  margin-top: 4px;
+  border-top: 1px solid var(--cor-borda);
+}
+
+.cabecalho-pedido-faturamento-resumo {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--cor-primaria);
+}
+
+.cabecalho-pedido-notas-fiscais {
+  list-style: none;
+  margin: 4px 0 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.cabecalho-pedido-notas-fiscais li {
+  font-size: 11.5px;
+  color: var(--cor-texto-suave);
+}
+
+@media (max-width: 640px) {
+  .cabecalho-pedido {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+}
+
+.aviso-tipo-documento {
+  margin: -8px 0 0 0;
+  padding: 12px 16px;
+  border-radius: var(--raio-sm);
+  background: var(--cor-alerta-fundo);
+  border: 1px solid var(--cor-alerta-borda);
+  color: var(--cor-alerta);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Valor total do orçamento (simulação de precificação) */
+.area-valor-total-orcamento {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: linear-gradient(135deg, var(--cor-primaria-fundo) 0%, var(--cor-superficie) 70%);
+  border: 1px solid var(--cor-primaria);
+  border-radius: var(--raio);
+  padding: 16px 22px;
+  box-shadow: var(--sombra-1);
+}
+
+.valor-total-orcamento-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.valor-total-orcamento-rotulo {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--cor-texto);
+}
+
+.valor-total-orcamento-nota {
+  font-size: 11.5px;
+  color: var(--cor-texto-suave);
+}
+
+.valor-total-orcamento-valor {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--cor-primaria-escura);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Coluna de markup editável (input inline na tabela) */
+.campo-markup-editavel {
+  width: 76px;
+  padding: 5px 7px;
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: var(--raio-sm);
+  font-size: 13px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--cor-superficie-alt);
+  color: var(--cor-texto);
+}
+
+.campo-markup-editavel:focus {
+  border-color: var(--cor-primaria);
+  box-shadow: 0 0 0 3px var(--cor-primaria-fundo);
+  outline: none;
+}
+
+.campo-markup-editavel.campo-invalido {
+  border-color: var(--cor-negativo);
+  background: var(--cor-negativo-fundo);
+}
+
+.celula-markup-editavel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.erro-markup-editavel {
+  font-size: 10.5px;
+  color: var(--cor-negativo);
+  font-weight: 600;
+  white-space: normal;
+  max-width: 140px;
+  text-align: right;
+}
+
+.sem-custo-markup {
+  font-size: 11px;
+  color: var(--cor-texto-fraco);
+  white-space: nowrap;
+}
+
+/* Faixa de totais */
+.faixa-totais {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+}
+
+.metrica {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: var(--sombra-1);
+  transition: box-shadow 0.15s ease;
+}
+
+.metrica:hover {
+  box-shadow: var(--sombra-2);
+}
+
+.metrica-destaque {
+  border-color: var(--cor-primaria);
+  background: linear-gradient(180deg, var(--cor-primaria-fundo) 0%, var(--cor-superficie) 65%);
+}
+
+.metrica-rotulo {
+  font-size: 11.5px;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.metrica-valor {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.metrica-valor.positivo { color: var(--cor-positivo); }
+.metrica-valor.negativo { color: var(--cor-negativo); }
+
+/* Layout principal em duas colunas */
+.area-principal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 22px;
+  align-items: start;
+}
+
+.coluna-primaria {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.coluna-lateral {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: sticky;
+  top: 84px;
+}
+
+/* Alertas */
+.area-alertas {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alerta {
+  padding: 12px 16px;
+  border-radius: var(--raio-sm);
+  background: var(--cor-alerta-fundo);
+  border: 1px solid var(--cor-alerta-borda);
+  color: var(--cor-alerta);
+  font-size: 13px;
+}
+
+.alerta strong {
+  display: inline-block;
+  margin-right: 4px;
+}
+
+/* Resumo operacional */
+.area-resumo {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 18px 20px;
+  box-shadow: var(--sombra-1);
+}
+
+.titulo-secao {
+  font-size: 13.5px;
+  font-weight: 700;
+  margin: 0 0 12px 0;
+  color: var(--cor-texto);
+  letter-spacing: -0.01em;
+}
+
+.lista-resumo {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--cor-texto);
+}
+
+.lista-resumo li {
+  padding-left: 16px;
+  position: relative;
+  line-height: 1.45;
+}
+
+.lista-resumo li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cor-primaria);
+}
+
+/* Tabela */
+.area-tabela {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  overflow: hidden;
+  box-shadow: var(--sombra-1);
+}
+
+.area-tabela-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.area-tabela-cabecalho .titulo-secao {
+  margin: 0;
+}
+
+.area-tabela-acoes {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * Rolagem vertical interna, com altura máxima — necessário para o cabeçalho
+ * `position: sticky` funcionar (precisa de um ancestral que realmente role;
+ * sem isso, o `overflow: hidden` do card ao redor "engoliria" o sticky).
+ */
+.tabela-rolagem {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 65vh;
+}
+
+/* Modo expandido: a área da tabela ocupa a tela inteira, sobrepondo o restante da interface. */
+.area-tabela-expandida {
+  position: fixed;
+  inset: 14px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  max-height: none;
+}
+
+.area-tabela-expandida .tabela-rolagem {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* Remove o teto de 65vh da rolagem normal — em tela cheia a área deve ocupar
+     todo o espaço disponível no overlay, não ficar presa a uma fração da viewport. */
+  max-height: none;
+}
+
+body.corpo-tabela-expandida {
+  overflow: hidden;
+}
+
+.fundo-tabela-expandida {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* Tela cheia de UMA linha do relatório de comissionamento (botão "Expandir tela" ao lado do CBS) — nunca a tabela inteira. */
+.modal-linha-expandida {
+  position: fixed;
+  inset: 14px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra-2);
+  overflow: hidden;
+}
+
+.modal-linha-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--cor-borda);
+  flex: 0 0 auto;
+}
+
+.modal-linha-titulo {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--cor-texto);
+}
+
+.modal-linha-corpo {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 20px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 900px;
+}
+
+thead th {
+  text-align: left;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  color: var(--cor-texto-suave);
+  padding: 11px 16px;
+  background: var(--cor-superficie-alt);
+  border-bottom: 1px solid var(--cor-borda);
+  white-space: nowrap;
+  /* Cabeçalho fixo ao rolar os itens — acompanha o topo da área de rolagem (a janela, ou o
+     próprio container quando a tabela está no modo expandido, que tem overflow-y próprio). */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+th.col-num, td.col-num {
+  text-align: right;
+}
+
+td.col-nome {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+tbody td {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--cor-borda);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+tbody tr {
+  transition: background 0.1s ease;
+}
+
+tbody tr:hover {
+  background: var(--cor-superficie-alt);
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+tbody tr.linha-problema {
+  background: var(--cor-alerta-fundo);
+}
+
+tbody tr.linha-problema:hover {
+  background: #fbeed2;
+}
+
+.celula-produto {
+  white-space: normal;
+  min-width: 220px;
+}
+
+.codigo-produto {
+  color: var(--cor-texto-fraco);
+  font-size: 11.5px;
+  display: block;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.motivo-problema {
+  display: block;
+  font-size: 11.5px;
+  color: var(--cor-alerta);
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+/* Aviso informativo (ex.: custo estimado) — nunca um "problema", tom neutro. */
+.motivo-informativo {
+  display: block;
+  font-size: 11.5px;
+  color: var(--cor-primaria);
+  margin-top: 2px;
+  font-weight: 600;
+  font-style: italic;
+}
+
+.valor-positivo { color: var(--cor-positivo); }
+.valor-negativo { color: var(--cor-negativo); }
+
+tfoot td {
+  padding: 15px 16px;
+  font-weight: 800;
+  font-size: 15px;
+  border-top: 2px solid var(--cor-primaria);
+  background: #ffffff;
+  color: #000000;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+tfoot tr td:first-child {
+  text-transform: uppercase;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+}
+
+/* Estados vazio / erro */
+.area-vazia, .area-erro {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--cor-texto-suave);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.area-vazia-icone {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--cor-primaria-fundo);
+  color: var(--cor-primaria);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.area-erro {
+  background: var(--cor-negativo-fundo);
+  color: var(--cor-negativo);
+  border-color: #f3c3ca;
+}
+
+/* Pedidos recentes */
+.area-recentes {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 18px 20px;
+  box-shadow: var(--sombra-1);
+}
+
+.area-recentes-cabecalho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.area-recentes-cabecalho .titulo-secao {
+  margin: 0;
+}
+
+.lista-recentes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lista-recentes li {
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+.lista-recentes li:last-child {
+  border-bottom: none;
+}
+
+.recentes-vazio {
+  padding: 10px 6px;
+  color: var(--cor-texto-suave);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.recentes-nota {
+  padding: 8px 6px 2px;
+  color: var(--cor-texto-fraco);
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.item-recente {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 6px;
+  background: none;
+  border: none;
+  border-radius: var(--raio-sm);
+  text-align: left;
+  cursor: pointer;
+  color: var(--cor-texto);
+  font-size: 13px;
+  transition: background 0.12s ease;
+}
+
+.item-recente:hover {
+  background: var(--cor-superficie-alt);
+  color: var(--cor-primaria);
+}
+
+.item-recente .linha-principal {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  font-weight: 600;
+}
+
+.item-recente .valor-total {
+  font-variant-numeric: tabular-nums;
+  color: var(--cor-texto-suave);
+  font-weight: 700;
+}
+
+.item-recente .linha-secundaria {
+  font-size: 11.5px;
+  color: var(--cor-texto-fraco);
+}
+
+.item-recente .linha-status {
+  font-size: 11.5px;
+  color: var(--cor-texto-suave);
+  font-weight: 600;
+}
+
+.item-recente .linha-status.status-liberado-financeiro {
+  color: #4caf50;
+}
+
+.item-recente .linha-status.status-faturado {
+  color: #d4b106;
+}
+
+/* Indicador de carregamento */
+.indicador-carregamento {
+  /* Impede que o modo escuro automático do navegador reescreva as cores deste
+     elemento (o que estava trocando o roxo/branco por um cinza-claro sobre
+     cinza-claro ilegível) — sinaliza que a paleta aqui é deliberada. */
+  color-scheme: only light;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--cor-primaria);
+  color: #fff;
+  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: var(--raio-sm);
+  font-size: 13px;
+  box-shadow: var(--sombra-2);
+}
+
+/* Responsividade */
+@media (max-width: 1080px) {
+  .area-principal {
+    grid-template-columns: 1fr;
+  }
+  .coluna-lateral {
+    position: static;
+  }
+}
+
+@media (max-width: 860px) {
+  .faixa-totais {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .faixa-totais {
+    grid-template-columns: 1fr 1fr;
+  }
+  .metrica-valor {
+    font-size: 18px;
+  }
+  .cabecalho-conteudo {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .linha-abas-e-busca {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .form-busca {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .form-busca input[type="text"] {
+    width: 100%;
+  }
+  .conteudo {
+    padding: 16px;
+  }
+}
+
+/* Login (overlay + usuário logado no cabeçalho + "sem acesso") */
+.overlay-login {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cor-fundo);
+}
+
+.painel-login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: min(340px, 90vw);
+  padding: 28px 26px;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra-2);
+}
+
+.painel-login-logo {
+  height: 44px;
+  width: auto;
+  margin-bottom: 4px;
+}
+
+.painel-login-titulo {
+  margin: 0 0 8px 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--cor-texto);
+}
+
+.painel-login-instrucao {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  color: var(--cor-texto-suave);
+  text-align: center;
+}
+
+.painel-login label {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.painel-login input {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: var(--raio-sm);
+  font-size: 13.5px;
+  background: var(--cor-superficie-alt);
+  color: var(--cor-texto);
+}
+
+.painel-login #botao-login {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 18px;
+  background: var(--cor-primaria);
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.painel-login #botao-login:hover {
+  background: var(--cor-primaria-escura);
+}
+
+.painel-login-erro {
+  width: 100%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--raio-sm);
+  background: var(--cor-negativo-fundo);
+  color: var(--cor-negativo);
+  font-size: 12.5px;
+}
+
+.usuario-logado {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.usuario-logado-nome {
+  font-size: 12.5px;
+  color: var(--cor-texto-suave);
+  white-space: nowrap;
+}
+
+.sem-acesso {
+  max-width: 1280px;
+  margin: 40px auto;
+  padding: 0 28px;
+  text-align: center;
+  color: var(--cor-texto-suave);
+  font-size: 14px;
+}
+
+/* Painel "Usuários" (admin) */
+.painel-usuarios {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 16px 18px;
+  box-shadow: var(--sombra-1);
+  margin-bottom: 22px;
+}
+
+.form-novo-usuario {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.permissoes-convidado {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-sm);
+  padding: 10px 14px;
+  margin: 0;
+}
+
+.permissoes-convidado legend {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0 4px;
+}
+
+.permissoes-convidado label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--cor-texto);
+  white-space: nowrap;
+}
+
+.permissoes-linha {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+
+.permissoes-linha label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--cor-texto);
+  white-space: nowrap;
+}
+
+#tabela-usuarios-corpo td {
+  vertical-align: top;
+}
+
+/* Tema escuro */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cor-fundo: #0d1017;
+    --cor-superficie: #161a22;
+    --cor-superficie-alt: #1c212b;
+    --cor-borda: #262c37;
+    --cor-borda-forte: #333a47;
+    --cor-texto: #e9ecf1;
+    --cor-texto-suave: #98a1b0;
+    --cor-texto-fraco: #6d7684;
+    --cor-primaria: #7b76f5;
+    --cor-primaria-escura: #948ff7;
+    --cor-primaria-fundo: #211f3d;
+    --cor-positivo: #3ed17e;
+    --cor-positivo-fundo: #0f2a1c;
+    --cor-negativo: #ff6b6f;
+    --cor-negativo-fundo: #301617;
+    --cor-alerta: #e0ab4a;
+    --cor-alerta-fundo: #2c2411;
+    --cor-alerta-borda: #4a3a17;
+    --sombra-1: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --sombra-2: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+
+  tbody tr.linha-problema {
+    background: #241d0d;
+  }
+
+  tbody tr.linha-problema:hover {
+    background: #2c2410;
+  }
+
+  .metrica-destaque {
+    background: linear-gradient(180deg, var(--cor-primaria-fundo) 0%, var(--cor-superficie) 65%);
+  }
+}
+
+.botao-baixar-pdf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * Impressão do relatório de Comissionamento ("Baixar PDF" usa o diálogo
+ * nativo de impressão do navegador — sem dependência externa). Esconde toda
+ * a navegação/filtros e mostra só os indicadores e a tabela, sem o teto de
+ * altura/rolagem usado na tela.
+ */
+@media print {
+  .cabecalho,
+  #modo-consulta,
+  .abas-modo,
+  #modo-relatorios > .abas-tipo-documento,
+  #form-filtros-relatorio,
+  #filtro-data-legenda,
+  .botao-baixar-pdf,
+  #indicador-carregamento {
+    display: none !important;
+  }
+
+  #modo-relatorios {
+    display: block !important;
+  }
+
+  .tabela-rolagem {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .relatorio-tabela-cabecalho th,
+  #relatorio-tabela thead th {
+    position: static !important;
+  }
+
+  .area-tabela {
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relatório de Custo e Margem — Pedidos Omie</title>
+  <link rel="stylesheet" href="estilo.css" />
+</head>
+<body>
+  <header class="cabecalho">
+    <div class="cabecalho-conteudo">
+      <div class="marca">
+        <img src="logos/logos-etk-lado-a-lado.png" alt="ETK" class="marca-logo" />
+        <span class="marca-subtitulo">Custo e rentabilidade de pedidos</span>
+      </div>
+      <nav class="abas-modo" role="tablist" aria-label="Modo">
+        <button type="button" id="modo-consulta-botao" class="aba-modo aba-modo-ativa" role="tab" aria-selected="true">Consulta</button>
+        <button type="button" id="modo-relatorios-botao" class="aba-modo" role="tab" aria-selected="false">Relatórios</button>
+        <button type="button" id="modo-usuarios-botao" class="aba-modo" role="tab" aria-selected="false" hidden>Usuários</button>
+      </nav>
+      <div class="usuario-logado" id="usuario-logado" hidden>
+        <span class="usuario-logado-nome" id="usuario-logado-nome"></span>
+        <button type="button" id="botao-sair" class="botao-secundario">Sair</button>
+      </div>
+    </div>
+  </header>
+
+  <p id="sem-acesso" class="sem-acesso" hidden>
+    Nenhum acesso liberado para este usuário ainda — fale com o administrador do sistema.
+  </p>
+
+  <div class="overlay-login" id="overlay-login" hidden>
+    <form class="painel-login" id="form-login" autocomplete="off">
+      <img src="logos/logos-etk-lado-a-lado.png" alt="ETK" class="painel-login-logo" />
+      <h1 class="painel-login-titulo">Entrar</h1>
+      <label for="login-usuario">Usuário</label>
+      <input id="login-usuario" name="usuario" type="text" autocomplete="username" required />
+      <label for="login-senha">Senha</label>
+      <input id="login-senha" name="senha" type="password" autocomplete="current-password" required />
+      <p id="login-erro" class="painel-login-erro" hidden></p>
+      <button type="submit" id="botao-login">Entrar</button>
+    </form>
+
+    <form class="painel-login" id="form-definir-senha" autocomplete="off" hidden>
+      <img src="logos/logos-etk-lado-a-lado.png" alt="ETK" class="painel-login-logo" />
+      <h1 class="painel-login-titulo">Defina sua senha</h1>
+      <p class="painel-login-instrucao">Este é o seu primeiro acesso (ou sua senha foi redefinida) — escolha uma senha só sua antes de continuar.</p>
+      <label for="definir-senha-nova">Nova senha</label>
+      <input id="definir-senha-nova" name="novaSenha" type="password" autocomplete="new-password" minlength="6" required />
+      <label for="definir-senha-confirmar">Confirmar nova senha</label>
+      <input id="definir-senha-confirmar" name="confirmarSenha" type="password" autocomplete="new-password" minlength="6" required />
+      <p id="definir-senha-erro" class="painel-login-erro" hidden></p>
+      <button type="submit" id="botao-definir-senha">Salvar senha e continuar</button>
+    </form>
+  </div>
+
+  <main class="conteudo" id="modo-usuarios" hidden>
+    <section class="painel-usuarios">
+      <h2 class="titulo-secao">Novo usuário</h2>
+      <form id="form-novo-usuario" class="form-novo-usuario" autocomplete="off">
+        <div class="campo-filtro">
+          <label for="novo-usuario-nome">Nome</label>
+          <input id="novo-usuario-nome" name="nome" type="text" required />
+        </div>
+        <div class="campo-filtro">
+          <label for="novo-usuario-login">Usuário (login)</label>
+          <input id="novo-usuario-login" name="usuario" type="text" required />
+        </div>
+        <div class="campo-filtro">
+          <label for="novo-usuario-senha">Senha</label>
+          <input id="novo-usuario-senha" name="senha" type="password" minlength="6" required />
+        </div>
+        <div class="campo-filtro">
+          <label for="novo-usuario-papel">Papel</label>
+          <select id="novo-usuario-papel" name="papel">
+            <option value="convidado" selected>Convidado</option>
+            <option value="administrador">Administrador</option>
+          </select>
+        </div>
+        <fieldset id="novo-usuario-permissoes" class="permissoes-convidado">
+          <legend>Acesso liberado</legend>
+          <label><input type="checkbox" name="consultaPedidos" /> Consulta — Pedidos</label>
+          <label><input type="checkbox" name="consultaOrcamentos" /> Consulta — Orçamentos</label>
+          <label><input type="checkbox" name="relatorioVendas" /> Relatórios — Vendas</label>
+          <label><input type="checkbox" name="relatorioOrcamentos" /> Relatórios — Orçamentos</label>
+          <label><input type="checkbox" name="relatorioComissionamento" /> Relatórios — Comissionamento</label>
+        </fieldset>
+        <button type="submit" class="botao-secundario">Criar usuário</button>
+        <p id="novo-usuario-erro" class="painel-login-erro" hidden></p>
+      </form>
+    </section>
+
+    <section class="area-tabela">
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Usuários cadastrados</h2>
+      </div>
+      <div class="tabela-rolagem">
+        <table id="tabela-usuarios">
+          <thead>
+            <tr>
+              <th scope="col">Nome</th>
+              <th scope="col">Usuário</th>
+              <th scope="col">Papel</th>
+              <th scope="col">Acesso liberado</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="tabela-usuarios-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <main class="conteudo" id="modo-consulta">
+    <div class="linha-abas-e-busca">
+      <nav class="abas-tipo-documento" role="tablist" aria-label="Categoria de documento">
+        <button type="button" id="aba-pedidos" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">
+          Pedidos <span class="aba-subtitulo">— Compras Concretas</span>
+        </button>
+        <button type="button" id="aba-orcamentos" class="aba-tipo-documento" role="tab" aria-selected="false">
+          Orçamentos <span class="aba-subtitulo">— Intenções de Compra</span>
+        </button>
+      </nav>
+      <form id="form-busca" class="form-busca" autocomplete="off">
+        <label for="campo-identificador" class="rotulo-oculto">Número do documento</label>
+        <input
+          id="campo-identificador"
+          name="identificador"
+          type="text"
+          placeholder="Buscar pelo número…"
+          inputmode="text"
+        />
+        <label class="opcao-por-codigo">
+          <input id="campo-por-codigo" type="checkbox" />
+          Código interno
+        </label>
+        <button type="submit" id="botao-consultar">Consultar</button>
+      </form>
+    </div>
+    <section id="cabecalho-pedido" class="cabecalho-pedido" hidden aria-live="polite">
+      <span class="cabecalho-pedido-numero" id="cabecalho-pedido-numero"></span>
+      <span class="cabecalho-pedido-cliente" id="cabecalho-pedido-cliente"></span>
+      <span class="cabecalho-pedido-aviso-cliente" id="cabecalho-pedido-aviso-cliente" hidden></span>
+      <div class="cabecalho-pedido-faturamento" id="cabecalho-pedido-faturamento" hidden>
+        <span class="cabecalho-pedido-faturamento-resumo" id="cabecalho-pedido-faturamento-resumo"></span>
+        <ul class="cabecalho-pedido-notas-fiscais" id="cabecalho-pedido-notas-fiscais"></ul>
+      </div>
+    </section>
+
+    <p id="aviso-tipo-documento" class="aviso-tipo-documento" hidden></p>
+
+    <section id="faixa-totais" class="faixa-totais" hidden aria-live="polite">
+      <div class="metrica">
+        <span class="metrica-rotulo">Receita do pedido</span>
+        <span class="metrica-valor" id="valor-receita">—</span>
+      </div>
+      <div class="metrica">
+        <span class="metrica-rotulo">Custo do pedido</span>
+        <span class="metrica-valor" id="valor-custo">—</span>
+      </div>
+      <div class="metrica metrica-destaque" id="metrica-margem">
+        <span class="metrica-rotulo">Margem em reais</span>
+        <span class="metrica-valor" id="valor-margem">—</span>
+      </div>
+      <div class="metrica" id="metrica-margem-venda">
+        <span class="metrica-rotulo">Margem sobre a venda</span>
+        <span class="metrica-valor" id="valor-margem-venda">—</span>
+      </div>
+      <div class="metrica" id="metrica-markup">
+        <span class="metrica-rotulo">Markup sobre o custo</span>
+        <span class="metrica-valor" id="valor-markup">—</span>
+      </div>
+    </section>
+
+    <section id="area-valor-total-orcamento" class="area-valor-total-orcamento" hidden aria-live="polite">
+      <div class="valor-total-orcamento-texto">
+        <span class="valor-total-orcamento-rotulo">Valor total do orçamento (simulação de venda)</span>
+        <span class="valor-total-orcamento-nota">Calculado a partir do markup editável de cada item — não é enviado à Omie.</span>
+      </div>
+      <span class="valor-total-orcamento-valor" id="valor-total-orcamento">—</span>
+    </section>
+
+    <div class="area-principal">
+      <div class="coluna-primaria">
+        <section id="area-alertas" class="area-alertas" hidden aria-live="polite"></section>
+
+        <div id="fundo-tabela-expandida" class="fundo-tabela-expandida" hidden></div>
+        <section id="area-tabela" class="area-tabela" hidden>
+          <div class="area-tabela-cabecalho">
+            <h2 class="titulo-secao" id="titulo-area-tabela">Itens do pedido</h2>
+            <div class="area-tabela-acoes">
+              <button type="button" id="botao-expandir-tabela" class="botao-secundario" aria-pressed="false">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" id="icone-expandir-tabela">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m11-5v3a2 2 0 0 1-2 2h-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span id="texto-expandir-tabela">Expandir</span>
+              </button>
+              <button type="button" id="botao-csv" class="botao-secundario">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Exportar CSV
+              </button>
+            </div>
+          </div>
+          <div class="tabela-rolagem">
+            <table id="tabela-itens">
+              <thead>
+                <tr>
+                  <th scope="col">Produto</th>
+                  <th scope="col" class="col-num">Qtd</th>
+                  <th scope="col" class="col-num">Preço unit.</th>
+                  <th scope="col" class="col-num">Receita</th>
+                  <th scope="col" class="col-num">Custo unit.</th>
+                  <th scope="col" class="col-num">Custo total</th>
+                  <th scope="col" class="col-num">Margem R$</th>
+                  <th scope="col" class="col-num">Margem s/ venda</th>
+                  <th scope="col" class="col-num">Markup s/ custo</th>
+                  <th scope="col" class="col-num coluna-precificacao" id="cabecalho-markup-editavel" hidden>Markup editável</th>
+                  <th scope="col" class="col-num coluna-precificacao" id="cabecalho-preco-venda" hidden>Preço de venda</th>
+                  <th scope="col" class="col-num coluna-precificacao" id="cabecalho-preco-total" hidden>Preço total</th>
+                  <th scope="col" class="col-num coluna-precificacao" id="cabecalho-subtotal" hidden>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody id="corpo-tabela"></tbody>
+              <tfoot id="rodape-tabela"></tfoot>
+            </table>
+          </div>
+        </section>
+
+        <section id="area-vazia" class="area-vazia">
+          <span class="area-vazia-icone" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+              <path d="M4 19V10M12 19V5M20 19V13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <p id="texto-area-vazia">Nenhum pedido carregado. Informe um número acima ou selecione um pedido recente.</p>
+        </section>
+
+        <section id="area-erro" class="area-erro" hidden role="alert"></section>
+      </div>
+
+      <aside class="coluna-lateral">
+        <section id="area-resumo" class="area-resumo" hidden>
+          <h2 class="titulo-secao">Resumo operacional</h2>
+          <ul id="lista-resumo" class="lista-resumo"></ul>
+        </section>
+
+        <section class="area-recentes">
+          <div class="area-recentes-cabecalho">
+            <h2 class="titulo-secao" id="titulo-recentes">Pedidos recentes</h2>
+            <button type="button" id="botao-carregar-recentes" class="botao-secundario">Atualizar</button>
+          </div>
+          <ul id="lista-recentes" class="lista-recentes"></ul>
+        </section>
+      </aside>
+    </div>
+  </main>
+
+  <main class="conteudo" id="modo-relatorios" hidden>
+    <nav class="abas-tipo-documento" role="tablist" aria-label="Categoria de relatório">
+      <button type="button" id="aba-relatorio-vendas" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">
+        Vendas <span class="aba-subtitulo">— Resultado Concreto</span>
+      </button>
+      <button type="button" id="aba-relatorio-orcamentos" class="aba-tipo-documento" role="tab" aria-selected="false">
+        Orçamentos <span class="aba-subtitulo">— Potencial Comercial</span>
+      </button>
+      <button type="button" id="aba-relatorio-comissionamento" class="aba-tipo-documento" role="tab" aria-selected="false">
+        Comissionamento
+      </button>
+    </nav>
+
+    <form id="form-filtros-relatorio" class="filtros-relatorio" autocomplete="off">
+      <div class="campo-filtro">
+        <label for="filtro-data-de">Data inicial</label>
+        <div class="campo-data-com-calendario">
+          <input type="text" id="filtro-data-de" placeholder="dd/mm/aaaa" inputmode="numeric" maxlength="10" />
+          <button type="button" id="filtro-data-de-calendario-botao" class="botao-calendario" aria-label="Escolher data inicial no calendário">📅</button>
+          <input type="date" id="filtro-data-de-calendario" class="seletor-calendario-oculto" tabindex="-1" aria-hidden="true" />
+        </div>
+      </div>
+      <div class="campo-filtro">
+        <label for="filtro-data-ate">Data final</label>
+        <div class="campo-data-com-calendario">
+          <input type="text" id="filtro-data-ate" placeholder="dd/mm/aaaa" inputmode="numeric" maxlength="10" />
+          <button type="button" id="filtro-data-ate-calendario-botao" class="botao-calendario" aria-label="Escolher data final no calendário">📅</button>
+          <input type="date" id="filtro-data-ate-calendario" class="seletor-calendario-oculto" tabindex="-1" aria-hidden="true" />
+        </div>
+      </div>
+      <div class="campo-filtro campo-filtro-vendedor">
+        <label for="filtro-vendedor">Vendedor</label>
+        <select id="filtro-vendedor">
+          <option value="">Todos os vendedores</option>
+        </select>
+      </div>
+      <div class="campo-filtro campo-filtro-busca">
+        <label for="filtro-busca">Buscar</label>
+        <input type="text" id="filtro-busca" placeholder="Nº, cliente ou vendedor…" />
+      </div>
+      <button type="submit" class="botao-secundario botao-aplicar-filtro">Aplicar filtros</button>
+      <button type="button" id="botao-baixar-pdf-comissao" class="botao-secundario botao-baixar-pdf" hidden>Baixar PDF</button>
+    </form>
+    <p id="filtro-data-legenda" class="filtro-data-legenda">
+      Período filtrado pela <strong>data de previsão do pedido</strong> informada na Omie.
+    </p>
+
+    <p id="relatorio-aviso" class="aviso-tipo-documento" hidden></p>
+
+    <section id="relatorio-indicadores" class="relatorio-indicadores" hidden aria-live="polite"></section>
+
+    <section id="relatorio-area-tabela" class="area-tabela relatorio-area-tabela" hidden>
+      <div class="tabela-rolagem">
+        <table id="relatorio-tabela">
+          <thead id="relatorio-tabela-cabecalho"></thead>
+          <tbody id="relatorio-tabela-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div id="relatorio-modal-linha-fundo" class="fundo-tabela-expandida" hidden></div>
+    <section id="relatorio-modal-linha" class="modal-linha-expandida" hidden>
+      <div class="modal-linha-cabecalho">
+        <span id="relatorio-modal-linha-titulo" class="modal-linha-titulo"></span>
+        <button type="button" id="relatorio-modal-linha-fechar" class="botao-secundario">Fechar</button>
+      </div>
+      <div id="relatorio-modal-linha-corpo" class="modal-linha-corpo"></div>
+    </section>
+
+    <section id="relatorio-area-vazia" class="area-vazia">
+      <span class="area-vazia-icone" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+          <path d="M4 19V10M12 19V5M20 19V13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <p id="relatorio-texto-vazio">Nenhum registro encontrado para os filtros selecionados.</p>
+    </section>
+
+    <section id="relatorio-area-erro" class="area-erro" hidden role="alert"></section>
+  </main>
+
+  <div id="indicador-carregamento" class="indicador-carregamento" hidden aria-live="polite">Carregando…</div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

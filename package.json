@@ -1,0 +1,28 @@
+{
+  "name": "relatorio-margem-omie",
+  "version": "1.0.0",
+  "description": "Aplicativo local (somente leitura) para relatório de custo e margem de pedidos de venda da Omie",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.frontend.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "npm run build && node dist/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "@types/pg": "^8.23.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}
