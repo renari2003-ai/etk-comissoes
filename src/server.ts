@@ -51,6 +51,10 @@ app.use(criarRotasRelatorios(cliente, 'PEDIDO'));
 app.use(criarRotasRelatorios(cliente, 'ORCAMENTO'));
 app.use(criarRotaComissionamento(cliente));
 
+// Rota raiz: no Vercel express.static e ignorado, entao GET / nao serve index.html.
+// Este redirect resolve — a CDN do Vercel serve /index.html como arquivo estatico.
+app.get('/', (_req, res) => { res.redirect('/index.html'); });
+
 // Arquivos estáticos (HTML/JS/CSS) — só têm efeito no servidor local tradicional: no Vercel,
 // `express.static()` é ignorado por completo, e o conteúdo de `public/**` é servido direto pela
 // CDN deles (ver docs do Express on Vercel) — sem precisar de nenhuma configuração adicional.
