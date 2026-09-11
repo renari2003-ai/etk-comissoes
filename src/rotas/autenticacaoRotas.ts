@@ -12,7 +12,7 @@ import {
   excluirUsuario,
   listarUsuarios,
   redefinirSenha,
-} from '../auth/usuarios.js';
+} from '../auth/usuariosRepositorio.js';
 import { ErroValidacao } from '../validacao.js';
 import { assincrono } from './erroHttp.js';
 

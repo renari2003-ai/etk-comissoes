@@ -14,9 +14,9 @@ import { PERMISSOES_VAZIAS } from '../../src/auth/tipos.js';
  * Tudo lido na importação do módulo, por isso cada teste reimporta com
  * `vi.resetModules()` + `import()` dinâmico depois de ajustar `process.env`.
  */
-async function importarModuloComArquivoLimpo(): Promise<typeof import('../../src/auth/usuarios.js')> {
+async function importarModuloComArquivoLimpo(): Promise<typeof import('../../src/auth/usuariosRepositorio.js')> {
   vi.resetModules();
-  return import('../../src/auth/usuarios.js');
+  return import('../../src/auth/usuariosRepositorio.js');
 }
 
 let tabelaTemp: string;

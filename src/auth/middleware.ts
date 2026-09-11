@@ -3,7 +3,7 @@ import { lerCookie, NOME_COOKIE_SESSAO } from './cookies.js';
 import { ErroNaoAutenticado, ErroSemPermissao } from './erros.js';
 import { validarSessao } from './sessoes.js';
 import type { Permissoes, UsuarioPublico } from './tipos.js';
-import { buscarPorId } from './usuarios.js';
+import { buscarPorId } from './usuariosRepositorio.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace

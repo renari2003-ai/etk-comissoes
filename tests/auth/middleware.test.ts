@@ -35,7 +35,7 @@ afterEach(async () => {
 async function montarAmbiente() {
   const { NOME_COOKIE_SESSAO } = await import('../../src/auth/cookies.js');
   const { criarSessao } = await import('../../src/auth/sessoes.js');
-  const { criarUsuario, listarUsuarios } = await import('../../src/auth/usuarios.js');
+  const { criarUsuario, listarUsuarios } = await import('../../src/auth/usuariosRepositorio.js');
   const { exigirAutenticacao, exigirPermissao, exigirAdministrador, exigirAdministradorMestre } = await import('../../src/auth/middleware.js');
   const [admin] = await listarUsuarios();
   return {
