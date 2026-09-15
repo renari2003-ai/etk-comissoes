@@ -1548,3 +1548,39 @@ tfoot tr td:first-child {
     border: none !important;
   }
 }
+
+/* Módulo de Fretes (Fase 1) — reaproveita .metrica/.tabela-rolagem/.botao-secundario/.campo-filtro já existentes; só o necessário abaixo é novo. */
+#fretes-tabela-cotacoes .linha-status,
+#fretes-tabela-propostas .linha-status {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.linha-status-positivo { background: var(--cor-positivo-fundo); color: var(--cor-positivo); }
+.linha-status-negativo { background: var(--cor-negativo-fundo); color: var(--cor-negativo); }
+.linha-status-alerta { background: var(--cor-alerta-fundo); color: var(--cor-alerta); }
+
+#fretes-tabela-propostas tr.linha-selecionada { background: var(--cor-primaria-fundo); }
+
+.painel-fechamento {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--cor-superficie-alt);
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 8px 0 16px;
+  max-width: 420px;
+}
+.painel-fechamento > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.valor-destaque-frete {
+  font-size: 20px;
+  color: var(--cor-primaria-escura);
+}

@@ -16,6 +16,7 @@ const CHAVES_PERMISSAO: Array<{ chave: keyof Permissoes; rotulo: string }> = [
   { chave: 'relatorioVendas', rotulo: 'Relatórios — Vendas' },
   { chave: 'relatorioOrcamentos', rotulo: 'Relatórios — Orçamentos' },
   { chave: 'relatorioComissionamento', rotulo: 'Relatórios — Comissionamento' },
+  { chave: 'fretes', rotulo: 'Fretes' },
 ];
 
 function el<T extends HTMLElement>(id: string): T {
@@ -48,6 +49,7 @@ export function inicializarUsuarios(): { ativar: () => void } {
       relatorioVendas: false,
       relatorioOrcamentos: false,
       relatorioComissionamento: false,
+      fretes: false,
     };
   }
 

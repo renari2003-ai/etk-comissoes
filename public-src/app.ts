@@ -25,6 +25,7 @@ import {
 import { formatarMoeda, formatarPercentual } from './formatacao.js';
 import { inicializarRelatorios } from './relatorios.js';
 import { inicializarUsuarios } from './usuarios.js';
+import { inicializarFretes } from './fretes.js';
 import './auth.js';
 
 type TipoDocumento = 'PEDIDO' | 'ORCAMENTO';
@@ -1105,32 +1106,40 @@ botaoCarregarRecentes.addEventListener('click', () => {
 
 aplicarRotulosDaAba();
 
-// Modo Consulta (busca individual) vs Relatórios (visão agregada) vs Usuários (admin) — três áreas independentes da página.
+// Modo Consulta (busca individual) vs Relatórios (visão agregada) vs Usuários (admin) vs Fretes — áreas independentes da página.
 const relatorios = inicializarRelatorios();
 const usuarios = inicializarUsuarios();
+const fretes = inicializarFretes();
 const modoConsultaBotao = el<HTMLButtonElement>('modo-consulta-botao');
 const modoRelatoriosBotao = el<HTMLButtonElement>('modo-relatorios-botao');
 const modoUsuariosBotao = el<HTMLButtonElement>('modo-usuarios-botao');
+const modoFretesBotao = el<HTMLButtonElement>('modo-fretes-botao');
 const modoConsultaSecao = el<HTMLElement>('modo-consulta');
 const modoRelatoriosSecao = el<HTMLElement>('modo-relatorios');
 const modoUsuariosSecao = el<HTMLElement>('modo-usuarios');
+const modoFretesSecao = el<HTMLElement>('modo-fretes');
 
-type Modo = 'consulta' | 'relatorios' | 'usuarios';
+type Modo = 'consulta' | 'relatorios' | 'usuarios' | 'fretes';
 
 function ativarModo(modo: Modo): void {
   modoConsultaSecao.hidden = modo !== 'consulta';
   modoRelatoriosSecao.hidden = modo !== 'relatorios';
   modoUsuariosSecao.hidden = modo !== 'usuarios';
+  modoFretesSecao.hidden = modo !== 'fretes';
   modoConsultaBotao.classList.toggle('aba-modo-ativa', modo === 'consulta');
   modoConsultaBotao.setAttribute('aria-selected', String(modo === 'consulta'));
   modoRelatoriosBotao.classList.toggle('aba-modo-ativa', modo === 'relatorios');
   modoRelatoriosBotao.setAttribute('aria-selected', String(modo === 'relatorios'));
   modoUsuariosBotao.classList.toggle('aba-modo-ativa', modo === 'usuarios');
   modoUsuariosBotao.setAttribute('aria-selected', String(modo === 'usuarios'));
+  modoFretesBotao.classList.toggle('aba-modo-ativa', modo === 'fretes');
+  modoFretesBotao.setAttribute('aria-selected', String(modo === 'fretes'));
   if (modo === 'relatorios') relatorios.ativar();
   if (modo === 'usuarios') usuarios.ativar();
+  if (modo === 'fretes') fretes.ativar();
 }
 
 modoConsultaBotao.addEventListener('click', () => ativarModo('consulta'));
 modoRelatoriosBotao.addEventListener('click', () => ativarModo('relatorios'));
+modoFretesBotao.addEventListener('click', () => ativarModo('fretes'));
 modoUsuariosBotao.addEventListener('click', () => ativarModo('usuarios'));

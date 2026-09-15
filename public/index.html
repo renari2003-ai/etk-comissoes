@@ -26,6 +26,7 @@
         <button type="button" id="modo-consulta-botao" class="aba-modo aba-modo-ativa" role="tab" aria-selected="true">Consulta</button>
         <button type="button" id="modo-relatorios-botao" class="aba-modo" role="tab" aria-selected="false">Relatórios</button>
         <button type="button" id="modo-usuarios-botao" class="aba-modo" role="tab" aria-selected="false" hidden>Usuários</button>
+        <button type="button" id="modo-fretes-botao" class="aba-modo" role="tab" aria-selected="false" hidden>🚚 Fretes</button>
       </nav>
       <div class="usuario-logado" id="usuario-logado" hidden>
         <span class="usuario-logado-nome" id="usuario-logado-nome"></span>
@@ -93,6 +94,7 @@
           <label><input type="checkbox" name="relatorioVendas" /> Relatórios — Vendas</label>
           <label><input type="checkbox" name="relatorioOrcamentos" /> Relatórios — Orçamentos</label>
           <label><input type="checkbox" name="relatorioComissionamento" /> Relatórios — Comissionamento</label>
+          <label><input type="checkbox" name="fretes" /> Fretes</label>
         </fieldset>
         <button type="submit" class="botao-secundario">Criar usuário</button>
         <p id="novo-usuario-erro" class="painel-login-erro" hidden></p>
@@ -115,6 +117,254 @@
             </tr>
           </thead>
           <tbody id="tabela-usuarios-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <main class="conteudo" id="modo-fretes" hidden>
+    <nav class="abas-tipo-documento" role="tablist" aria-label="Seção de Fretes">
+      <button type="button" id="fretes-aba-dashboard" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">Dashboard</button>
+      <button type="button" id="fretes-aba-cotacoes" class="aba-tipo-documento" role="tab" aria-selected="false">Cotações</button>
+      <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
+    </nav>
+
+    <section id="fretes-secao-dashboard">
+      <section class="relatorio-indicadores" id="fretes-dashboard-indicadores" aria-live="polite"></section>
+    </section>
+
+    <section id="fretes-secao-cotacoes" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Nova cotação</h2>
+      </div>
+      <form id="fretes-form-nova-cotacao" class="filtros-relatorio" autocomplete="off">
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-pedido">Pedido Omie (nº)</label>
+          <input id="fretes-cotacao-pedido" name="pedidoOmieId" type="number" min="1" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-cliente">Cliente Omie (código)</label>
+          <input id="fretes-cotacao-cliente" name="clienteOmieId" type="number" min="1" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-vendedor">Vendedor Omie (código)</label>
+          <input id="fretes-cotacao-vendedor" name="vendedorOmieId" type="number" min="1" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-origem">Origem</label>
+          <input id="fretes-cotacao-origem" name="origem" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-cep-origem">CEP origem</label>
+          <input id="fretes-cotacao-cep-origem" name="cepOrigem" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-destino">Destino</label>
+          <input id="fretes-cotacao-destino" name="destino" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-cep-destino">CEP destino</label>
+          <input id="fretes-cotacao-cep-destino" name="cepDestino" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-peso">Peso (kg)</label>
+          <input id="fretes-cotacao-peso" name="peso" type="number" min="0" step="0.01" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-volumes">Volumes</label>
+          <input id="fretes-cotacao-volumes" name="volumes" type="number" min="0" step="1" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-valor-mercadoria">Valor da mercadoria</label>
+          <input id="fretes-cotacao-valor-mercadoria" name="valorMercadoria" type="number" min="0" step="0.01" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-cotacao-modalidade">Modalidade</label>
+          <select id="fretes-cotacao-modalidade" name="modalidade">
+            <option value="CIF" selected>CIF</option>
+            <option value="FOB">FOB</option>
+          </select>
+        </div>
+        <div class="campo-filtro campo-filtro-busca">
+          <label for="fretes-cotacao-observacoes">Observações</label>
+          <input id="fretes-cotacao-observacoes" name="observacoes" type="text" />
+        </div>
+        <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar cotação</button>
+      </form>
+      <p id="fretes-cotacao-erro" class="painel-login-erro" hidden></p>
+
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Cotações</h2>
+        <div class="campo-filtro">
+          <label for="fretes-filtro-status" class="rotulo-oculto">Status</label>
+          <select id="fretes-filtro-status">
+            <option value="">Todos os status</option>
+            <option value="RASCUNHO">Rascunho</option>
+            <option value="AGUARDANDO_PROPOSTAS">Aguardando propostas</option>
+            <option value="EM_ANALISE">Em análise</option>
+            <option value="AGUARDANDO_APROVACAO">Aguardando aprovação</option>
+            <option value="FECHADA">Fechada</option>
+            <option value="CANCELADA">Cancelada</option>
+          </select>
+        </div>
+      </div>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-cotacoes">
+          <thead>
+            <tr>
+              <th scope="col">Código</th>
+              <th scope="col">Origem → Destino</th>
+              <th scope="col">Modalidade</th>
+              <th scope="col">Status</th>
+              <th scope="col">Criada em</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-cotacoes-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="fretes-secao-detalhe" hidden>
+      <button type="button" id="fretes-detalhe-voltar" class="botao-secundario">← Voltar para Cotações</button>
+      <h2 class="titulo-secao" id="fretes-detalhe-titulo"></h2>
+      <p id="fretes-detalhe-info" class="filtro-data-legenda"></p>
+      <p id="fretes-detalhe-erro" class="painel-login-erro" hidden></p>
+
+      <section id="fretes-detalhe-form-secao">
+        <h3 class="titulo-secao">Nova proposta</h3>
+        <form id="fretes-form-nova-proposta" class="filtros-relatorio" autocomplete="off">
+          <div class="campo-filtro">
+            <label for="fretes-proposta-transportadora">Transportadora</label>
+            <select id="fretes-proposta-transportadora" name="transportadoraId" required></select>
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-proposta-custo">Custo</label>
+            <input id="fretes-proposta-custo" name="valorCusto" type="number" min="0" step="0.01" required />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-proposta-prazo">Prazo (dias)</label>
+            <input id="fretes-proposta-prazo" name="prazoDias" type="number" min="0" step="1" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-proposta-validade">Validade</label>
+            <input id="fretes-proposta-validade" name="validade" type="date" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-proposta-servico">Serviço</label>
+            <input id="fretes-proposta-servico" name="tipoServico" type="text" placeholder="Rodoviário, expresso…" />
+          </div>
+          <div class="campo-filtro campo-filtro-busca">
+            <label for="fretes-proposta-observacoes">Observações</label>
+            <input id="fretes-proposta-observacoes" name="observacoes" type="text" />
+          </div>
+          <button type="submit" class="botao-secundario botao-aplicar-filtro">Adicionar proposta</button>
+        </form>
+        <p id="fretes-proposta-erro" class="painel-login-erro" hidden></p>
+      </section>
+
+      <h3 class="titulo-secao">Comparação de propostas</h3>
+      <p class="filtro-data-legenda">A comparação é só informativa — a escolha da proposta é sempre manual.</p>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-propostas">
+          <thead>
+            <tr>
+              <th scope="col">Transportadora</th>
+              <th scope="col" class="col-num">Custo</th>
+              <th scope="col">Prazo</th>
+              <th scope="col">Validade</th>
+              <th scope="col">Serviço</th>
+              <th scope="col">Status</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-propostas-corpo"></tbody>
+        </table>
+      </div>
+
+      <section id="fretes-painel-fechamento" hidden>
+        <h3 class="titulo-secao">Fechamento do frete</h3>
+        <div class="painel-fechamento" id="fretes-fechamento-resumo"></div>
+        <form id="fretes-form-fechamento" autocomplete="off">
+          <div class="campo-filtro">
+            <label>
+              <input type="radio" name="modoCalculo" value="PERCENTUAL" checked /> Informar percentual de acréscimo
+            </label>
+          </div>
+          <div class="campo-filtro" id="fretes-fechamento-campo-percentual">
+            <label for="fretes-fechamento-percentual">Acréscimo (%)</label>
+            <input id="fretes-fechamento-percentual" name="percentualAcrescimo" type="number" min="0" step="0.01" value="0" />
+          </div>
+          <div class="campo-filtro">
+            <label>
+              <input type="radio" name="modoCalculo" value="VALOR_FINAL" /> Informar valor final para o cliente
+            </label>
+          </div>
+          <div class="campo-filtro" id="fretes-fechamento-campo-valor-final" hidden>
+            <label for="fretes-fechamento-valor-final">Valor final para o cliente</label>
+            <input id="fretes-fechamento-valor-final" name="valorFreteClienteInformado" type="number" min="0" step="0.01" />
+          </div>
+          <p id="fretes-fechamento-preview" class="filtro-data-legenda"></p>
+          <div class="campo-filtro campo-filtro-busca">
+            <label for="fretes-fechamento-observacoes">Observações do fechamento</label>
+            <input id="fretes-fechamento-observacoes" name="observacoes" type="text" />
+          </div>
+          <button type="submit" class="botao-secundario botao-aplicar-filtro">Confirmar fechamento</button>
+        </form>
+        <p id="fretes-fechamento-erro" class="painel-login-erro" hidden></p>
+      </section>
+
+      <section id="fretes-fechamento-concluido" class="painel-fechamento" hidden></section>
+    </section>
+
+    <section id="fretes-secao-transportadoras" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Nova transportadora</h2>
+      </div>
+      <form id="fretes-form-nova-transportadora" class="filtros-relatorio" autocomplete="off">
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-razao">Razão social</label>
+          <input id="fretes-transportadora-razao" name="nomeRazaoSocial" type="text" required />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-fantasia">Nome fantasia</label>
+          <input id="fretes-transportadora-fantasia" name="nomeFantasia" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-cnpj">CNPJ</label>
+          <input id="fretes-transportadora-cnpj" name="cnpj" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-email">E-mail</label>
+          <input id="fretes-transportadora-email" name="email" type="email" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-telefone">Telefone</label>
+          <input id="fretes-transportadora-telefone" name="telefone" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-contato">Contato</label>
+          <input id="fretes-transportadora-contato" name="contato" type="text" />
+        </div>
+        <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar transportadora</button>
+      </form>
+      <p id="fretes-transportadora-erro" class="painel-login-erro" hidden></p>
+
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Transportadoras cadastradas</h2>
+      </div>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-transportadoras">
+          <thead>
+            <tr>
+              <th scope="col">Razão social</th>
+              <th scope="col">CNPJ</th>
+              <th scope="col">Contato</th>
+              <th scope="col">Status</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-transportadoras-corpo"></tbody>
         </table>
       </div>
     </section>

@@ -6,6 +6,7 @@ const CHAVES_PERMISSAO = [
     { chave: 'relatorioVendas', rotulo: 'Relatórios — Vendas' },
     { chave: 'relatorioOrcamentos', rotulo: 'Relatórios — Orçamentos' },
     { chave: 'relatorioComissionamento', rotulo: 'Relatórios — Comissionamento' },
+    { chave: 'fretes', rotulo: 'Fretes' },
 ];
 function el(id) {
     const elemento = document.getElementById(id);
@@ -34,6 +35,7 @@ export function inicializarUsuarios() {
             relatorioVendas: false,
             relatorioOrcamentos: false,
             relatorioComissionamento: false,
+            fretes: false,
         };
     }
     function atualizarVisibilidadePermissoes() {

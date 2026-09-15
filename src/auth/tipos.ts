@@ -11,6 +11,8 @@ export interface Permissoes {
   relatorioVendas: boolean;
   relatorioOrcamentos: boolean;
   relatorioComissionamento: boolean;
+  /** Módulo de Fretes (Fase 1, 2026-09-15) — cotação/transportadoras/propostas/fechamento. Chave nova, aditiva: usuários existentes simplesmente começam com `false` (opt-in). */
+  fretes: boolean;
 }
 
 export const PERMISSOES_VAZIAS: Permissoes = {
@@ -19,6 +21,7 @@ export const PERMISSOES_VAZIAS: Permissoes = {
   relatorioVendas: false,
   relatorioOrcamentos: false,
   relatorioComissionamento: false,
+  fretes: false,
 };
 
 export interface Usuario {

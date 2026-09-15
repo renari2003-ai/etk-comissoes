@@ -9,6 +9,7 @@ import { criarRotasRelatorios } from './rotas/relatoriosRotas.js';
 import { criarRotaComissionamento } from './rotas/comissionamento.js';
 import { criarRotaVendedores } from './rotas/vendedores.js';
 import { criarRotaCache } from './rotas/cache.js';
+import { criarRotaFretes } from './rotas/fretes.js';
 import { criarRotaSaude } from './rotas/saude.js';
 import { tratadorDeErros } from './rotas/erroHttp.js';
 
@@ -50,6 +51,9 @@ app.use(criarRotasDocumentos(cliente, 'ORCAMENTO'));
 app.use(criarRotasRelatorios(cliente, 'PEDIDO'));
 app.use(criarRotasRelatorios(cliente, 'ORCAMENTO'));
 app.use(criarRotaComissionamento(cliente));
+// Módulo de Fretes (Fase 1, 2026-09-15) — isolado: tabelas/rotas/permissão próprias, nunca
+// toca em comissão/relatórios/Omie existentes (ver src/fretes/**).
+app.use(criarRotaFretes());
 
 // Rota raiz: no Vercel express.static e ignorado, entao GET / nao serve index.html.
 // Este redirect resolve — a CDN do Vercel serve /index.html como arquivo estatico.

@@ -33,6 +33,7 @@ const usuarioLogadoBox = el('usuario-logado');
 const usuarioLogadoNome = el('usuario-logado-nome');
 const botaoSair = el('botao-sair');
 const modoUsuariosBotao = el('modo-usuarios-botao');
+const modoFretesBotao = el('modo-fretes-botao');
 const modoConsultaBotao = el('modo-consulta-botao');
 const modoRelatoriosBotao = el('modo-relatorios-botao');
 const semAcesso = el('sem-acesso');
@@ -81,9 +82,11 @@ function aplicarPermissoes(usuarioLogado) {
     modoConsultaSecao.hidden = false; // pode ter sido escondida por um mostrarSemAcesso() de uma sessão anterior (ex.: admin trocou permissões e a página recarregou)
     if (usuarioLogado.papel === 'administrador') {
         modoUsuariosBotao.hidden = false;
+        modoFretesBotao.hidden = false;
         return; // acesso total — nada pra esconder
     }
     const p = usuarioLogado.permissoes;
+    modoFretesBotao.hidden = !p.fretes;
     const secoesPorId = [
         ['aba-pedidos', p.consultaPedidos],
         ['aba-orcamentos', p.consultaOrcamentos],

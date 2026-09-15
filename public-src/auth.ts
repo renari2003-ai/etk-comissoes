@@ -16,6 +16,8 @@ export interface Permissoes {
   relatorioVendas: boolean;
   relatorioOrcamentos: boolean;
   relatorioComissionamento: boolean;
+  /** Módulo de Fretes (Fase 1) — cotação/transportadoras/propostas/fechamento. */
+  fretes: boolean;
 }
 
 export interface UsuarioLogado {
@@ -60,6 +62,7 @@ const usuarioLogadoBox = el<HTMLElement>('usuario-logado');
 const usuarioLogadoNome = el<HTMLElement>('usuario-logado-nome');
 const botaoSair = el<HTMLButtonElement>('botao-sair');
 const modoUsuariosBotao = el<HTMLButtonElement>('modo-usuarios-botao');
+const modoFretesBotao = el<HTMLButtonElement>('modo-fretes-botao');
 const modoConsultaBotao = el<HTMLButtonElement>('modo-consulta-botao');
 const modoRelatoriosBotao = el<HTMLButtonElement>('modo-relatorios-botao');
 const semAcesso = el<HTMLElement>('sem-acesso');
@@ -113,10 +116,12 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
 
   if (usuarioLogado.papel === 'administrador') {
     modoUsuariosBotao.hidden = false;
+    modoFretesBotao.hidden = false;
     return; // acesso total — nada pra esconder
   }
 
   const p = usuarioLogado.permissoes;
+  modoFretesBotao.hidden = !p.fretes;
   const secoesPorId: Array<[string, boolean]> = [
     ['aba-pedidos', p.consultaPedidos],
     ['aba-orcamentos', p.consultaOrcamentos],
