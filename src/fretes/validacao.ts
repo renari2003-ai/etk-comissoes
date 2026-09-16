@@ -101,3 +101,40 @@ export function validarUuidOpcional(valor: unknown, campo: string): string | nul
   if (valor === undefined || valor === null || valor === '') return null;
   return validarUuid(valor, campo);
 }
+
+/** Fase 3.2 — usado só para o override manual de destino vindo do frontend (seção 16). */
+export interface DestinoManualInformado {
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+}
+
+/**
+ * Um override manual só é aceito se tiver ao menos CEP, ou logradouro + cidade — mesmo
+ * critério de "endereço usável" de `resolucaoDestino.ts`, aplicado aqui na borda HTTP para
+ * nunca persistir uma cotação com destino incompleto por engano (seção 29).
+ */
+export function validarDestinoManualOpcional(valor: unknown): DestinoManualInformado | null {
+  if (valor === undefined || valor === null) return null;
+  if (typeof valor !== 'object') throw new ErroValidacao('O campo "destinoOverride" deve ser um objeto.');
+  const bruto = valor as Record<string, unknown>;
+  const destino: DestinoManualInformado = {
+    cep: validarTextoOpcional(bruto.cep, 'destinoOverride.cep'),
+    logradouro: validarTextoOpcional(bruto.logradouro, 'destinoOverride.logradouro'),
+    numero: validarTextoOpcional(bruto.numero, 'destinoOverride.numero'),
+    complemento: validarTextoOpcional(bruto.complemento, 'destinoOverride.complemento'),
+    bairro: validarTextoOpcional(bruto.bairro, 'destinoOverride.bairro'),
+    cidade: validarTextoOpcional(bruto.cidade, 'destinoOverride.cidade'),
+    uf: validarTextoOpcional(bruto.uf, 'destinoOverride.uf'),
+  };
+  const temCep = destino.cep !== null;
+  const temLogradouroECidade = destino.logradouro !== null && destino.cidade !== null;
+  if (!temCep && !temLogradouroECidade) {
+    throw new ErroValidacao('O destino informado manualmente precisa de ao menos CEP, ou logradouro e cidade.');
+  }
+  return destino;
+}

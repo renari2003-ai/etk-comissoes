@@ -82,6 +82,48 @@ interface FechamentoFrete {
   criadoEm: string;
 }
 
+/** Fase 3.2 — de onde veio o destino de uma cotação importada da Omie (nunca em cotações manuais, ver `tipos.ts`). */
+type OrigemEndereco = 'PEDIDO' | 'CLIENTE_ENTREGA' | 'CLIENTE_CADASTRAL' | 'MANUAL';
+
+const ROTULOS_ORIGEM_DESTINO: Record<OrigemEndereco, string> = {
+  PEDIDO: 'Endereço específico do Pedido Omie',
+  CLIENTE_ENTREGA: 'Endereço de Entrega do Cliente Omie',
+  CLIENTE_CADASTRAL: 'Endereço Cadastral do Cliente',
+  MANUAL: 'Informado manualmente',
+};
+
+interface EnderecoDestinoOmie {
+  origem: OrigemEndereco;
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  codigoMunicipio: string | null;
+}
+
+interface PreparacaoCotacaoOmie {
+  pedidoOmieId: number;
+  pedidoOmieNumero: string;
+  clienteOmieId: number | null;
+  clienteNome: string | null;
+  vendedorOmieId: number | null;
+  destino: EnderecoDestinoOmie | null;
+  logistica: {
+    pesoBruto: number | null;
+    pesoLiquido: number | null;
+    quantidadeVolumes: number | null;
+    especieVolumes: string | null;
+    cifFobOmie: string | null;
+    transportadoraOmieCodigo: number | null;
+  };
+  itens: Array<{ codigo: string; descricao: string; quantidade: number }>;
+  valorTotalPedido: number;
+  cotacoesExistentes: Array<{ id: string; codigo: string; status: StatusCotacao }>;
+}
+
 const ROTULOS_STATUS_COTACAO: Record<StatusCotacao, string> = {
   RASCUNHO: 'Rascunho',
   AGUARDANDO_PROPOSTAS: 'Aguardando propostas',
@@ -119,10 +161,12 @@ function numeroOuNulo(valor: FormDataEntryValue | null): number | null {
 export function inicializarFretes(): { ativar: () => void } {
   const abaDashboard = el<HTMLButtonElement>('fretes-aba-dashboard');
   const abaCotacoes = el<HTMLButtonElement>('fretes-aba-cotacoes');
+  const abaImportarOmie = el<HTMLButtonElement>('fretes-aba-importar-omie');
   const abaTransportadoras = el<HTMLButtonElement>('fretes-aba-transportadoras');
   const abaVeiculos = el<HTMLButtonElement>('fretes-aba-veiculos');
   const secaoDashboard = el<HTMLElement>('fretes-secao-dashboard');
   const secaoCotacoes = el<HTMLElement>('fretes-secao-cotacoes');
+  const secaoImportarOmie = el<HTMLElement>('fretes-secao-importar-omie');
   const secaoDetalhe = el<HTMLElement>('fretes-secao-detalhe');
   const secaoTransportadoras = el<HTMLElement>('fretes-secao-transportadoras');
   const secaoVeiculos = el<HTMLElement>('fretes-secao-veiculos');
@@ -132,16 +176,20 @@ export function inicializarFretes(): { ativar: () => void } {
   let veiculosCache: Veiculo[] = [];
   let cotacaoAtualId: string | null = null;
   let modalidadeExecucaoAtual: ModalidadeExecucao = 'TRANSPORTADORA';
+  let preparacaoOmieAtual: PreparacaoCotacaoOmie | null = null;
+  let numeroPedidoOmieAtual: string | null = null;
 
-  type SubAba = 'dashboard' | 'cotacoes' | 'detalhe' | 'transportadoras' | 'veiculos';
+  type SubAba = 'dashboard' | 'cotacoes' | 'importar-omie' | 'detalhe' | 'transportadoras' | 'veiculos';
   function mostrarSubAba(sub: SubAba): void {
     secaoDashboard.hidden = sub !== 'dashboard';
     secaoCotacoes.hidden = sub !== 'cotacoes';
+    secaoImportarOmie.hidden = sub !== 'importar-omie';
     secaoDetalhe.hidden = sub !== 'detalhe';
     secaoTransportadoras.hidden = sub !== 'transportadoras';
     secaoVeiculos.hidden = sub !== 'veiculos';
     abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
     abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
+    abaImportarOmie.classList.toggle('aba-ativa', sub === 'importar-omie');
     abaTransportadoras.classList.toggle('aba-ativa', sub === 'transportadoras');
     abaVeiculos.classList.toggle('aba-ativa', sub === 'veiculos');
   }
@@ -337,23 +385,25 @@ export function inicializarFretes(): { ativar: () => void } {
     }
   }
 
-  /** Só veículos ATIVOS aparecem para seleção em novas cotações/entregas (seção 18). */
+  /** Só veículos ATIVOS aparecem para seleção em novas cotações/entregas (seção 18). Preenche os dois selects (manual e importação Omie). */
   function renderizarSelectVeiculos(): void {
-    const select = document.getElementById('fretes-cotacao-veiculo') as HTMLSelectElement | null;
-    if (select === null) return;
-    const valorAtual = select.value;
-    select.textContent = '';
-    const optPlaceholder = document.createElement('option');
-    optPlaceholder.value = '';
-    optPlaceholder.textContent = 'Selecione…';
-    select.appendChild(optPlaceholder);
-    for (const v of veiculosCache.filter((x) => x.ativo)) {
-      const option = document.createElement('option');
-      option.value = v.id;
-      option.textContent = v.placa ? `${v.descricao} (${v.placa})` : v.descricao;
-      select.appendChild(option);
+    for (const idSelect of ['fretes-cotacao-veiculo', 'fretes-importar-veiculo']) {
+      const select = document.getElementById(idSelect) as HTMLSelectElement | null;
+      if (select === null) continue;
+      const valorAtual = select.value;
+      select.textContent = '';
+      const optPlaceholder = document.createElement('option');
+      optPlaceholder.value = '';
+      optPlaceholder.textContent = 'Selecione…';
+      select.appendChild(optPlaceholder);
+      for (const v of veiculosCache.filter((x) => x.ativo)) {
+        const option = document.createElement('option');
+        option.value = v.id;
+        option.textContent = v.placa ? `${v.descricao} (${v.placa})` : v.descricao;
+        select.appendChild(option);
+      }
+      select.value = valorAtual;
     }
-    select.value = valorAtual;
   }
 
   const formNovoVeiculo = el<HTMLFormElement>('fretes-form-novo-veiculo');
@@ -830,6 +880,215 @@ export function inicializarFretes(): { ativar: () => void } {
     void carregarCotacoes();
   });
 
+  // --- Importar do Pedido Omie (Fase 3.2) -----------------------------------
+
+  const formBuscarPedidoOmie = el<HTMLFormElement>('fretes-form-buscar-pedido-omie');
+  const carregandoImportarOmie = el<HTMLElement>('fretes-importar-omie-carregando');
+  const erroImportarOmie = el<HTMLElement>('fretes-importar-omie-erro');
+  const previewImportarOmie = el<HTMLElement>('fretes-importar-omie-preview');
+  const avisoDuplicidade = el<HTMLElement>('fretes-importar-aviso-duplicidade');
+  const formDestinoManual = el<HTMLFormElement>('fretes-form-destino-manual');
+  const botaoAlterarDestino = el<HTMLButtonElement>('fretes-importar-botao-alterar-destino');
+  const campoVeiculoImportar = el<HTMLElement>('fretes-importar-campo-veiculo');
+  const campoMotoristaImportar = el<HTMLElement>('fretes-importar-campo-motorista');
+  const campoCustoManualImportar = el<HTMLElement>('fretes-importar-campo-custo-manual');
+  const selectVeiculoImportar = el<HTMLSelectElement>('fretes-importar-veiculo');
+  const formConfirmarImportacao = el<HTMLFormElement>('fretes-form-confirmar-importacao');
+  const erroConfirmarImportacao = el<HTMLElement>('fretes-importar-confirmar-erro');
+
+  function textoOuTraco(valor: string | null): string {
+    return valor === null || valor.trim() === '' ? '—' : valor;
+  }
+
+  function linhaInfo(container: HTMLElement, rotulo: string, valor: string): void {
+    const div = document.createElement('div');
+    const spanRotulo = document.createElement('span');
+    spanRotulo.className = 'metrica-rotulo';
+    spanRotulo.textContent = rotulo;
+    const spanValor = document.createElement('span');
+    spanValor.className = 'metrica-valor';
+    spanValor.textContent = valor;
+    div.appendChild(spanRotulo);
+    div.appendChild(spanValor);
+    container.appendChild(div);
+  }
+
+  /** Mostra só os campos relevantes pra cada modalidade — mesmo padrão do formulário manual de cotação (seção 13/15/16). */
+  function atualizarCamposImportarPorModalidadeExecucao(): void {
+    const modalidade = (document.querySelector('#fretes-importar-modalidade-execucao-fieldset input[name="modalidadeExecucao"]:checked') as HTMLInputElement | null)
+      ?.value as ModalidadeExecucao | undefined;
+    const ehVeiculoProprio = modalidade === 'VEICULO_PROPRIO';
+    campoVeiculoImportar.hidden = !ehVeiculoProprio;
+    campoMotoristaImportar.hidden = !ehVeiculoProprio;
+    campoCustoManualImportar.hidden = !ehVeiculoProprio;
+    selectVeiculoImportar.required = ehVeiculoProprio;
+  }
+  Array.from(document.querySelectorAll('#fretes-importar-modalidade-execucao-fieldset input[name="modalidadeExecucao"]')).forEach((radio) => {
+    radio.addEventListener('change', atualizarCamposImportarPorModalidadeExecucao);
+  });
+  atualizarCamposImportarPorModalidadeExecucao();
+
+  function preencherFormDestinoManual(destino: EnderecoDestinoOmie | null): void {
+    el<HTMLInputElement>('fretes-importar-destino-cep').value = destino?.cep ?? '';
+    el<HTMLInputElement>('fretes-importar-destino-logradouro').value = destino?.logradouro ?? '';
+    el<HTMLInputElement>('fretes-importar-destino-numero').value = destino?.numero ?? '';
+    el<HTMLInputElement>('fretes-importar-destino-complemento').value = destino?.complemento ?? '';
+    el<HTMLInputElement>('fretes-importar-destino-bairro').value = destino?.bairro ?? '';
+    el<HTMLInputElement>('fretes-importar-destino-cidade').value = destino?.cidade ?? '';
+    el<HTMLInputElement>('fretes-importar-destino-uf').value = destino?.uf ?? '';
+  }
+
+  botaoAlterarDestino.addEventListener('click', () => {
+    formDestinoManual.hidden = !formDestinoManual.hidden;
+    if (!formDestinoManual.hidden) preencherFormDestinoManual(preparacaoOmieAtual?.destino ?? null);
+  });
+
+  function renderizarPreviewImportacao(preparacao: PreparacaoCotacaoOmie): void {
+    const infoPedido = el<HTMLElement>('fretes-importar-pedido-info');
+    infoPedido.textContent = '';
+    linhaInfo(infoPedido, 'Número do pedido', preparacao.pedidoOmieNumero);
+    linhaInfo(infoPedido, 'Cliente', textoOuTraco(preparacao.clienteNome));
+    linhaInfo(infoPedido, 'Vendedor (código Omie)', preparacao.vendedorOmieId !== null ? String(preparacao.vendedorOmieId) : '—');
+    linhaInfo(infoPedido, 'Valor total do pedido', formatarMoeda(preparacao.valorTotalPedido));
+
+    if (preparacao.cotacoesExistentes.length > 0) {
+      avisoDuplicidade.textContent = `Este pedido já possui ${preparacao.cotacoesExistentes.length} cotação(ões) de frete: ${preparacao.cotacoesExistentes.map((c) => `${c.codigo} (${ROTULOS_STATUS_COTACAO[c.status]})`).join(', ')}. Você ainda pode continuar — isso é só um aviso.`;
+      avisoDuplicidade.hidden = false;
+    } else {
+      avisoDuplicidade.hidden = true;
+    }
+
+    const rotuloOrigem = el<HTMLElement>('fretes-importar-destino-origem');
+    const infoDestino = el<HTMLElement>('fretes-importar-destino-info');
+    infoDestino.textContent = '';
+    if (preparacao.destino === null) {
+      rotuloOrigem.textContent = 'Origem do destino: nenhum endereço encontrado automaticamente — informe manualmente abaixo.';
+      formDestinoManual.hidden = false;
+      preencherFormDestinoManual(null);
+    } else {
+      rotuloOrigem.textContent = `Origem do destino: ${ROTULOS_ORIGEM_DESTINO[preparacao.destino.origem]}`;
+      linhaInfo(infoDestino, 'CEP', textoOuTraco(preparacao.destino.cep));
+      linhaInfo(infoDestino, 'Endereço', textoOuTraco(preparacao.destino.logradouro));
+      linhaInfo(infoDestino, 'Número', textoOuTraco(preparacao.destino.numero));
+      linhaInfo(infoDestino, 'Complemento', textoOuTraco(preparacao.destino.complemento));
+      linhaInfo(infoDestino, 'Bairro', textoOuTraco(preparacao.destino.bairro));
+      linhaInfo(infoDestino, 'Cidade/UF', preparacao.destino.cidade !== null || preparacao.destino.uf !== null ? `${textoOuTraco(preparacao.destino.cidade)}/${textoOuTraco(preparacao.destino.uf)}` : '—');
+      formDestinoManual.hidden = true;
+    }
+
+    const infoLogistica = el<HTMLElement>('fretes-importar-logistica-info');
+    infoLogistica.textContent = '';
+    linhaInfo(infoLogistica, 'Peso bruto', preparacao.logistica.pesoBruto !== null ? `${preparacao.logistica.pesoBruto} kg` : 'Não informado');
+    linhaInfo(infoLogistica, 'Peso líquido', preparacao.logistica.pesoLiquido !== null ? `${preparacao.logistica.pesoLiquido} kg` : 'Não informado');
+    linhaInfo(infoLogistica, 'Volumes', preparacao.logistica.quantidadeVolumes !== null ? String(preparacao.logistica.quantidadeVolumes) : 'Não informado');
+    linhaInfo(infoLogistica, 'Espécie', textoOuTraco(preparacao.logistica.especieVolumes) === '—' ? 'Não informado' : preparacao.logistica.especieVolumes!);
+    linhaInfo(infoLogistica, 'CIF/FOB (Omie)', textoOuTraco(preparacao.logistica.cifFobOmie) === '—' ? 'Não informado' : preparacao.logistica.cifFobOmie!);
+    linhaInfo(
+      infoLogistica,
+      'Transportadora vinculada na Omie (código)',
+      preparacao.logistica.transportadoraOmieCodigo !== null ? String(preparacao.logistica.transportadoraOmieCodigo) : 'Não informado',
+    );
+
+    const corpoItens = el<HTMLTableSectionElement>('fretes-importar-tabela-itens-corpo');
+    corpoItens.textContent = '';
+    for (const item of preparacao.itens) {
+      const tr = document.createElement('tr');
+      const tdCodigo = document.createElement('td');
+      tdCodigo.textContent = item.codigo;
+      const tdDescricao = document.createElement('td');
+      tdDescricao.textContent = item.descricao;
+      const tdQuantidade = document.createElement('td');
+      tdQuantidade.className = 'col-num';
+      tdQuantidade.textContent = String(item.quantidade);
+      tr.appendChild(tdCodigo);
+      tr.appendChild(tdDescricao);
+      tr.appendChild(tdQuantidade);
+      corpoItens.appendChild(tr);
+    }
+
+    el<HTMLInputElement>('fretes-importar-valor-mercadoria').value = String(preparacao.valorTotalPedido);
+    previewImportarOmie.hidden = false;
+  }
+
+  formBuscarPedidoOmie.addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    void (async () => {
+      erroImportarOmie.hidden = true;
+      previewImportarOmie.hidden = true;
+      const numero = textoOuNulo(new FormData(formBuscarPedidoOmie).get('numeroPedido'));
+      if (numero === null) return;
+      carregandoImportarOmie.hidden = false;
+      el<HTMLButtonElement>('fretes-importar-botao-buscar').disabled = true;
+      try {
+        const resposta = await fetch(`/api/fretes/omie/pedidos/${encodeURIComponent(numero)}/preparar`);
+        if (!resposta.ok) {
+          erroImportarOmie.textContent = await extrairMensagemErro(resposta);
+          erroImportarOmie.hidden = false;
+          preparacaoOmieAtual = null;
+          numeroPedidoOmieAtual = null;
+          return;
+        }
+        const preparacao = (await resposta.json()) as PreparacaoCotacaoOmie;
+        preparacaoOmieAtual = preparacao;
+        numeroPedidoOmieAtual = numero;
+        renderizarPreviewImportacao(preparacao);
+      } finally {
+        carregandoImportarOmie.hidden = true;
+        el<HTMLButtonElement>('fretes-importar-botao-buscar').disabled = false;
+      }
+    })();
+  });
+
+  formConfirmarImportacao.addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    void (async () => {
+      if (numeroPedidoOmieAtual === null) return;
+      erroConfirmarImportacao.hidden = true;
+      const dadosForm = new FormData(formConfirmarImportacao);
+
+      let destinoOverride: Record<string, unknown> | null = null;
+      if (!formDestinoManual.hidden) {
+        const dadosDestino = new FormData(formDestinoManual);
+        destinoOverride = {
+          cep: textoOuNulo(dadosDestino.get('cep')),
+          logradouro: textoOuNulo(dadosDestino.get('logradouro')),
+          numero: textoOuNulo(dadosDestino.get('numero')),
+          complemento: textoOuNulo(dadosDestino.get('complemento')),
+          bairro: textoOuNulo(dadosDestino.get('bairro')),
+          cidade: textoOuNulo(dadosDestino.get('cidade')),
+          uf: textoOuNulo(dadosDestino.get('uf')),
+        };
+      }
+
+      const resposta = await fetch(`/api/fretes/omie/pedidos/${encodeURIComponent(numeroPedidoOmieAtual)}/confirmar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destinoOverride,
+          modalidade: dadosForm.get('modalidade'),
+          modalidadeExecucao: dadosForm.get('modalidadeExecucao'),
+          veiculoId: textoOuNulo(dadosForm.get('veiculoId')),
+          motoristaNome: textoOuNulo(dadosForm.get('motoristaNome')),
+          custoManual: numeroOuNulo(dadosForm.get('custoManual')),
+          valorMercadoria: numeroOuNulo(dadosForm.get('valorMercadoria')),
+          observacoes: textoOuNulo(dadosForm.get('observacoes')),
+        }),
+      });
+      if (!resposta.ok) {
+        erroConfirmarImportacao.textContent = await extrairMensagemErro(resposta);
+        erroConfirmarImportacao.hidden = false;
+        return;
+      }
+      const cotacao = (await resposta.json()) as CotacaoFrete;
+      formBuscarPedidoOmie.reset();
+      formConfirmarImportacao.reset();
+      previewImportarOmie.hidden = true;
+      preparacaoOmieAtual = null;
+      numeroPedidoOmieAtual = null;
+      void abrirDetalheCotacao(cotacao.id);
+    })();
+  });
+
   // --- Navegação entre sub-abas ---------------------------------------
 
   abaDashboard.addEventListener('click', () => {
@@ -839,6 +1098,9 @@ export function inicializarFretes(): { ativar: () => void } {
   abaCotacoes.addEventListener('click', () => {
     mostrarSubAba('cotacoes');
     void carregarCotacoes();
+  });
+  abaImportarOmie.addEventListener('click', () => {
+    mostrarSubAba('importar-omie');
   });
   abaTransportadoras.addEventListener('click', () => {
     mostrarSubAba('transportadoras');

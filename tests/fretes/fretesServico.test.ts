@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ClienteOmie, Cliente } from '../../src/omie/cliente.js';
+import type { PedidoOmie } from '../../src/calculo/tipos.js';
 
 // Este arquivo cria/derruba 5 tabelas novas por teste (Supabase real, sobre a rede) —
 // bem mais round-trips que os demais testes de integração do projeto. 5000ms (padrão do
@@ -575,5 +577,146 @@ describe('isolamento entre modalidades (Fase 2)', () => {
     expect(dashboard.cotacoesPorModalidadeExecucao.TRANSPORTADORA).toBe(1);
     expect(dashboard.cotacoesPorModalidadeExecucao.VEICULO_PROPRIO).toBe(2);
     expect(dashboard.cotacoesPorModalidadeExecucao.RETIRA).toBe(1);
+  });
+});
+
+// ============================================================================
+// FASE 3.2 — importação de pedido Omie (servicoPrepararCotacaoDeOmie / servicoCriarCotacaoDeOmie)
+// ============================================================================
+
+function pedidoOmieDeTeste(extra: Record<string, unknown> = {}): PedidoOmie {
+  return {
+    cabecalho: { codigo_pedido: 888001, numero_pedido: '888001', etapa: '10', codigo_cliente: 321 },
+    det: [{ produto: { codigo_produto: 1, codigo: 'X1', descricao: 'Item', quantidade: 1, valor_unitario: 50 } }],
+    total_pedido: { valor_total_pedido: 50 },
+    informacoes_adicionais: { codVend: 7 },
+    frete: { valor_frete: 0, valor_seguro: 0, outras_despesas: 0, peso_bruto: 8, peso_liquido: 7, quantidade_volumes: 1 } as PedidoOmie['frete'],
+    ...extra,
+  } as PedidoOmie;
+}
+
+function clienteOmieFakeComEndereco(pedido: PedidoOmie, cliente: Cliente | null): ClienteOmie {
+  return { consultarPedido: async () => pedido, consultarCliente: async () => cliente } as unknown as ClienteOmie;
+}
+
+const CLIENTE_TESTE_COM_ENTREGA: Cliente = {
+  codigo: 321,
+  razaoSocial: 'Cliente Omie Teste',
+  nomeFantasia: 'Cliente Teste',
+  enderecoCadastral: {
+    cep: '04000-000',
+    logradouro: 'Rua Cadastral',
+    numero: '1',
+    complemento: null,
+    bairro: 'Bairro',
+    cidade: 'Cidade Cadastral',
+    uf: 'SP',
+    codigoMunicipio: null,
+  },
+  enderecoEntrega: { cep: '05000-000', logradouro: 'Rua de Entrega', numero: '2', bairro: 'Bairro Entrega', cidade: 'Cidade Entrega', uf: 'RJ' },
+};
+
+describe('servicoPrepararCotacaoDeOmie (Fase 3.2 — preparação, nunca persiste)', () => {
+  it('retorna a preparação com o destino resolvido e sem cotações existentes', async () => {
+    const servico = await importarServico();
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
+    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    expect(preparacao.destino?.origem).toBe('CLIENTE_ENTREGA');
+    expect(preparacao.cotacoesExistentes).toEqual([]);
+  });
+
+  it('avisa (sem bloquear) quando já existe cotação para o mesmo pedido Omie', async () => {
+    const servico = await importarServico();
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
+    await servico.servicoCriarCotacaoDeOmie(
+      cliente,
+      '888001',
+      null,
+      { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    expect(preparacao.cotacoesExistentes).toHaveLength(1);
+  });
+});
+
+describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
+  it('cria a cotação com snapshot do destino resolvido (CLIENTE_ENTREGA) e dados logísticos preservados', async () => {
+    const servico = await importarServico();
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
+    const cotacao = await servico.servicoCriarCotacaoDeOmie(
+      cliente,
+      '888001',
+      null,
+      { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    expect(cotacao.pedidoOmieId).toBe(888001);
+    expect(cotacao.pedidoOmieNumero).toBe('888001');
+    expect(cotacao.clienteOmieId).toBe(321);
+    expect(cotacao.clienteNomeSnapshot).toBe('Cliente Omie Teste');
+    expect(cotacao.origemDestino).toBe('CLIENTE_ENTREGA');
+    expect(cotacao.cepDestino).toBe('05000-000');
+    expect(cotacao.cidadeDestino).toBe('Cidade Entrega');
+    expect(cotacao.pesoBruto).toBe(8);
+    expect(cotacao.pesoLiquido).toBe(7);
+    expect(cotacao.volumes).toBe(1);
+  });
+
+  it('override manual do destino grava origemDestino = MANUAL, ignorando o endereço resolvido automaticamente', async () => {
+    const servico = await importarServico();
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
+    const cotacao = await servico.servicoCriarCotacaoDeOmie(
+      cliente,
+      '888001',
+      { cep: '09999-000', logradouro: 'Rua Manual', numero: '9', complemento: null, bairro: 'Bairro Manual', cidade: 'Cidade Manual', uf: 'MG' },
+      { modalidade: 'FOB', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    expect(cotacao.origemDestino).toBe('MANUAL');
+    expect(cotacao.cepDestino).toBe('09999-000');
+    expect(cotacao.cidadeDestino).toBe('Cidade Manual');
+  });
+
+  it('rejeita a confirmação quando não há destino resolvido nem override manual', async () => {
+    const servico = await importarServico();
+    const clienteSemEndereco: Cliente = {
+      codigo: 321,
+      razaoSocial: '',
+      nomeFantasia: '',
+      enderecoCadastral: { cep: null, logradouro: null, numero: null, complemento: null, bairro: null, cidade: null, uf: null, codigoMunicipio: null },
+      enderecoEntrega: null,
+    };
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), clienteSemEndereco);
+    await expect(
+      servico.servicoCriarCotacaoDeOmie(
+        cliente,
+        '888001',
+        null,
+        { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+        USUARIO_TESTE,
+      ),
+    ).rejects.toThrow('Informe o destino manualmente');
+  });
+
+  it('nunca altera o frete usado em Comissão/Margem — cotação Fretes é uma estrutura totalmente separada', async () => {
+    // Confirma isolamento (seção 4): a criação via Omie não lê nem escreve em nenhuma
+    // estrutura de Comissão/Margem/Relatórios — só usa `pedido.frete.peso_bruto` etc.
+    // (logística), nunca `pedido.frete.valor_frete` (financeiro, protegido).
+    const servico = await importarServico();
+    const pedidoComFreteFinanceiro = pedidoOmieDeTeste({
+      frete: { valor_frete: 999, valor_seguro: 50, outras_despesas: 10, peso_bruto: 8, peso_liquido: 7, quantidade_volumes: 1 },
+    });
+    const cliente = clienteOmieFakeComEndereco(pedidoComFreteFinanceiro, CLIENTE_TESTE_COM_ENTREGA);
+    const cotacao = await servico.servicoCriarCotacaoDeOmie(
+      cliente,
+      '888001',
+      null,
+      { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    // Nenhum campo da cotação carrega o valor_frete/valor_seguro/outras_despesas da Omie.
+    expect(cotacao.custoManual).toBeNull();
+    expect(cotacao.valorMercadoria).toBe(50); // valor_total_pedido, não valor_frete
   });
 });

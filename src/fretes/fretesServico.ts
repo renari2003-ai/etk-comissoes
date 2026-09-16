@@ -5,6 +5,7 @@
  * proposta, fechamento transacional e auditoria.
  */
 
+import type { ClienteOmie } from '../omie/cliente.js';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
@@ -12,6 +13,7 @@ import { calcularFreteFinal, calcularPercentualAcrescimo, calcularValorAcrescimo
 import {
   atualizarCotacao,
   buscarCotacaoPorId,
+  buscarCotacoesPorPedidoOmieId,
   criarCotacao,
   definirStatusCotacao,
   listarCotacoes,
@@ -19,6 +21,8 @@ import {
   type DadosNovaCotacao,
   type FiltrosCotacao,
 } from './cotacoesRepositorio.js';
+import { formatarDestinoTexto, prepararCotacaoDeOmie, type PreparacaoCotacaoOmie } from './omieFretes.js';
+import type { DestinoManualInformado } from './validacao.js';
 import { buscarFechamentoPorCotacao, inserirFechamento, resumirFechamentos, resumirFechamentosPorModalidade, type ResumoFechamentos } from './fechamentosRepositorio.js';
 import {
   atualizarStatusProposta,
@@ -43,7 +47,7 @@ import {
   listarVeiculos,
   type DadosVeiculo,
 } from './veiculosRepositorio.js';
-import type { CotacaoFrete, FechamentoFrete, ModalidadeExecucao, ModoCalculoFechamento, PropostaFrete, Transportadora, Veiculo } from './tipos.js';
+import type { CotacaoFrete, EnderecoDestino, FechamentoFrete, Modalidade, ModalidadeExecucao, ModoCalculoFechamento, PropostaFrete, Transportadora, Veiculo } from './tipos.js';
 
 // --- Transportadoras -------------------------------------------------------
 
@@ -193,6 +197,112 @@ export async function servicoCancelarCotacao(id: string, usuarioId: string): Pro
   if (atual.status === 'CANCELADA') throw new ErroValidacao('Esta cotação já está cancelada.');
   const cotacao = await definirStatusCotacao(id, 'CANCELADA');
   await registrarAuditoria({ usuarioId, acao: 'COTACAO_CANCELADA', entidade: 'cotacao_frete', entidadeId: id, valorAnterior: atual.status, valorNovo: 'CANCELADA' });
+  return cotacao;
+}
+
+// --- Importação de pedido Omie (Fase 3.2) --------------------------------
+
+export interface PreparacaoCotacaoComAviso extends PreparacaoCotacaoOmie {
+  /** Seção 25 — só aviso informativo, nunca bloqueia nem sobrescreve. */
+  cotacoesExistentes: CotacaoFrete[];
+}
+
+/**
+ * PREPARAR (seção 38): consulta a Omie e monta a preview da cotação — nunca persiste nada.
+ * A Omie permanece somente leitura; nenhuma escrita acontece aqui nem em `prepararCotacaoDeOmie`.
+ */
+export async function servicoPrepararCotacaoDeOmie(cliente: ClienteOmie, numeroPedido: string): Promise<PreparacaoCotacaoComAviso> {
+  const preparacao = await prepararCotacaoDeOmie(cliente, numeroPedido);
+  const cotacoesExistentes = await buscarCotacoesPorPedidoOmieId(preparacao.pedidoOmieId);
+  return { ...preparacao, cotacoesExistentes };
+}
+
+export interface DadosComplementaresCotacaoOmie {
+  modalidade: Modalidade;
+  modalidadeExecucao: ModalidadeExecucao;
+  veiculoId: string | null;
+  motoristaNome: string | null;
+  custoManual: number | null;
+  valorMercadoria: number | null;
+  observacoes: string | null;
+}
+
+/**
+ * CONFIRMAR (seção 38): re-resolve a Omie (fresh, via cache/limitador já existentes — nunca
+ * confia num destino "resolvido" enviado pelo cliente HTTP, só no `destinoOverride`
+ * explícito) e só então persiste. Isso mantém o backend como única fonte de verdade da
+ * regra de prioridade (seção 39/40), mesmo que o frontend mostre uma preview antes.
+ */
+export async function servicoCriarCotacaoDeOmie(
+  cliente: ClienteOmie,
+  numeroPedido: string,
+  destinoOverride: DestinoManualInformado | null,
+  dadosComplementares: DadosComplementaresCotacaoOmie,
+  usuarioId: string,
+): Promise<CotacaoFrete> {
+  const preparacao = await prepararCotacaoDeOmie(cliente, numeroPedido);
+
+  let destinoFinal: EnderecoDestino;
+  if (destinoOverride !== null) {
+    destinoFinal = { origem: 'MANUAL', codigoMunicipio: null, ...destinoOverride };
+  } else if (preparacao.destino !== null) {
+    destinoFinal = preparacao.destino;
+  } else {
+    throw new ErroValidacao(
+      'Não foi possível determinar um destino automaticamente a partir da Omie. Informe o destino manualmente ("destinoOverride") antes de confirmar.',
+    );
+  }
+
+  const dados: DadosNovaCotacao = {
+    clienteOmieId: preparacao.clienteOmieId,
+    pedidoOmieId: preparacao.pedidoOmieId,
+    pedidoOmieNumero: preparacao.pedidoOmieNumero,
+    vendedorOmieId: preparacao.vendedorOmieId,
+    clienteNomeSnapshot: preparacao.clienteNome,
+    origem: null,
+    cepOrigem: null,
+    destino: formatarDestinoTexto(destinoFinal),
+    cepDestino: destinoFinal.cep,
+    origemDestino: destinoFinal.origem,
+    logradouroDestino: destinoFinal.logradouro,
+    numeroDestino: destinoFinal.numero,
+    complementoDestino: destinoFinal.complemento,
+    bairroDestino: destinoFinal.bairro,
+    cidadeDestino: destinoFinal.cidade,
+    ufDestino: destinoFinal.uf,
+    codigoMunicipioDestino: destinoFinal.codigoMunicipio,
+    peso: preparacao.logistica.pesoBruto,
+    pesoBruto: preparacao.logistica.pesoBruto,
+    pesoLiquido: preparacao.logistica.pesoLiquido,
+    volumes: preparacao.logistica.quantidadeVolumes,
+    especieVolumes: preparacao.logistica.especieVolumes,
+    cifFobOmie: preparacao.logistica.cifFobOmie,
+    transportadoraOmieCodigo: preparacao.logistica.transportadoraOmieCodigo,
+    valorMercadoria: dadosComplementares.valorMercadoria ?? (preparacao.valorTotalPedido || null),
+    modalidade: dadosComplementares.modalidade,
+    modalidadeExecucao: dadosComplementares.modalidadeExecucao,
+    veiculoId: dadosComplementares.veiculoId,
+    motoristaNome: dadosComplementares.motoristaNome,
+    custoManual: dadosComplementares.custoManual,
+    observacoes: dadosComplementares.observacoes,
+  };
+
+  await validarCamposPorModalidadeExecucao(dados.modalidadeExecucao, dados.veiculoId);
+  const cotacao = await criarCotacao(dados, usuarioId);
+  await registrarAuditoria({
+    usuarioId,
+    acao: 'COTACAO_CRIADA_DE_OMIE',
+    entidade: 'cotacao_frete',
+    entidadeId: cotacao.id,
+    valorNovo: cotacao,
+  });
+  await registrarAuditoria({
+    usuarioId,
+    acao: destinoFinal.origem === 'MANUAL' ? 'DESTINO_ALTERADO_MANUALMENTE' : 'DESTINO_IMPORTADO_OMIE',
+    entidade: 'cotacao_frete',
+    entidadeId: cotacao.id,
+    valorNovo: { origemDestino: destinoFinal.origem },
+  });
   return cotacao;
 }
 

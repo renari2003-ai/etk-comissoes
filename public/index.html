@@ -126,6 +126,7 @@
     <nav class="abas-tipo-documento" role="tablist" aria-label="Seção de Fretes">
       <button type="button" id="fretes-aba-dashboard" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">Dashboard</button>
       <button type="button" id="fretes-aba-cotacoes" class="aba-tipo-documento" role="tab" aria-selected="false">Cotações</button>
+      <button type="button" id="fretes-aba-importar-omie" class="aba-tipo-documento" role="tab" aria-selected="false">Importar do Pedido Omie</button>
       <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
       <button type="button" id="fretes-aba-veiculos" class="aba-tipo-documento" role="tab" aria-selected="false">Veículos</button>
     </nav>
@@ -243,6 +244,130 @@
           <tbody id="fretes-tabela-cotacoes-corpo"></tbody>
         </table>
       </div>
+    </section>
+
+    <section id="fretes-secao-importar-omie" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Importar cotação de um Pedido Omie</h2>
+      </div>
+      <p class="filtro-data-legenda">A Omie permanece somente leitura — nada aqui altera o pedido, o cliente ou qualquer cadastro na Omie.</p>
+      <form id="fretes-form-buscar-pedido-omie" class="filtros-relatorio" autocomplete="off">
+        <div class="campo-filtro">
+          <label for="fretes-importar-numero-pedido">Número do Pedido Omie</label>
+          <input id="fretes-importar-numero-pedido" name="numeroPedido" type="text" required />
+        </div>
+        <button type="submit" class="botao-secundario botao-aplicar-filtro" id="fretes-importar-botao-buscar">Buscar pedido</button>
+      </form>
+      <p id="fretes-importar-omie-carregando" class="filtro-data-legenda" hidden aria-live="polite">Consultando a Omie…</p>
+      <p id="fretes-importar-omie-erro" class="painel-login-erro" hidden></p>
+
+      <section id="fretes-importar-omie-preview" hidden>
+        <h3 class="titulo-secao">Conferência</h3>
+
+        <div class="painel-fechamento">
+          <h4>Pedido</h4>
+          <div id="fretes-importar-pedido-info"></div>
+        </div>
+
+        <p id="fretes-importar-aviso-duplicidade" class="painel-login-erro" hidden></p>
+
+        <div class="painel-fechamento">
+          <h4>Destino</h4>
+          <p id="fretes-importar-destino-origem" class="filtro-data-legenda"></p>
+          <div id="fretes-importar-destino-info"></div>
+          <button type="button" class="botao-secundario" id="fretes-importar-botao-alterar-destino">Alterar destino</button>
+          <form id="fretes-form-destino-manual" class="filtros-relatorio" autocomplete="off" hidden>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-cep">CEP</label>
+              <input id="fretes-importar-destino-cep" name="cep" type="text" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-logradouro">Logradouro</label>
+              <input id="fretes-importar-destino-logradouro" name="logradouro" type="text" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-numero">Número</label>
+              <input id="fretes-importar-destino-numero" name="numero" type="text" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-complemento">Complemento</label>
+              <input id="fretes-importar-destino-complemento" name="complemento" type="text" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-bairro">Bairro</label>
+              <input id="fretes-importar-destino-bairro" name="bairro" type="text" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-cidade">Cidade</label>
+              <input id="fretes-importar-destino-cidade" name="cidade" type="text" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-importar-destino-uf">UF</label>
+              <input id="fretes-importar-destino-uf" name="uf" type="text" maxlength="2" />
+            </div>
+          </form>
+        </div>
+
+        <div class="painel-fechamento">
+          <h4>Logística (conforme informado na Omie)</h4>
+          <div id="fretes-importar-logistica-info"></div>
+        </div>
+
+        <div class="painel-fechamento">
+          <h4>Itens</h4>
+          <div class="tabela-rolagem">
+            <table id="fretes-importar-tabela-itens">
+              <thead>
+                <tr>
+                  <th scope="col">Código</th>
+                  <th scope="col">Descrição</th>
+                  <th scope="col" class="col-num">Quantidade</th>
+                </tr>
+              </thead>
+              <tbody id="fretes-importar-tabela-itens-corpo"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <h3 class="titulo-secao">Dados da cotação</h3>
+        <form id="fretes-form-confirmar-importacao" class="filtros-relatorio" autocomplete="off">
+          <fieldset class="permissoes-convidado" id="fretes-importar-modalidade-execucao-fieldset">
+            <legend>Modalidade do frete</legend>
+            <label><input type="radio" name="modalidadeExecucao" value="TRANSPORTADORA" checked /> Transportadora</label>
+            <label><input type="radio" name="modalidadeExecucao" value="VEICULO_PROPRIO" /> Veículo próprio</label>
+            <label><input type="radio" name="modalidadeExecucao" value="RETIRA" /> Retira</label>
+          </fieldset>
+          <div class="campo-filtro" id="fretes-importar-campo-veiculo" hidden>
+            <label for="fretes-importar-veiculo">Veículo</label>
+            <select id="fretes-importar-veiculo" name="veiculoId"></select>
+          </div>
+          <div class="campo-filtro" id="fretes-importar-campo-motorista" hidden>
+            <label for="fretes-importar-motorista">Motorista</label>
+            <input id="fretes-importar-motorista" name="motoristaNome" type="text" />
+          </div>
+          <div class="campo-filtro" id="fretes-importar-campo-custo-manual" hidden>
+            <label for="fretes-importar-custo-manual">Custo interno da entrega (opcional)</label>
+            <input id="fretes-importar-custo-manual" name="custoManual" type="number" min="0" step="0.01" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-importar-modalidade">Modalidade (CIF/FOB deste módulo)</label>
+            <select id="fretes-importar-modalidade" name="modalidade">
+              <option value="CIF" selected>CIF</option>
+              <option value="FOB">FOB</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-importar-valor-mercadoria">Valor da mercadoria (opcional — padrão: valor total do pedido)</label>
+            <input id="fretes-importar-valor-mercadoria" name="valorMercadoria" type="number" min="0" step="0.01" />
+          </div>
+          <div class="campo-filtro campo-filtro-busca">
+            <label for="fretes-importar-observacoes">Observações</label>
+            <input id="fretes-importar-observacoes" name="observacoes" type="text" />
+          </div>
+          <button type="submit" class="botao-secundario botao-aplicar-filtro">Confirmar e criar cotação</button>
+        </form>
+        <p id="fretes-importar-confirmar-erro" class="painel-login-erro" hidden></p>
+      </section>
     </section>
 
     <section id="fretes-secao-detalhe" hidden>

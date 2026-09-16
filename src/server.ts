@@ -52,8 +52,10 @@ app.use(criarRotasRelatorios(cliente, 'PEDIDO'));
 app.use(criarRotasRelatorios(cliente, 'ORCAMENTO'));
 app.use(criarRotaComissionamento(cliente));
 // Módulo de Fretes (Fase 1, 2026-09-15) — isolado: tabelas/rotas/permissão próprias, nunca
-// toca em comissão/relatórios/Omie existentes (ver src/fretes/**).
-app.use(criarRotaFretes());
+// toca em comissão/relatórios/Omie existentes (ver src/fretes/**). Fase 3.2 (2026-09-16)
+// passou a receber o mesmo `ClienteOmie` já usado pelas demais rotas (reaproveita
+// cache/limitador/tratamento de erro — nunca cria uma segunda infraestrutura Omie).
+app.use(criarRotaFretes(cliente));
 
 // Rota raiz: no Vercel express.static e ignorado, entao GET / nao serve index.html.
 // Este redirect resolve — a CDN do Vercel serve /index.html como arquivo estatico.

@@ -95,10 +95,41 @@ export interface Vendedor {
   inativo: boolean;
 }
 
+/** Confirmado contra a API real em 2026-09-16 (investigação 3.1.2/3.1.3) — endereço cadastral do cliente, campos soltos no nível raiz de `ConsultarCliente`. */
+export interface EnderecoCadastralOmie {
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  codigoMunicipio: string | null;
+}
+
+/**
+ * Confirmado contra a API real em 2026-09-16 (investigação 3.1.3) — endereço de entrega
+ * PADRÃO DO CLIENTE (objeto `enderecoEntrega`, prefixo `ent*`), distinto do endereço
+ * cadastral acima e também distinto do endereço específico de um pedido (ver
+ * `src/fretes/omieFretes.ts`, que lê `informacoes_adicionais.outros_detalhes` do pedido).
+ * Nunca tem `complemento` (campo ausente nesta estrutura em todas as respostas observadas).
+ */
+export interface EnderecoEntregaOmie {
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+}
+
 export interface Cliente {
   codigo: number;
   razaoSocial: string;
   nomeFantasia: string;
+  enderecoCadastral: EnderecoCadastralOmie;
+  /** `null` quando a Omie não retornou nenhum campo preenchido neste bloco — nunca um objeto com todos os campos `null` (ver Fase 3.2, seção 11: objeto presente não significa endereço válido). */
+  enderecoEntrega: EnderecoEntregaOmie | null;
 }
 
 /** Campos usados de `ConsultarProduto` — a Omie devolve muito mais campos além destes. */
@@ -384,7 +415,15 @@ export class ClienteOmie {
     });
   }
 
-  /** Dados cadastrais de um cliente (razão social, nome fantasia) — cacheado por código. */
+  /**
+   * Dados cadastrais de um cliente (razão social, nome fantasia, endereço cadastral e
+   * endereço de entrega padrão) — cacheado por código. Os campos de endereço foram
+   * adicionados na Fase 3.2 do módulo de Fretes (2026-09-16): mesma chamada, mesma chave de
+   * cache/TTL já existentes — só passou a extrair mais campos da mesma resposta já buscada
+   * (a Omie sempre devolveu esses campos; só não eram lidos antes, ver investigação 3.1.2).
+   * Nenhum consumidor existente (`relatorioVendas.ts`, `montarRelatorio.ts`) é afetado —
+   * ambos só leem `razaoSocial`/`nomeFantasia`.
+   */
   async consultarCliente(codigoCliente: number): Promise<Cliente | null> {
     return this.cacheClientes.obterOuBuscar(`cliente:${codigoCliente}`, async () => {
       try {
@@ -392,8 +431,54 @@ export class ClienteOmie {
           codigo_cliente_omie: number;
           razao_social: string;
           nome_fantasia: string;
+          cep?: string;
+          logradouro?: string;
+          endereco_numero?: string;
+          complemento?: string;
+          bairro?: string;
+          cidade?: string;
+          estado?: string;
+          cidade_ibge?: string;
+          enderecoEntrega?: {
+            entCEP?: string;
+            entEndereco?: string;
+            entNumero?: string;
+            entBairro?: string;
+            entCidade?: string;
+            entEstado?: string;
+          };
         }>('/geral/clientes/', 'ConsultarCliente', { codigo_cliente_omie: codigoCliente });
-        return { codigo: resposta.codigo_cliente_omie, razaoSocial: resposta.razao_social, nomeFantasia: resposta.nome_fantasia };
+
+        const entrega = resposta.enderecoEntrega;
+        const entregaPreenchida =
+          entrega !== undefined &&
+          ((entrega.entCEP ?? '').trim() !== '' || ((entrega.entEndereco ?? '').trim() !== '' && (entrega.entCidade ?? '').trim() !== ''));
+
+        return {
+          codigo: resposta.codigo_cliente_omie,
+          razaoSocial: resposta.razao_social,
+          nomeFantasia: resposta.nome_fantasia,
+          enderecoCadastral: {
+            cep: resposta.cep ?? null,
+            logradouro: resposta.logradouro ?? null,
+            numero: resposta.endereco_numero ?? null,
+            complemento: resposta.complemento ?? null,
+            bairro: resposta.bairro ?? null,
+            cidade: resposta.cidade ?? null,
+            uf: resposta.estado ?? null,
+            codigoMunicipio: resposta.cidade_ibge ?? null,
+          },
+          enderecoEntrega: entregaPreenchida
+            ? {
+                cep: entrega?.entCEP ?? null,
+                logradouro: entrega?.entEndereco ?? null,
+                numero: entrega?.entNumero ?? null,
+                bairro: entrega?.entBairro ?? null,
+                cidade: entrega?.entCidade ?? null,
+                uf: entrega?.entEstado ?? null,
+              }
+            : null,
+        };
       } catch (erro) {
         if (erro instanceof OmieError) return null;
         throw erro;

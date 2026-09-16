@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
+import type { ClienteOmie } from '../omie/cliente.js';
 import { ErroValidacao } from '../validacao.js';
 import {
   servicoAtualizarCotacao,
@@ -10,6 +11,7 @@ import {
   servicoCancelarCotacao,
   servicoCompararPropostas,
   servicoCriarCotacao,
+  servicoCriarCotacaoDeOmie,
   servicoCriarProposta,
   servicoCriarTransportadora,
   servicoCriarVeiculo,
@@ -21,12 +23,14 @@ import {
   servicoListarPropostas,
   servicoListarTransportadoras,
   servicoListarVeiculos,
+  servicoPrepararCotacaoDeOmie,
   servicoRejeitarProposta,
   servicoSelecionarProposta,
 } from '../fretes/fretesServico.js';
 import type { ModalidadeExecucao, StatusCotacao } from '../fretes/tipos.js';
 import {
   validarCnpjOpcional,
+  validarDestinoManualOpcional,
   validarEmailOpcional,
   validarIdOmieOpcional,
   validarInteiroNaoNegativoOpcional,
@@ -74,9 +78,40 @@ function validarStatusOpcional(valor: unknown): StatusCotacao | undefined {
  * middleware "global" nesse nível rodaria pra qualquer requisição que chegasse até
  * aqui, mesmo sem bater com nenhuma rota abaixo).
  */
-export function criarRotaFretes(): Router {
+export function criarRotaFretes(cliente: ClienteOmie): Router {
   const rotas = Router();
   const protegida = [exigirAutenticacao, exigirPermissao('fretes')] as const;
+
+  // --- Importação de pedido Omie (Fase 3.2) ---------------------------------
+
+  rotas.get(
+    '/api/fretes/omie/pedidos/:numero/preparar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const numero = validarTextoObrigatorio(req.params.numero, 'numero');
+      res.json(await servicoPrepararCotacaoDeOmie(cliente, numero));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/omie/pedidos/:numero/confirmar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const numero = validarTextoObrigatorio(req.params.numero, 'numero');
+      const destinoOverride = validarDestinoManualOpcional(req.body?.destinoOverride);
+      const dadosComplementares = {
+        modalidade: validarModalidade(req.body?.modalidade),
+        modalidadeExecucao: validarModalidadeExecucao(req.body?.modalidadeExecucao ?? 'TRANSPORTADORA'),
+        veiculoId: validarUuidOpcional(req.body?.veiculoId, 'veiculoId'),
+        motoristaNome: validarTextoOpcional(req.body?.motoristaNome, 'motoristaNome'),
+        custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
+        valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
+        observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+      };
+      const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, destinoOverride, dadosComplementares, req.usuario!.id);
+      res.status(201).json(cotacao);
+    }),
+  );
 
   // --- Transportadoras -----------------------------------------------------
 

@@ -134,6 +134,37 @@ export function garantirEsquemaFretes(): Promise<void> {
     await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS motorista_nome TEXT`);
     await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS custo_manual NUMERIC`);
 
+    // Fase 3.2 (2026-09-16) — importação Omie → Fretes: colunas 100% aditivas/nullable, só
+    // preenchidas no fluxo de importação (ver `omieFretes.ts`/`resolucaoDestino.ts`). Nunca
+    // usadas em cotações criadas manualmente (fluxo da Fase 1, inalterado). `origem_destino`
+    // documenta de qual das 3 fontes Omie (ou `MANUAL`) veio o destino estruturado abaixo —
+    // `destino`/`cep_destino` (texto livre, já existentes) continuam preenchidos também aqui,
+    // como resumo compatível com a exibição já existente.
+    await executarDdlIdempotente(
+      `ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS origem_destino TEXT CHECK (origem_destino IN ('PEDIDO','CLIENTE_ENTREGA','CLIENTE_CADASTRAL','MANUAL'))`,
+    );
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS logradouro_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS numero_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS complemento_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS bairro_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS cidade_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS uf_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS codigo_municipio_destino TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS peso_bruto NUMERIC`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS peso_liquido NUMERIC`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS especie_volumes TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS cif_fob_omie TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS transportadora_omie_codigo BIGINT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS pedido_omie_numero TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS cliente_nome_snapshot TEXT`);
+
+    // Seção 34: usado para localizar rapidamente se um pedido Omie já tem cotação (seção 25 —
+    // só aviso, nunca bloqueio). Parcial (`WHERE ... IS NOT NULL`) porque a maioria das
+    // cotações manuais da Fase 1 não tem `pedido_omie_id` preenchido.
+    await executarDdlIdempotente(
+      `CREATE INDEX IF NOT EXISTS idx_${cotacoes}_pedido_omie_id ON ${cotacoes} (pedido_omie_id) WHERE pedido_omie_id IS NOT NULL`,
+    );
+
     await executarDdlIdempotente(`
       CREATE TABLE IF NOT EXISTS ${propostas} (
         id UUID PRIMARY KEY,
