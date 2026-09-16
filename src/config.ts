@@ -30,6 +30,15 @@ export const config = {
    * como "sem proteção".
    */
   fretesWebhookSecret: process.env.FRETES_WEBHOOK_SECRET ?? '',
+  /**
+   * Fase 4A.2 — chamada outbound ETK → n8n (`src/fretes/integracoes/n8nCliente.ts`). URL e
+   * segredo SEMPRE vêm daqui, nunca de entrada do usuário/frontend (seção 37 — nunca SSRF via
+   * URL escolhida pelo cliente). Se `n8nWebhookUrl`/`n8nWebhookSecret` estiverem vazios, o
+   * envio é recusado de forma controlada (fail closed) — nunca enviado sem autenticação.
+   */
+  n8nWebhookUrl: process.env.N8N_WEBHOOK_URL ?? '',
+  n8nWebhookSecret: process.env.N8N_WEBHOOK_SECRET ?? '',
+  n8nTimeoutMs: numeroDoAmbiente('N8N_TIMEOUT_MS', 8000),
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

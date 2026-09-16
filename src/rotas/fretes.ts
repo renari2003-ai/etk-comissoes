@@ -36,6 +36,7 @@ import {
   servicoListarInboxPropostas,
   servicoListarSolicitacoes,
   servicoProcessarRespostaWebhook,
+  servicoReenviarSolicitacao,
   servicoSolicitarCotacoes,
   servicoValidarProposta,
 } from '../fretes/integracaoCotacoesServico.js';
@@ -455,8 +456,21 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       }
       const transportadoraIds = bruto.map((v, i) => validarUuid(v, `transportadoraIds[${i}]`));
       const canal = validarCanalOpcional(req.body?.canal);
+      // Fase 4A.2: o destino do envio (URL/segredo do n8n) vem exclusivamente de
+      // `config` (variáveis de ambiente do servidor) — nunca de `req.body` (seção 36/37,
+      // nunca SSRF via URL escolhida pelo cliente).
       const solicitacoes = await servicoSolicitarCotacoes(cotacaoId, transportadoraIds, canal, req.usuario!.id);
       res.status(201).json({ solicitacoes });
+    }),
+  );
+
+  // Fase 4A.2 (seção 29) — reenvio manual: reusa a MESMA solicitação (nunca cria uma nova).
+  rotas.post(
+    '/api/fretes/solicitacoes/:id/reenviar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoReenviarSolicitacao(id, req.usuario!.id));
     }),
   );
 

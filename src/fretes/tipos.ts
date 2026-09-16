@@ -353,7 +353,9 @@ export type AcaoAuditoriaFrete =
   | 'RESPOSTA_PROCESSADA'
   | 'PROPOSTA_EXTRAIDA'
   | 'PROPOSTA_VALIDADA'
-  | 'PROPOSTA_CORRIGIDA';
+  | 'PROPOSTA_CORRIGIDA'
+  | 'SOLICITACAO_ENVIADA_N8N'
+  | 'SOLICITACAO_ERRO_N8N';
 
 export interface RegistroAuditoriaFrete {
   id: string;

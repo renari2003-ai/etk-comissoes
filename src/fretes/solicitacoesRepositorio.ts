@@ -110,3 +110,38 @@ export async function marcarSolicitacaoRespondida(id: string): Promise<Solicitac
   if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
   return linhaParaSolicitacao(linha);
 }
+
+// --- Fase 4A.2 — status técnico do envio outbound (ETK → n8n) --------------------------
+
+/** Envio ao n8n confirmado (HTTP 2xx) — seção 20. `identificadorExterno` é opcional (ex.: id de execução do n8n, se devolvido). */
+export async function marcarSolicitacaoEnviada(id: string, identificadorExterno: string | null): Promise<SolicitacaoCotacao> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `UPDATE ${nomeTabelaSolicitacoes()}
+        SET status = 'ENVIADA', data_envio = now(), identificador_externo = COALESCE($2, identificador_externo),
+            tentativas = tentativas + 1, erro_ultima_tentativa = NULL, atualizado_em = now()
+      WHERE id = $1
+      RETURNING *`,
+    [id, identificadorExterno],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
+  return linhaParaSolicitacao(linha);
+}
+
+/** Envio ao n8n falhou (config ausente, timeout, rede, HTTP não-2xx) — seção 8/11/27. Nunca lança: a solicitação fica registrada com o motivo, nunca se perde. */
+export async function marcarSolicitacaoErro(id: string, erroResumido: string): Promise<SolicitacaoCotacao> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `UPDATE ${nomeTabelaSolicitacoes()}
+        SET status = 'ERRO', tentativas = tentativas + 1, erro_ultima_tentativa = $2, atualizado_em = now()
+      WHERE id = $1
+      RETURNING *`,
+    [id, erroResumido],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
+  return linhaParaSolicitacao(linha);
+}

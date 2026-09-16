@@ -836,9 +836,31 @@ export function inicializarFretes(): { ativar: () => void } {
       };
       tr.appendChild(celula(transportadora?.nomeRazaoSocial ?? '—'));
       tr.appendChild(celula(ROTULOS_CANAL[s.canal]));
+      // Fase 4A.2, seção 33: nunca expõe o motivo técnico bruto (ex.: código HTTP, mensagem
+      // do cliente n8n) na tela — só o rótulo de status. O detalhe fica na auditoria/log.
       tr.appendChild(celula(ROTULOS_STATUS_SOLICITACAO[s.status]));
       tr.appendChild(celula(formatarDataHoraOuTraco(s.dataEnvio)));
       tr.appendChild(celula(formatarDataHoraOuTraco(s.dataResposta)));
+
+      const tdAcoes = document.createElement('td');
+      if (s.status === 'ERRO') {
+        const botaoReenviar = document.createElement('button');
+        botaoReenviar.type = 'button';
+        botaoReenviar.className = 'botao-secundario';
+        botaoReenviar.textContent = 'Reenviar';
+        botaoReenviar.addEventListener('click', () => {
+          void (async () => {
+            const respostaReenvio = await fetch(`/api/fretes/solicitacoes/${s.id}/reenviar`, { method: 'POST' });
+            if (!respostaReenvio.ok) {
+              window.alert('Falha ao enviar solicitação ao serviço de automação. Tente novamente em instantes.');
+              return;
+            }
+            void carregarSolicitacoes();
+          })();
+        });
+        tdAcoes.appendChild(botaoReenviar);
+      }
+      tr.appendChild(tdAcoes);
       corpo.appendChild(tr);
     }
   }

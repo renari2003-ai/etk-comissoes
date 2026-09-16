@@ -1,3 +1,6 @@
+import type { IncomingHttpHeaders } from 'node:http';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.setConfig({ testTimeout: 20000 });
@@ -102,15 +105,19 @@ function extracaoBase(valorFrete: number | null, confianca: number | null) {
   };
 }
 
-describe('solicitações de cotação (Fase 4A.1, seção 12)', () => {
-  it('cria uma solicitação por transportadora selecionada, com status PENDENTE_ENVIO e referência única', async () => {
+describe('solicitações de cotação (Fase 4A.1/4A.2, seção 12)', () => {
+  it('cria uma solicitação por transportadora selecionada, com referência única — sem N8N_WEBHOOK_URL configurado, o envio falha de forma controlada (status ERRO, nunca perde a solicitação)', async () => {
     const servico = await importarServico();
     const integracao = await importarIntegracao();
     const { transportadora, outraTransportadora, cotacao } = await prepararCotacaoETransportadora(servico);
 
     const solicitacoes = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id, outraTransportadora.id], 'EMAIL', USUARIO_TESTE);
     expect(solicitacoes).toHaveLength(2);
-    expect(solicitacoes.every((s) => s.status === 'PENDENTE_ENVIO')).toBe(true);
+    // Fase 4A.2: sem N8N_WEBHOOK_URL/SECRET no ambiente de teste, o envio é recusado de forma
+    // controlada (fail closed, seção 8) — a solicitação fica registrada com status ERRO, nunca
+    // some nem fica presa num estado ambíguo.
+    expect(solicitacoes.every((s) => s.status === 'ERRO')).toBe(true);
+    expect(solicitacoes.every((s) => s.erroUltimaTentativa?.includes('INTEGRACAO_N8N_NAO_CONFIGURADA') ?? false)).toBe(true);
     expect(solicitacoes[0]?.codigoReferencia).not.toBe(solicitacoes[1]?.codigoReferencia);
 
     const listadas = await integracao.servicoListarSolicitacoes(cotacao.id);
@@ -299,5 +306,206 @@ describe('proposta pendente de validação (Fase 4A.1, seção 7/38/39/40)', () 
     const origemDepois = await integracao.servicoBuscarOrigemProposta(propostaId);
     expect(origemDepois?.resposta.conteudoBruto).toBe(origemAntes?.resposta.conteudoBruto);
     expect(origemDepois?.resposta.conteudoBruto).toBe('mensagem de teste');
+  });
+});
+
+// ============================================================================
+// FASE 4A.2 — integração real ETK ↔ n8n (outbound + reenvio + round-trip completo)
+// ============================================================================
+
+interface ChamadaMock {
+  body: string;
+  headers: IncomingHttpHeaders;
+}
+
+interface MockN8n {
+  url: string;
+  chamadas: ChamadaMock[];
+  fechar: () => Promise<void>;
+}
+
+function iniciarMockN8n(responder: (chamada: ChamadaMock) => { status: number }): Promise<MockN8n> {
+  const chamadas: ChamadaMock[] = [];
+  let servidor: Server;
+  return new Promise((resolve) => {
+    servidor = createServer((req, res) => {
+      let dados = '';
+      req.on('data', (pedaco) => (dados += pedaco));
+      req.on('end', () => {
+        const chamada: ChamadaMock = { body: dados, headers: req.headers };
+        chamadas.push(chamada);
+        const resultado = responder(chamada);
+        res.writeHead(resultado.status, { 'Content-Type': 'application/json' });
+        res.end('{}');
+      });
+    });
+    servidor.listen(0, () => {
+      const endereco = servidor.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${endereco.port}/webhook`,
+        chamadas,
+        fechar: () => new Promise<void>((res) => servidor.close(() => res())),
+      });
+    });
+  });
+}
+
+const N8N_SECRET_TESTE = 'segredo-n8n-fase-4a2-teste';
+
+describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
+  let mock: MockN8n | null = null;
+
+  afterEach(async () => {
+    if (mock !== null) await mock.fechar();
+    mock = null;
+    delete process.env.N8N_WEBHOOK_URL;
+    delete process.env.N8N_WEBHOOK_SECRET;
+  });
+
+  it('outbound com sucesso: solicitação vai para ENVIADA e o payload chega ao n8n com o segredo no header', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 200 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+
+    expect(solicitacao.status).toBe('ENVIADA');
+    expect(solicitacao.dataEnvio).not.toBeNull();
+    expect(mock.chamadas).toHaveLength(1);
+    const chamada = mock.chamadas[0];
+    if (chamada === undefined) throw new Error('setup falhou');
+    expect(chamada.headers['x-n8n-webhook-secret']).toBe(N8N_SECRET_TESTE);
+    const corpo = JSON.parse(chamada.body) as { referencia: string; solicitacaoId: string; cotacaoId: string };
+    expect(corpo.referencia).toBe(solicitacao.codigoReferencia);
+    expect(corpo.solicitacaoId).toBe(solicitacao.id);
+    expect(corpo.cotacaoId).toBe(cotacao.id);
+  });
+
+  it('outbound com falha (HTTP 500 do n8n): solicitação fica ERRO, cotação continua íntegra, nenhuma proposta é criada', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 500 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao.status).toBe('ERRO');
+    expect(solicitacao.erroUltimaTentativa).toContain('500');
+
+    const cotacaoDepois = await servico.servicoBuscarCotacao(cotacao.id);
+    expect(cotacaoDepois.status).not.toBe('CANCELADA');
+    const propostas = await servico.servicoListarPropostas(cotacao.id);
+    expect(propostas).toHaveLength(0);
+  });
+
+  it('reenvio manual reusa a MESMA solicitação (mesma referência/id) — nunca cria uma segunda linha', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 500 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao.status).toBe('ERRO');
+    expect(solicitacao.tentativas).toBe(1);
+
+    // Corrige o mock para responder com sucesso desta vez, e reenvia. `config.ts` só lê
+    // `process.env.N8N_WEBHOOK_URL` na primeira importação do módulo (mesmo padrão de
+    // `garantirEsquemaFretes`) — por isso resetamos os módulos antes de reimportar, sem
+    // recriar as tabelas (os nomes em `process.env.*_TABELA` continuam os mesmos).
+    await mock.fechar();
+    mock = await iniciarMockN8n(() => ({ status: 200 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    vi.resetModules();
+    const integracaoAtualizada = await import('../../src/fretes/integracaoCotacoesServico.js');
+
+    const reenviada = await integracaoAtualizada.servicoReenviarSolicitacao(solicitacao.id, USUARIO_TESTE);
+    expect(reenviada.id).toBe(solicitacao.id); // mesma linha, nunca uma nova
+    expect(reenviada.codigoReferencia).toBe(solicitacao.codigoReferencia);
+    expect(reenviada.status).toBe('ENVIADA');
+    expect(reenviada.tentativas).toBe(2);
+
+    const listadas = await integracaoAtualizada.servicoListarSolicitacoes(cotacao.id);
+    expect(listadas).toHaveLength(1); // nunca duplicou
+  });
+
+  it('reenvio só é permitido quando o status atual é ERRO', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 200 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao.status).toBe('ENVIADA');
+
+    await expect(integracao.servicoReenviarSolicitacao(solicitacao.id, USUARIO_TESTE)).rejects.toThrow(/status ERRO/);
+  });
+
+  it('SSRF: a URL do n8n vem só da configuração do servidor — um campo extra no corpo da requisição do usuário nunca é usado como destino do envio', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 200 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+
+    // `servicoSolicitarCotacoes` nem aceita um parâmetro de URL — não há como o chamador
+    // (rota HTTP) direcionar o envio para outro destino, mesmo que tentasse.
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao.status).toBe('ENVIADA');
+    expect(mock.chamadas).toHaveLength(1); // o único destino possível é a URL configurada no servidor
+  });
+
+  it('round-trip completo: outbound (ETK → n8n) seguido de inbound real (n8n → ETK) usando a referência devolvida', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 200 })); // n8n "recebeu" a solicitação
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao.status).toBe('ENVIADA');
+
+    // Simula o n8n devolvendo uma resposta mock (seção 18) usando a MESMA referência.
+    const resultado = await integracao.servicoProcessarRespostaWebhook({
+      referencia: solicitacao.codigoReferencia,
+      canal: 'API',
+      mensagemId: 'teste-round-trip-1',
+      conteudoBruto: 'resposta mock do n8n',
+      versaoExtrator: 'n8n-mock',
+      extracao: {
+        valorFrete: 1000,
+        prazoDias: 3,
+        validade: null,
+        pedagio: null,
+        gris: null,
+        adValorem: null,
+        taxas: [],
+        observacoes: 'teste',
+        numeroProposta: null,
+        confianca: 1,
+      },
+    });
+    expect(resultado.proposta?.status).toBe('PENDENTE_VALIDACAO'); // nunca aprovada automaticamente
+
+    const solicitacaoFinal = await integracao.servicoListarSolicitacoes(cotacao.id);
+    expect(solicitacaoFinal[0]?.status).toBe('RESPONDIDA');
   });
 });
