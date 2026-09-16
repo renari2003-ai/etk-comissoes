@@ -346,6 +346,14 @@ export async function servicoSelecionarProposta(cotacaoId: string, propostaId: s
   if (cotacao.modalidadeExecucao !== 'TRANSPORTADORA') {
     throw new ErroValidacao(`Seleção de proposta só se aplica à modalidade TRANSPORTADORA (esta cotação é ${cotacao.modalidadeExecucao}).`);
   }
+  // Fase 4A.1, seção 7/38: uma proposta recebida automaticamente NUNCA pode ser selecionada
+  // antes de um humano validar os dados extraídos — nem com alta confiança da IA. Busca
+  // direta (não via `servicoListarPropostas`) porque só precisamos checar esta proposta.
+  const propostaAtual = await listarPropostasPorCotacao(cotacaoId);
+  const alvo = propostaAtual.find((p) => p.id === propostaId);
+  if (alvo?.status === 'PENDENTE_VALIDACAO') {
+    throw new ErroValidacao('Esta proposta ainda não foi validada. Revise os dados extraídos antes de selecioná-la.');
+  }
   const proposta = await selecionarPropostaTransacional(cotacaoId, propostaId);
   await definirStatusCotacao(cotacaoId, 'AGUARDANDO_APROVACAO');
   await registrarAuditoria({ usuarioId, acao: 'PROPOSTA_SELECIONADA', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });

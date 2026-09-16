@@ -1,7 +1,7 @@
 /** Validações específicas do módulo de Fretes (seção 11) — nunca confia só no frontend. */
 
 import { ErroValidacao } from '../validacao.js';
-import type { Modalidade, ModalidadeExecucao } from './tipos.js';
+import type { CanalOrigemProposta, Modalidade, ModalidadeExecucao } from './tipos.js';
 
 export function validarTextoObrigatorio(valor: unknown, campo: string): string {
   if (typeof valor !== 'string' || valor.trim() === '') {
@@ -137,4 +137,34 @@ export function validarDestinoManualOpcional(valor: unknown): DestinoManualInfor
     throw new ErroValidacao('O destino informado manualmente precisa de ao menos CEP, ou logradouro e cidade.');
   }
   return destino;
+}
+
+// --- Fase 4A.1 — automação de cotações com transportadoras ----------------------------
+
+const CANAIS_ORIGEM: readonly CanalOrigemProposta[] = ['EMAIL', 'WHATSAPP', 'MANUAL', 'API', 'OUTRO'];
+
+export function validarCanalOrigem(valor: unknown, campo: string): CanalOrigemProposta {
+  if (typeof valor !== 'string' || !CANAIS_ORIGEM.includes(valor as CanalOrigemProposta)) {
+    throw new ErroValidacao(`O campo "${campo}" deve ser um dos: ${CANAIS_ORIGEM.join(', ')}.`);
+  }
+  return valor as CanalOrigemProposta;
+}
+
+/** Limite conservador (seção 22/50) — nunca guarda um corpo de e-mail/WhatsApp inteiro sem limite. */
+export function validarTextoComTamanhoMaximo(valor: unknown, campo: string, tamanhoMaximo: number): string | null {
+  const texto = validarTextoOpcional(valor, campo);
+  if (texto !== null && texto.length > tamanhoMaximo) {
+    throw new ErroValidacao(`O campo "${campo}" excede o tamanho máximo de ${tamanhoMaximo} caracteres.`);
+  }
+  return texto;
+}
+
+/** Confiança da extração (seção 38) — só um número entre 0 e 1; NUNCA usado para decisão financeira, só para alerta/priorização visual. */
+export function validarConfiancaOpcional(valor: unknown): number | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  const numero = Number(valor);
+  if (!Number.isFinite(numero) || numero < 0 || numero > 1) {
+    throw new ErroValidacao('O campo "confianca" deve ser um número entre 0 e 1.');
+  }
+  return numero;
 }

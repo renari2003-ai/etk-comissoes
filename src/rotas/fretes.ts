@@ -1,5 +1,9 @@
+import { timingSafeEqual } from 'node:crypto';
+import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
+import { ErroSemPermissao } from '../auth/erros.js';
+import { config } from '../config.js';
 import type { ClienteOmie } from '../omie/cliente.js';
 import { ErroValidacao } from '../validacao.js';
 import {
@@ -27,8 +31,17 @@ import {
   servicoRejeitarProposta,
   servicoSelecionarProposta,
 } from '../fretes/fretesServico.js';
-import type { ModalidadeExecucao, StatusCotacao } from '../fretes/tipos.js';
 import {
+  servicoBuscarOrigemProposta,
+  servicoListarInboxPropostas,
+  servicoListarSolicitacoes,
+  servicoProcessarRespostaWebhook,
+  servicoSolicitarCotacoes,
+  servicoValidarProposta,
+} from '../fretes/integracaoCotacoesServico.js';
+import type { CanalOrigemProposta, ModalidadeExecucao, StatusCotacao } from '../fretes/tipos.js';
+import {
+  validarCanalOrigem,
   validarCnpjOpcional,
   validarDestinoManualOpcional,
   validarEmailOpcional,
@@ -43,6 +56,7 @@ import {
   validarUuid,
   validarUuidOpcional,
 } from '../fretes/validacao.js';
+import { validarPayloadWebhookResposta } from '../fretes/webhookCotacoes.js';
 import { assincrono } from './erroHttp.js';
 
 const MODALIDADES_EXECUCAO_VALIDAS: readonly ModalidadeExecucao[] = ['TRANSPORTADORA', 'VEICULO_PROPRIO', 'RETIRA'];
@@ -69,6 +83,35 @@ function validarStatusOpcional(valor: unknown): StatusCotacao | undefined {
     throw new ErroValidacao(`O parâmetro "status" deve ser um dos: ${STATUS_VALIDOS.join(', ')}.`);
   }
   return valor as StatusCotacao;
+}
+
+/**
+ * Autenticação máquina-a-máquina do webhook de cotações (Fase 4A.1, seção 20/21/52) — NUNCA
+ * depende de cookie/sessão de usuário. Compara com `timingSafeEqual` (evita side-channel de
+ * tempo) e falha fechado: segredo não configurado (`config.fretesWebhookSecret` vazio)
+ * rejeita TODA chamada, nunca trata "sem segredo" como "sem proteção". O valor do segredo
+ * nunca é logado, só o resultado (autorizado/negado).
+ */
+function exigirSegredoWebhookFretes(req: Request, _res: Response, next: NextFunction): void {
+  const segredoConfigurado = config.fretesWebhookSecret;
+  const segredoRecebido = req.header('x-fretes-webhook-secret') ?? '';
+  if (segredoConfigurado.trim() === '' || segredoRecebido === '') {
+    next(new ErroSemPermissao('Webhook não autorizado.'));
+    return;
+  }
+  const bufferConfigurado = Buffer.from(segredoConfigurado);
+  const bufferRecebido = Buffer.from(segredoRecebido);
+  const autorizado = bufferConfigurado.length === bufferRecebido.length && timingSafeEqual(bufferConfigurado, bufferRecebido);
+  if (!autorizado) {
+    next(new ErroSemPermissao('Webhook não autorizado.'));
+    return;
+  }
+  next();
+}
+
+function validarCanalOpcional(valor: unknown): CanalOrigemProposta {
+  if (valor === undefined || valor === null || valor === '') return 'EMAIL';
+  return validarCanalOrigem(valor, 'canal');
 }
 
 /**
@@ -387,6 +430,94 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     assincrono(async (req, res) => {
       const id = validarUuid(req.params.id, 'id');
       res.json(await servicoRejeitarProposta(id, req.usuario!.id));
+    }),
+  );
+
+  // --- Fase 4A.1: solicitações de cotação (seção 12/25/35) -----------------
+
+  rotas.get(
+    '/api/fretes/cotacoes/:id/solicitacoes',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json({ solicitacoes: await servicoListarSolicitacoes(id) });
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/cotacoes/:id/solicitacoes',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const bruto = req.body?.transportadoraIds;
+      if (!Array.isArray(bruto) || bruto.length === 0) {
+        throw new ErroValidacao('O campo "transportadoraIds" deve ser uma lista com ao menos um id.');
+      }
+      const transportadoraIds = bruto.map((v, i) => validarUuid(v, `transportadoraIds[${i}]`));
+      const canal = validarCanalOpcional(req.body?.canal);
+      const solicitacoes = await servicoSolicitarCotacoes(cotacaoId, transportadoraIds, canal, req.usuario!.id);
+      res.status(201).json({ solicitacoes });
+    }),
+  );
+
+  // --- Fase 4A.1: caixa de entrada e validação humana (seção 17/36/37) -----
+
+  rotas.get(
+    '/api/fretes/propostas/pendentes',
+    ...protegida,
+    assincrono(async (_req, res) => {
+      res.json(await servicoListarInboxPropostas());
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/propostas/:id/origem',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      const origem = await servicoBuscarOrigemProposta(id);
+      if (origem === null) {
+        res.status(404).json({ erro: 'Esta proposta não tem origem automática registrada (foi criada manualmente).' });
+        return;
+      }
+      res.json(origem);
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/propostas/:id/validar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      const correcao = {
+        valorCusto: req.body?.valorCusto !== undefined ? validarNumeroNaoNegativoObrigatorio(req.body.valorCusto, 'valorCusto') : undefined,
+        prazoDias: req.body?.prazoDias !== undefined ? validarInteiroNaoNegativoOpcional(req.body.prazoDias, 'prazoDias') : undefined,
+        validade: req.body?.validade !== undefined ? validarTextoOpcional(req.body.validade, 'validade') : undefined,
+        observacoes: req.body?.observacoes !== undefined ? validarTextoOpcional(req.body.observacoes, 'observacoes') : undefined,
+        tipoServico: req.body?.tipoServico !== undefined ? validarTextoOpcional(req.body.tipoServico, 'tipoServico') : undefined,
+      };
+      res.json(await servicoValidarProposta(id, correcao, req.usuario!.id));
+    }),
+  );
+
+  // --- Fase 4A.1: webhook de entrada (n8n → ETK, seção 20) ------------------
+  // NUNCA usa `exigirAutenticacao`/`exigirPermissao` (essas dependem de sessão de usuário,
+  // seção 52) — autenticação própria máquina-a-máquina via `exigirSegredoWebhookFretes`.
+
+  rotas.post(
+    '/api/fretes/integracoes/cotacoes/resposta',
+    exigirSegredoWebhookFretes,
+    assincrono(async (req, res) => {
+      const payload = validarPayloadWebhookResposta(req.body);
+      const resultado = await servicoProcessarRespostaWebhook(payload);
+      res.status(200).json({
+        recebido: true,
+        duplicado: resultado.duplicado,
+        respostaId: resultado.resposta.id,
+        extracaoId: resultado.extracao.id,
+        extracaoStatus: resultado.extracao.status,
+        propostaId: resultado.proposta?.id ?? null,
+      });
     }),
   );
 

@@ -33,6 +33,16 @@ export function nomeTabelaAuditoria(): string {
 export function nomeSequenciaCodigoCotacao(): string {
   return nomeValidado(process.env.COTACOES_FRETE_SEQ ?? 'cotacoes_frete_codigo_seq');
 }
+// Fase 4A.1 — automação de cotações com transportadoras (seção 12/14/15).
+export function nomeTabelaSolicitacoes(): string {
+  return nomeValidado(process.env.SOLICITACOES_COTACAO_TABELA ?? 'solicitacoes_cotacao_frete');
+}
+export function nomeTabelaRespostas(): string {
+  return nomeValidado(process.env.RESPOSTAS_COTACAO_TABELA ?? 'respostas_cotacao_frete');
+}
+export function nomeTabelaExtracoes(): string {
+  return nomeValidado(process.env.EXTRACOES_PROPOSTA_TABELA ?? 'extracoes_proposta_frete');
+}
 
 /**
  * Cria (se ainda não existirem) todas as tabelas novas do módulo de Fretes — nunca toca
@@ -236,6 +246,115 @@ export function garantirEsquemaFretes(): Promise<void> {
         criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
         origem TEXT NOT NULL DEFAULT 'sistema'
       )
+    `);
+    // Fase 4A.1 (seção 34) — eventos de origem máquina (webhook n8n) não têm usuário humano
+    // associado. Mesmo padrão já usado em `fechamentos.proposta_id`/`transportadora_id`
+    // (DROP NOT NULL aditivo, nunca invalida linha existente).
+    await executarDdlIdempotente(`ALTER TABLE ${auditoria} ALTER COLUMN usuario_id DROP NOT NULL`);
+
+    // ========================================================================================
+    // Fase 4A.1 — automação de cotações com transportadoras (e-mail/WhatsApp/n8n/IA).
+    // IA e automação NUNCA escolhem transportadora, definem acréscimo ou fecham cotação —
+    // só coletam/estruturam dados; a decisão comercial final permanece humana (ver relatório
+    // da fase). Tabelas 100% novas e isoladas do domínio Fretes; nenhuma tabela protegida
+    // (usuarios/sessoes/omie_cache/omie_limitador) nem as 6 tabelas de Fretes já existentes
+    // acima perdem coluna, constraint restritiva ou dado.
+    // ========================================================================================
+    const solicitacoes = nomeTabelaSolicitacoes();
+    const respostas = nomeTabelaRespostas();
+    const extracoes = nomeTabelaExtracoes();
+
+    // codigo_referencia (seção 24) é o identificador seguro incluído na comunicação enviada
+    // à transportadora — é ele, nunca nome/assunto/texto aproximado, que reconcilia a
+    // resposta recebida de volta com esta solicitação (seção 23). UNIQUE garante que o
+    // webhook sempre encontre no máximo uma solicitação por referência.
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${solicitacoes} (
+        id UUID PRIMARY KEY,
+        cotacao_frete_id UUID NOT NULL REFERENCES ${cotacoes}(id),
+        transportadora_id UUID NOT NULL REFERENCES ${transportadoras}(id),
+        canal TEXT NOT NULL CHECK (canal IN ('EMAIL','WHATSAPP','MANUAL','API','OUTRO')),
+        status TEXT NOT NULL DEFAULT 'PENDENTE_ENVIO' CHECK (status IN ('PENDENTE_ENVIO','ENVIADA','ENTREGUE','RESPONDIDA','ERRO','CANCELADA')),
+        codigo_referencia TEXT NOT NULL UNIQUE,
+        data_envio TIMESTAMPTZ,
+        data_resposta TIMESTAMPTZ,
+        identificador_externo TEXT,
+        tentativas INTEGER NOT NULL DEFAULT 0,
+        erro_ultima_tentativa TEXT,
+        criado_por UUID NOT NULL,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${solicitacoes}_cotacao ON ${solicitacoes} (cotacao_frete_id)`);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${solicitacoes}_transportadora ON ${solicitacoes} (transportadora_id)`);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${solicitacoes}_status ON ${solicitacoes} (status)`);
+
+    // Material bruto — NUNCA alterado depois de criado (seção 18); correções humanas
+    // alteram só a proposta estruturada. UNIQUE (canal, identificador_mensagem) é a
+    // idempotência em nível de banco (seção 19): a mesma mensagem chegando duas vezes
+    // nunca gera duas linhas aqui (a segunda tentativa de INSERT é ignorada pelo
+    // repositório via ON CONFLICT, nunca vira um erro pro chamador do webhook).
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${respostas} (
+        id UUID PRIMARY KEY,
+        solicitacao_id UUID NOT NULL REFERENCES ${solicitacoes}(id),
+        canal TEXT NOT NULL CHECK (canal IN ('EMAIL','WHATSAPP','MANUAL','API','OUTRO')),
+        identificador_mensagem TEXT NOT NULL,
+        conteudo_bruto TEXT,
+        data_recebimento TIMESTAMPTZ NOT NULL DEFAULT now(),
+        status_processamento TEXT NOT NULL DEFAULT 'PENDENTE' CHECK (status_processamento IN ('PENDENTE','PROCESSADA','ERRO')),
+        erro_processamento TEXT,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (canal, identificador_mensagem)
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${respostas}_solicitacao ON ${respostas} (solicitacao_id)`);
+
+    // A extração NÃO é a proposta definitiva (seção 15). `proposta_id` só é preenchido
+    // quando houver `valorFrete` utilizável (seção 40: nunca inferir valor) — permanece
+    // NULL nos casos ERRO/REQUER_REVISAO sem valor, que ficam só nesta tabela + na
+    // resposta bruta associada, aguardando ação manual (seção 41).
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${extracoes} (
+        id UUID PRIMARY KEY,
+        resposta_id UUID NOT NULL REFERENCES ${respostas}(id),
+        versao_extrator TEXT NOT NULL,
+        dados_extraidos JSONB NOT NULL,
+        confianca NUMERIC,
+        status TEXT NOT NULL CHECK (status IN ('EXTRAIDA','REQUER_REVISAO','ERRO')),
+        proposta_id UUID REFERENCES ${propostas}(id),
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${extracoes}_resposta ON ${extracoes} (resposta_id)`);
+
+    // Rastreabilidade proposta ↔ solicitação (seção 33) — NULL em toda proposta manual
+    // (Fase 1, inalterada). Aditivo/nullable, mesmo padrão das demais colunas desta fase.
+    await executarDdlIdempotente(`ALTER TABLE ${propostas} ADD COLUMN IF NOT EXISTS solicitacao_id UUID REFERENCES ${solicitacoes}(id)`);
+
+    // Único ponto desta fase que NÃO é uma simples ADD COLUMN: amplia o CHECK de `status`
+    // de `propostas` para admitir 'PENDENTE_VALIDACAO' (seção 7) sem invalidar nenhum valor
+    // já aceito antes — só ADICIONA uma opção. Descobre o nome real da constraint em
+    // vez de supor `${propostas}_status_check` (mais seguro contra qualquer diferença de
+    // nome herdada de uma criação anterior da tabela); idempotente — rodar de novo encontra
+    // a constraint já ampliada e a recria de forma idêntica, sem efeito.
+    await executarDdlIdempotente(`
+      DO $$
+      DECLARE
+        nome_constraint text;
+      BEGIN
+        SELECT con.conname INTO nome_constraint
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
+        WHERE rel.relname = '${propostas}' AND con.contype = 'c' AND att.attname = 'status';
+        IF nome_constraint IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE ${propostas} DROP CONSTRAINT %I', nome_constraint);
+        END IF;
+        EXECUTE 'ALTER TABLE ${propostas} ADD CONSTRAINT ${propostas}_status_check
+          CHECK (status IN (''RECEBIDA'',''EM_ANALISE'',''SELECIONADA'',''REJEITADA'',''PENDENTE_VALIDACAO''))';
+      END $$;
     `);
   })();
   return esquemaGarantido;

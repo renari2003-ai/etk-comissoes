@@ -1,0 +1,112 @@
+import { randomUUID } from 'node:crypto';
+import { obterPool } from '../db.js';
+import { ErroValidacao } from '../validacao.js';
+import { garantirEsquemaFretes, nomeTabelaSolicitacoes } from './schema.js';
+import type { CanalOrigemProposta, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
+
+interface LinhaSolicitacao {
+  id: string;
+  cotacao_frete_id: string;
+  transportadora_id: string;
+  canal: CanalOrigemProposta;
+  status: StatusSolicitacaoCotacao;
+  codigo_referencia: string;
+  data_envio: Date | null;
+  data_resposta: Date | null;
+  identificador_externo: string | null;
+  tentativas: number;
+  erro_ultima_tentativa: string | null;
+  criado_por: string;
+  criado_em: Date;
+  atualizado_em: Date;
+}
+
+function linhaParaSolicitacao(l: LinhaSolicitacao): SolicitacaoCotacao {
+  return {
+    id: l.id,
+    cotacaoFreteId: l.cotacao_frete_id,
+    transportadoraId: l.transportadora_id,
+    canal: l.canal,
+    status: l.status,
+    codigoReferencia: l.codigo_referencia,
+    dataEnvio: l.data_envio === null ? null : l.data_envio.toISOString(),
+    dataResposta: l.data_resposta === null ? null : l.data_resposta.toISOString(),
+    identificadorExterno: l.identificador_externo,
+    tentativas: l.tentativas,
+    erroUltimaTentativa: l.erro_ultima_tentativa,
+    criadoPor: l.criado_por,
+    criadoEm: l.criado_em.toISOString(),
+    atualizadoEm: l.atualizado_em.toISOString(),
+  };
+}
+
+export interface DadosNovaSolicitacao {
+  cotacaoFreteId: string;
+  transportadoraId: string;
+  canal: CanalOrigemProposta;
+  codigoReferencia: string;
+  criadoPor: string;
+}
+
+export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<SolicitacaoCotacao> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const id = randomUUID();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `INSERT INTO ${nomeTabelaSolicitacoes()}
+       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por)
+     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6)
+     RETURNING *`,
+    [id, dados.cotacaoFreteId, dados.transportadoraId, dados.canal, dados.codigoReferencia, dados.criadoPor],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new Error('Falha ao criar solicitação de cotação.');
+  return linhaParaSolicitacao(linha);
+}
+
+export async function listarSolicitacoesPorCotacao(cotacaoFreteId: string): Promise<SolicitacaoCotacao[]> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `SELECT * FROM ${nomeTabelaSolicitacoes()} WHERE cotacao_frete_id = $1 ORDER BY criado_em ASC`,
+    [cotacaoFreteId],
+  );
+  return rows.map(linhaParaSolicitacao);
+}
+
+export async function buscarSolicitacaoPorId(id: string): Promise<SolicitacaoCotacao | null> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(`SELECT * FROM ${nomeTabelaSolicitacoes()} WHERE id = $1`, [id]);
+  const linha = rows[0];
+  return linha === undefined ? null : linhaParaSolicitacao(linha);
+}
+
+/**
+ * `codigoReferencia` é a chave de reconciliação segura (seção 23/24) — é através dela,
+ * nunca de nome/assunto/texto aproximado, que o webhook (Fase 4A.1, seção 20) encontra a
+ * solicitação correspondente a uma resposta recebida.
+ */
+export async function buscarSolicitacaoPorCodigoReferencia(codigoReferencia: string): Promise<SolicitacaoCotacao | null> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `SELECT * FROM ${nomeTabelaSolicitacoes()} WHERE codigo_referencia = $1`,
+    [codigoReferencia],
+  );
+  const linha = rows[0];
+  return linha === undefined ? null : linhaParaSolicitacao(linha);
+}
+
+/** Marca a solicitação como respondida (seção 13) — chamado pelo webhook ao processar uma resposta nova (nunca em uma duplicata idempotente). */
+export async function marcarSolicitacaoRespondida(id: string): Promise<SolicitacaoCotacao> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `UPDATE ${nomeTabelaSolicitacoes()} SET status = 'RESPONDIDA', data_resposta = now(), atualizado_em = now() WHERE id = $1 RETURNING *`,
+    [id],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
+  return linhaParaSolicitacao(linha);
+}

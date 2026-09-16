@@ -129,6 +129,7 @@
       <button type="button" id="fretes-aba-importar-omie" class="aba-tipo-documento" role="tab" aria-selected="false">Importar do Pedido Omie</button>
       <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
       <button type="button" id="fretes-aba-veiculos" class="aba-tipo-documento" role="tab" aria-selected="false">Veículos</button>
+      <button type="button" id="fretes-aba-propostas-recebidas" class="aba-tipo-documento" role="tab" aria-selected="false">Propostas recebidas <span id="fretes-badge-pendentes" class="badge-pendente" hidden>0</span></button>
     </nav>
 
     <section id="fretes-secao-dashboard">
@@ -377,6 +378,32 @@
       <p id="fretes-detalhe-erro" class="painel-login-erro" hidden></p>
 
       <section id="fretes-detalhe-bloco-transportadora">
+        <section id="fretes-detalhe-solicitacoes-secao">
+          <h3 class="titulo-secao">Solicitar cotação</h3>
+          <p class="filtro-data-legenda">
+            Registra uma solicitação rastreável por transportadora selecionada (referência única para reconciliar a
+            resposta). O envio real por e-mail/WhatsApp é uma fase futura — aqui a solicitação fica registrada,
+            aguardando envio.
+          </p>
+          <div id="fretes-solicitacoes-checkboxes" class="filtros-relatorio"></div>
+          <button type="button" id="fretes-botao-solicitar-cotacao" class="botao-secundario">Solicitar cotação</button>
+          <p id="fretes-solicitacao-erro" class="painel-login-erro" hidden></p>
+          <div class="tabela-rolagem">
+            <table id="fretes-tabela-solicitacoes">
+              <thead>
+                <tr>
+                  <th scope="col">Transportadora</th>
+                  <th scope="col">Canal</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Enviado em</th>
+                  <th scope="col">Respondido em</th>
+                </tr>
+              </thead>
+              <tbody id="fretes-tabela-solicitacoes-corpo"></tbody>
+            </table>
+          </div>
+        </section>
+
         <section id="fretes-detalhe-form-secao">
           <h3 class="titulo-secao">Nova proposta</h3>
           <form id="fretes-form-nova-proposta" class="filtros-relatorio" autocomplete="off">
@@ -589,6 +616,38 @@
             </tr>
           </thead>
           <tbody id="fretes-tabela-veiculos-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="fretes-secao-propostas-recebidas" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Propostas recebidas automaticamente</h2>
+      </div>
+      <p class="filtro-data-legenda">
+        Propostas chegadas por e-mail/WhatsApp/API ficam aqui até um humano confirmar os dados extraídos — nunca são aprovadas
+        automaticamente, mesmo com alta confiança da extração. Corrija os campos abaixo antes de confirmar, se necessário.
+      </p>
+      <div id="fretes-propostas-recebidas-lista"></div>
+      <p id="fretes-propostas-recebidas-vazio" class="filtro-data-legenda" hidden>Nenhuma proposta pendente de validação no momento.</p>
+
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Respostas sem proposta (revisão manual)</h2>
+      </div>
+      <p class="filtro-data-legenda">
+        Mensagens recebidas cuja extração não teve um valor de frete utilizável — nunca inferido automaticamente. Crie a
+        proposta manualmente na cotação correspondente, se aplicável.
+      </p>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-respostas-sem-proposta">
+          <thead>
+            <tr>
+              <th scope="col">Canal</th>
+              <th scope="col">Recebido em</th>
+              <th scope="col">Mensagem</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-respostas-sem-proposta-corpo"></tbody>
         </table>
       </div>
     </section>

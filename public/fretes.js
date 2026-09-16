@@ -5,6 +5,21 @@
  * estrutural de `usuarios.ts`/`relatorios.ts`: `{ ativar }` plugado pelo `app.ts`.
  */
 import { formatarMoeda, formatarPercentual } from './formatacao.js';
+const ROTULOS_CANAL = {
+    EMAIL: 'E-mail',
+    WHATSAPP: 'WhatsApp',
+    MANUAL: 'Manual',
+    API: 'API',
+    OUTRO: 'Outro',
+};
+const ROTULOS_STATUS_SOLICITACAO = {
+    PENDENTE_ENVIO: 'Pendente de envio',
+    ENVIADA: 'Enviada',
+    ENTREGUE: 'Entregue',
+    RESPONDIDA: 'Respondida',
+    ERRO: 'Erro',
+    CANCELADA: 'Cancelada',
+};
 const ROTULOS_MODALIDADE_EXECUCAO = {
     TRANSPORTADORA: 'Transportadora',
     VEICULO_PROPRIO: 'Veículo próprio',
@@ -53,12 +68,15 @@ export function inicializarFretes() {
     const abaImportarOmie = el('fretes-aba-importar-omie');
     const abaTransportadoras = el('fretes-aba-transportadoras');
     const abaVeiculos = el('fretes-aba-veiculos');
+    const abaPropostasRecebidas = el('fretes-aba-propostas-recebidas');
     const secaoDashboard = el('fretes-secao-dashboard');
     const secaoCotacoes = el('fretes-secao-cotacoes');
     const secaoImportarOmie = el('fretes-secao-importar-omie');
     const secaoDetalhe = el('fretes-secao-detalhe');
     const secaoTransportadoras = el('fretes-secao-transportadoras');
     const secaoVeiculos = el('fretes-secao-veiculos');
+    const secaoPropostasRecebidas = el('fretes-secao-propostas-recebidas');
+    const badgePendentes = el('fretes-badge-pendentes');
     let ativado = false;
     let transportadorasCache = [];
     let veiculosCache = [];
@@ -73,11 +91,13 @@ export function inicializarFretes() {
         secaoDetalhe.hidden = sub !== 'detalhe';
         secaoTransportadoras.hidden = sub !== 'transportadoras';
         secaoVeiculos.hidden = sub !== 'veiculos';
+        secaoPropostasRecebidas.hidden = sub !== 'propostas-recebidas';
         abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
         abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
         abaImportarOmie.classList.toggle('aba-ativa', sub === 'importar-omie');
         abaTransportadoras.classList.toggle('aba-ativa', sub === 'transportadoras');
         abaVeiculos.classList.toggle('aba-ativa', sub === 'veiculos');
+        abaPropostasRecebidas.classList.toggle('aba-ativa', sub === 'propostas-recebidas');
     }
     // --- Dashboard -----------------------------------------------------------
     async function carregarDashboard() {
@@ -465,6 +485,9 @@ export function inicializarFretes() {
             const propostas = respostaPropostas.ok ? (await respostaPropostas.json()).propostas : [];
             renderizarTabelaPropostas(propostas, cotacaoEncerrada);
             propostaSelecionada = propostas.find((p) => p.selecionada) ?? null;
+            renderizarCheckboxesSolicitacao();
+            el('fretes-botao-solicitar-cotacao').disabled = cotacaoEncerrada;
+            void carregarSolicitacoes();
         }
         else if (modalidadeExecucao === 'VEICULO_PROPRIO') {
             renderizarInfoVeiculo(cotacao);
@@ -532,9 +555,21 @@ export function inicializarFretes() {
             tr.appendChild(celula(proposta.prazoDias !== null ? `${proposta.prazoDias} dia(s)` : '—'));
             tr.appendChild(celula(proposta.validade ?? '—'));
             tr.appendChild(celula(proposta.tipoServico ?? '—'));
-            tr.appendChild(celula(proposta.selecionada ? 'Selecionada' : proposta.status === 'REJEITADA' ? 'Rejeitada' : 'Recebida'));
+            const rotuloStatus = proposta.status === 'PENDENTE_VALIDACAO'
+                ? 'Pendente de validação'
+                : proposta.selecionada
+                    ? 'Selecionada'
+                    : proposta.status === 'REJEITADA'
+                        ? 'Rejeitada'
+                        : 'Recebida';
+            tr.appendChild(celula(rotuloStatus));
+            if (proposta.status === 'PENDENTE_VALIDACAO')
+                tr.className = 'linha-pendente-validacao';
             const tdAcoes = document.createElement('td');
-            if (!cotacaoEncerrada && !proposta.selecionada && proposta.status !== 'REJEITADA') {
+            if (proposta.status === 'PENDENTE_VALIDACAO') {
+                tdAcoes.textContent = 'Revise em "Propostas recebidas"';
+            }
+            else if (!cotacaoEncerrada && !proposta.selecionada && proposta.status !== 'REJEITADA') {
                 const botaoSelecionar = document.createElement('button');
                 botaoSelecionar.type = 'button';
                 botaoSelecionar.className = 'botao-secundario';
@@ -569,6 +604,234 @@ export function inicializarFretes() {
             tr.appendChild(tdAcoes);
             corpo.appendChild(tr);
         }
+    }
+    // --- Fase 4A.1: solicitar cotação (seção 12/25/35) ------------------------
+    function formatarDataHoraOuTraco(iso) {
+        if (iso === null)
+            return '—';
+        const data = new Date(iso);
+        return Number.isNaN(data.getTime()) ? '—' : data.toLocaleString('pt-BR');
+    }
+    function renderizarCheckboxesSolicitacao() {
+        const container = el('fretes-solicitacoes-checkboxes');
+        container.textContent = '';
+        for (const t of transportadorasCache.filter((t) => t.ativo)) {
+            const label = document.createElement('label');
+            label.className = 'campo-filtro';
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = t.id;
+            input.name = 'solicitacao-transportadora';
+            label.appendChild(input);
+            label.append(` ${t.nomeFantasia ? `${t.nomeRazaoSocial} (${t.nomeFantasia})` : t.nomeRazaoSocial}`);
+            container.appendChild(label);
+        }
+    }
+    async function carregarSolicitacoes() {
+        if (cotacaoAtualId === null)
+            return;
+        const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/solicitacoes`);
+        const solicitacoes = resposta.ok ? (await resposta.json()).solicitacoes : [];
+        const corpo = el('fretes-tabela-solicitacoes-corpo');
+        corpo.textContent = '';
+        for (const s of solicitacoes) {
+            const transportadora = transportadorasCache.find((t) => t.id === s.transportadoraId);
+            const tr = document.createElement('tr');
+            const celula = (texto) => {
+                const td = document.createElement('td');
+                td.textContent = texto;
+                return td;
+            };
+            tr.appendChild(celula(transportadora?.nomeRazaoSocial ?? '—'));
+            tr.appendChild(celula(ROTULOS_CANAL[s.canal]));
+            tr.appendChild(celula(ROTULOS_STATUS_SOLICITACAO[s.status]));
+            tr.appendChild(celula(formatarDataHoraOuTraco(s.dataEnvio)));
+            tr.appendChild(celula(formatarDataHoraOuTraco(s.dataResposta)));
+            corpo.appendChild(tr);
+        }
+    }
+    const botaoSolicitarCotacao = el('fretes-botao-solicitar-cotacao');
+    const erroSolicitacao = el('fretes-solicitacao-erro');
+    botaoSolicitarCotacao.addEventListener('click', () => {
+        void (async () => {
+            if (cotacaoAtualId === null)
+                return;
+            erroSolicitacao.hidden = true;
+            const marcadas = Array.from(document.querySelectorAll('input[name="solicitacao-transportadora"]:checked'));
+            const transportadoraIds = marcadas.map((i) => i.value);
+            if (transportadoraIds.length === 0) {
+                erroSolicitacao.textContent = 'Selecione ao menos uma transportadora.';
+                erroSolicitacao.hidden = false;
+                return;
+            }
+            const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/solicitacoes`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transportadoraIds, canal: 'EMAIL' }),
+            });
+            if (!resposta.ok) {
+                erroSolicitacao.textContent = await extrairMensagemErro(resposta);
+                erroSolicitacao.hidden = false;
+                return;
+            }
+            for (const i of marcadas)
+                i.checked = false;
+            void carregarSolicitacoes();
+        })();
+    });
+    // --- Fase 4A.1: "Propostas recebidas" — validação humana (seção 17/36/37/38) ---
+    async function atualizarBadgePendentes() {
+        const resposta = await fetch('/api/fretes/propostas/pendentes');
+        if (!resposta.ok)
+            return;
+        const dados = (await resposta.json());
+        const quantidade = dados.pendentesValidacao.length;
+        badgePendentes.textContent = String(quantidade);
+        badgePendentes.hidden = quantidade === 0;
+    }
+    async function carregarPropostasRecebidas() {
+        const resposta = await fetch('/api/fretes/propostas/pendentes');
+        const lista = el('fretes-propostas-recebidas-lista');
+        const vazio = el('fretes-propostas-recebidas-vazio');
+        lista.textContent = '';
+        if (!resposta.ok)
+            return;
+        const dados = (await resposta.json());
+        vazio.hidden = dados.pendentesValidacao.length > 0;
+        for (const proposta of dados.pendentesValidacao) {
+            lista.appendChild(await construirCardPropostaPendente(proposta));
+        }
+        const corpoSemProposta = el('fretes-tabela-respostas-sem-proposta-corpo');
+        corpoSemProposta.textContent = '';
+        for (const r of dados.respostasSemProposta) {
+            const tr = document.createElement('tr');
+            const celula = (texto) => {
+                const td = document.createElement('td');
+                td.textContent = texto;
+                return td;
+            };
+            tr.appendChild(celula(ROTULOS_CANAL[r.canal]));
+            tr.appendChild(celula(formatarDataHoraOuTraco(r.dataRecebimento)));
+            tr.appendChild(celula(r.conteudoBruto ?? '—'));
+            corpoSemProposta.appendChild(tr);
+        }
+        void atualizarBadgePendentes();
+    }
+    async function construirCardPropostaPendente(proposta) {
+        const transportadora = transportadorasCache.find((t) => t.id === proposta.transportadoraId);
+        const respostaOrigem = await fetch(`/api/fretes/propostas/${proposta.id}/origem`);
+        const origem = respostaOrigem.ok ? (await respostaOrigem.json()) : null;
+        const card = document.createElement('section');
+        card.className = 'painel-fechamento';
+        const titulo = document.createElement('h3');
+        titulo.className = 'titulo-secao';
+        titulo.textContent = `${transportadora?.nomeRazaoSocial ?? 'Transportadora'} ${proposta.requerRevisao ? '⚠️ requer revisão' : ''}`;
+        card.appendChild(titulo);
+        if (origem !== null) {
+            const mensagem = document.createElement('p');
+            mensagem.className = 'filtro-data-legenda';
+            mensagem.textContent = `Mensagem original (${ROTULOS_CANAL[origem.resposta.canal]}, ${formatarDataHoraOuTraco(origem.resposta.dataRecebimento)}): ${origem.resposta.conteudoBruto ?? '—'}`;
+            card.appendChild(mensagem);
+            if (origem.extracao.dadosExtraidos.confianca !== null) {
+                const confianca = document.createElement('p');
+                confianca.className = 'filtro-data-legenda';
+                confianca.textContent = `Confiança da extração: ${Math.round(origem.extracao.dadosExtraidos.confianca * 100)}% (apenas alerta — nunca decide sozinha)`;
+                card.appendChild(confianca);
+            }
+            if (origem.extracao.dadosExtraidos.taxas !== null && origem.extracao.dadosExtraidos.taxas.length > 0) {
+                const taxas = document.createElement('p');
+                taxas.className = 'filtro-data-legenda';
+                taxas.textContent = `Componentes adicionais informados: ${origem.extracao.dadosExtraidos.taxas.map((t) => `${t.nome}: ${formatarMoeda(t.valor)}`).join(', ')} — confira se devem ser somados ao custo abaixo.`;
+                card.appendChild(taxas);
+            }
+        }
+        const form = document.createElement('form');
+        form.className = 'filtros-relatorio';
+        form.autocomplete = 'off';
+        const campoCusto = document.createElement('div');
+        campoCusto.className = 'campo-filtro';
+        campoCusto.innerHTML = '<label>Custo (transportadora)</label>';
+        const inputCusto = document.createElement('input');
+        inputCusto.type = 'number';
+        inputCusto.min = '0';
+        inputCusto.step = '0.01';
+        inputCusto.value = String(proposta.valorCusto);
+        campoCusto.appendChild(inputCusto);
+        form.appendChild(campoCusto);
+        const campoPrazo = document.createElement('div');
+        campoPrazo.className = 'campo-filtro';
+        campoPrazo.innerHTML = '<label>Prazo (dias)</label>';
+        const inputPrazo = document.createElement('input');
+        inputPrazo.type = 'number';
+        inputPrazo.min = '0';
+        inputPrazo.step = '1';
+        inputPrazo.value = proposta.prazoDias !== null ? String(proposta.prazoDias) : '';
+        campoPrazo.appendChild(inputPrazo);
+        form.appendChild(campoPrazo);
+        const campoValidade = document.createElement('div');
+        campoValidade.className = 'campo-filtro';
+        campoValidade.innerHTML = '<label>Validade</label>';
+        const inputValidade = document.createElement('input');
+        inputValidade.type = 'date';
+        inputValidade.value = proposta.validade ?? '';
+        campoValidade.appendChild(inputValidade);
+        form.appendChild(campoValidade);
+        const campoObs = document.createElement('div');
+        campoObs.className = 'campo-filtro campo-filtro-busca';
+        campoObs.innerHTML = '<label>Observações</label>';
+        const inputObs = document.createElement('input');
+        inputObs.type = 'text';
+        inputObs.value = proposta.observacoes ?? '';
+        campoObs.appendChild(inputObs);
+        form.appendChild(campoObs);
+        card.appendChild(form);
+        const erro = document.createElement('p');
+        erro.className = 'painel-login-erro';
+        erro.hidden = true;
+        card.appendChild(erro);
+        const botaoConfirmar = document.createElement('button');
+        botaoConfirmar.type = 'button';
+        botaoConfirmar.className = 'botao-secundario';
+        botaoConfirmar.textContent = 'Confirmar (usa os valores acima)';
+        botaoConfirmar.addEventListener('click', () => {
+            void (async () => {
+                erro.hidden = true;
+                const resposta = await fetch(`/api/fretes/propostas/${proposta.id}/validar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        valorCusto: numeroOuNulo(inputCusto.value),
+                        prazoDias: numeroOuNulo(inputPrazo.value),
+                        validade: textoOuNulo(inputValidade.value),
+                        observacoes: textoOuNulo(inputObs.value),
+                    }),
+                });
+                if (!resposta.ok) {
+                    erro.textContent = await extrairMensagemErro(resposta);
+                    erro.hidden = false;
+                    return;
+                }
+                void carregarPropostasRecebidas();
+            })();
+        });
+        card.appendChild(botaoConfirmar);
+        const botaoRejeitar = document.createElement('button');
+        botaoRejeitar.type = 'button';
+        botaoRejeitar.className = 'botao-secundario';
+        botaoRejeitar.textContent = 'Rejeitar';
+        botaoRejeitar.addEventListener('click', () => {
+            void (async () => {
+                const resposta = await fetch(`/api/fretes/propostas/${proposta.id}/rejeitar`, { method: 'POST' });
+                if (!resposta.ok) {
+                    erro.textContent = await extrairMensagemErro(resposta);
+                    erro.hidden = false;
+                    return;
+                }
+                void carregarPropostasRecebidas();
+            })();
+        });
+        card.appendChild(botaoRejeitar);
+        return card;
     }
     const formNovaProposta = el('fretes-form-nova-proposta');
     const erroProposta = el('fretes-proposta-erro');
@@ -937,6 +1200,10 @@ export function inicializarFretes() {
         mostrarSubAba('veiculos');
         void carregarVeiculos();
     });
+    abaPropostasRecebidas.addEventListener('click', () => {
+        mostrarSubAba('propostas-recebidas');
+        void carregarPropostasRecebidas();
+    });
     return {
         ativar() {
             if (ativado)
@@ -946,6 +1213,7 @@ export function inicializarFretes() {
             void carregarDashboard();
             void carregarTransportadoras();
             void carregarVeiculos();
+            void atualizarBadgePendentes();
         },
     };
 }

@@ -3,12 +3,13 @@ import type { PoolClient } from 'pg';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeTabelaPropostas } from './schema.js';
-import type { PropostaFrete, StatusProposta } from './tipos.js';
+import type { CanalOrigemProposta, PropostaFrete, StatusProposta } from './tipos.js';
 
 interface LinhaProposta {
   id: string;
   cotacao_id: string;
   transportadora_id: string;
+  solicitacao_id: string | null;
   valor_custo: string;
   prazo_dias: number | null;
   validade: Date | null;
@@ -38,6 +39,7 @@ function linhaParaProposta(l: LinhaProposta): PropostaFrete {
     id: l.id,
     cotacaoId: l.cotacao_id,
     transportadoraId: l.transportadora_id,
+    solicitacaoId: l.solicitacao_id,
     valorCusto: Number(l.valor_custo),
     prazoDias: l.prazo_dias,
     validade: l.validade === null ? null : l.validade.toISOString().slice(0, 10),
@@ -173,4 +175,110 @@ export async function selecionarPropostaTransacional(
   } finally {
     if (precisaGerenciarTransacao) executor.release();
   }
+}
+
+// --- Fase 4A.1 — propostas nascidas de uma resposta automática (e-mail/WhatsApp/API) -----
+
+export interface DadosPropostaAutomatica {
+  cotacaoId: string;
+  transportadoraId: string;
+  solicitacaoId: string;
+  valorCusto: number;
+  prazoDias: number | null;
+  validade: string | null;
+  observacoes: string | null;
+  canal: CanalOrigemProposta;
+  mensagemOriginal: string | null;
+  confianca: number | null;
+  requerRevisao: boolean;
+}
+
+/**
+ * Nasce SEMPRE com `status = 'PENDENTE_VALIDACAO'` (seção 7) — nunca `'RECEBIDA'` (que
+ * tornaria a proposta imediatamente selecionável). Só sai desse status por ação humana
+ * explícita (`confirmarPropostaValidada`), mesmo que `confianca` venha altíssima da
+ * extração (seção 38: confiança da IA nunca decide sozinha).
+ */
+export async function criarPropostaAutomatica(dados: DadosPropostaAutomatica): Promise<PropostaFrete> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const id = randomUUID();
+  const { rows } = await pool.query<LinhaProposta>(
+    `INSERT INTO ${nomeTabelaPropostas()}
+       (id, cotacao_id, transportadora_id, solicitacao_id, valor_custo, prazo_dias, validade, observacoes,
+        origem_proposta, mensagem_original, status, confianca, requer_revisao, selecionada)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'PENDENTE_VALIDACAO', $11, $12, false)
+     RETURNING *`,
+    [
+      id,
+      dados.cotacaoId,
+      dados.transportadoraId,
+      dados.solicitacaoId,
+      dados.valorCusto,
+      dados.prazoDias,
+      dados.validade,
+      dados.observacoes,
+      dados.canal,
+      dados.mensagemOriginal,
+      dados.confianca,
+      dados.requerRevisao,
+    ],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new Error('Falha ao criar proposta automática.');
+  return linhaParaProposta(linha);
+}
+
+export interface CorrecaoPropostaPendente {
+  valorCusto?: number;
+  prazoDias?: number | null;
+  validade?: string | null;
+  observacoes?: string | null;
+  tipoServico?: string | null;
+}
+
+/**
+ * Ação humana que tira a proposta de `PENDENTE_VALIDACAO` (seção 17) — sempre para
+ * `'RECEBIDA'`, o MESMO status inicial de uma proposta manual (Fase 1): a partir daqui ela
+ * segue o fluxo já existente de comparação/seleção/fechamento sem nenhuma regra nova.
+ */
+export async function confirmarPropostaPendente(id: string, correcao: CorrecaoPropostaPendente): Promise<PropostaFrete> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaProposta>(
+    `UPDATE ${nomeTabelaPropostas()}
+        SET valor_custo = COALESCE($1, valor_custo),
+            prazo_dias = CASE WHEN $2 THEN $3 ELSE prazo_dias END,
+            validade = CASE WHEN $4 THEN $5 ELSE validade END,
+            observacoes = CASE WHEN $6 THEN $7 ELSE observacoes END,
+            tipo_servico = CASE WHEN $8 THEN $9 ELSE tipo_servico END,
+            status = 'RECEBIDA', requer_revisao = false, atualizado_em = now()
+      WHERE id = $10 AND status = 'PENDENTE_VALIDACAO'
+      RETURNING *`,
+    [
+      correcao.valorCusto ?? null,
+      correcao.prazoDias !== undefined,
+      correcao.prazoDias ?? null,
+      correcao.validade !== undefined,
+      correcao.validade ?? null,
+      correcao.observacoes !== undefined,
+      correcao.observacoes ?? null,
+      correcao.tipoServico !== undefined,
+      correcao.tipoServico ?? null,
+      id,
+    ],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new ErroValidacao('Proposta pendente de validação não encontrada (ou já validada/rejeitada).');
+  return linhaParaProposta(linha);
+}
+
+export async function listarPropostasPorStatus(status: StatusProposta): Promise<PropostaFrete[]> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaProposta>(
+    `SELECT * FROM ${nomeTabelaPropostas()} WHERE status = $1 ORDER BY criado_em ASC`,
+    [status],
+  );
+  return rows.map(linhaParaProposta);
 }

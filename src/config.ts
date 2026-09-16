@@ -23,6 +23,13 @@ export const config = {
   adminSenha: process.env.ADMIN_SENHA ?? '',
   /** Connection string do Postgres (Supabase) — ver `src/auth/db.ts`. */
   databaseUrl: process.env.DATABASE_URL ?? '',
+  /**
+   * Fase 4A.1 — segredo compartilhado do webhook máquina-a-máquina que recebe respostas de
+   * cotação (n8n → ETK). Nunca usa sessão/cookie de usuário (ver `rotas/fretes.ts`). Se
+   * vazio, o webhook rejeita TODAS as chamadas (fail closed) — nunca aceita um segredo vazio
+   * como "sem proteção".
+   */
+  fretesWebhookSecret: process.env.FRETES_WEBHOOK_SECRET ?? '',
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

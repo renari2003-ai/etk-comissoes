@@ -8,7 +8,118 @@ export type StatusCotacao =
   | 'FECHADA'
   | 'CANCELADA';
 
-export type StatusProposta = 'RECEBIDA' | 'EM_ANALISE' | 'SELECIONADA' | 'REJEITADA';
+/**
+ * `PENDENTE_VALIDACAO` (Fase 4A.1) — proposta que chegou por um canal automático (e-mail/
+ * WhatsApp/API) e ainda não foi conferida por um humano. NUNCA pode ser selecionada
+ * (`servicoSelecionarProposta` bloqueia explicitamente) nem entra no fechamento enquanto
+ * estiver neste status — só sai dele por ação humana explícita (`servicoValidarProposta`),
+ * que a move para `RECEBIDA` (mesmo status inicial que uma proposta manual sempre teve).
+ */
+export type StatusProposta = 'RECEBIDA' | 'EM_ANALISE' | 'SELECIONADA' | 'REJEITADA' | 'PENDENTE_VALIDACAO';
+
+/**
+ * Canal de origem de uma solicitação/resposta de cotação (Fase 4A.1, seção 11). `MANUAL`
+ * é o único canal já em uso (propostas criadas direto pela tela, Fase 1) — os demais
+ * existem desde já para não exigir migração de schema quando os canais reais (n8n/e-mail/
+ * WhatsApp) forem ligados nas fases seguintes (4A.2+).
+ */
+export type CanalOrigemProposta = 'EMAIL' | 'WHATSAPP' | 'MANUAL' | 'API' | 'OUTRO';
+
+/**
+ * Status de uma solicitação de cotação enviada a uma transportadora (Fase 4A.1, seção 13).
+ * Nesta fase (4A.1) o envio real (n8n → e-mail/WhatsApp) ainda não existe — a solicitação
+ * nasce e permanece `PENDENTE_ENVIO` até a Fase 4A.2 implementar o disparo real. Os demais
+ * valores já existem no enum para não exigir migração de schema depois.
+ */
+export type StatusSolicitacaoCotacao = 'PENDENTE_ENVIO' | 'ENVIADA' | 'ENTREGUE' | 'RESPONDIDA' | 'ERRO' | 'CANCELADA';
+
+/** Status de processamento do material bruto recebido (Fase 4A.1, seção 14). */
+export type StatusProcessamentoResposta = 'PENDENTE' | 'PROCESSADA' | 'ERRO';
+
+/**
+ * Status da extração automática (Fase 4A.1, seção 15/39). `REQUER_REVISAO` cobre tanto
+ * baixa confiança quanto dado incompleto/ambíguo (seção 39/40) — em nenhum dos dois casos
+ * um valor é inferido; a extração só chega a `EXTRAIDA` quando há um valor de frete
+ * utilizável extraído literalmente da mensagem.
+ */
+export type StatusExtracaoProposta = 'EXTRAIDA' | 'REQUER_REVISAO' | 'ERRO';
+
+/**
+ * Uma solicitação de cotação enviada a UMA transportadora para UMA cotação (Fase 4A.1,
+ * seção 12). `codigoReferencia` é o identificador seguro incluído na comunicação enviada à
+ * transportadora (seção 24) — é ele, nunca nome/assunto/texto aproximado, que reconcilia a
+ * resposta recebida de volta com esta solicitação (seção 23).
+ */
+export interface SolicitacaoCotacao {
+  id: string;
+  cotacaoFreteId: string;
+  transportadoraId: string;
+  canal: CanalOrigemProposta;
+  status: StatusSolicitacaoCotacao;
+  codigoReferencia: string;
+  dataEnvio: string | null;
+  dataResposta: string | null;
+  identificadorExterno: string | null;
+  tentativas: number;
+  erroUltimaTentativa: string | null;
+  criadoPor: string;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+/**
+ * Material bruto recebido de uma transportadora (Fase 4A.1, seção 14) — NUNCA alterado
+ * depois de criado (seção 18); correções humanas alteram só a proposta estruturada, nunca
+ * este registro. `identificadorMensagem` + `canal` formam a chave de idempotência (seção
+ * 19) — a mesma mensagem chegando duas vezes nunca gera duas respostas nem duas propostas.
+ */
+export interface RespostaCotacao {
+  id: string;
+  solicitacaoId: string;
+  canal: CanalOrigemProposta;
+  identificadorMensagem: string;
+  conteudoBruto: string | null;
+  dataRecebimento: string;
+  statusProcessamento: StatusProcessamentoResposta;
+  erroProcessamento: string | null;
+  criadoEm: string;
+}
+
+/**
+ * Componentes extraídos de uma resposta (Fase 4A.1, seção 15/40) — nunca uma decisão
+ * financeira: `valorFrete` é o único componente que alimenta `PropostaFrete.valorCusto`
+ * quando presente; os demais (pedágio/GRIS/ad valorem/taxas) ficam disponíveis para o
+ * humano conferir, nunca somados automaticamente ao custo.
+ */
+export interface DadosExtracaoProposta {
+  valorFrete: number | null;
+  prazoDias: number | null;
+  validade: string | null;
+  pedagio: number | null;
+  gris: number | null;
+  adValorem: number | null;
+  taxas: { nome: string; valor: number }[] | null;
+  observacoes: string | null;
+  numeroProposta: string | null;
+  confianca: number | null;
+}
+
+/**
+ * Extração da IA sobre uma resposta (Fase 4A.1, seção 15) — NÃO é a proposta definitiva.
+ * `propostaId` só é preenchido quando a extração teve `valorFrete` utilizável (a proposta
+ * pendente é criada nesse momento); fica `null` quando a extração falhou ou não teve valor
+ * (seção 41 — nesse caso, `REQUER_REVISAO`/`ERRO`, revisão manual sem proposta pendente).
+ */
+export interface ExtracaoProposta {
+  id: string;
+  respostaId: string;
+  versaoExtrator: string;
+  dadosExtraidos: DadosExtracaoProposta;
+  confianca: number | null;
+  status: StatusExtracaoProposta;
+  propostaId: string | null;
+  criadoEm: string;
+}
 
 /** Estrutura pensada para admitir outras modalidades no futuro sem reescrever o módulo (seção 6). */
 export type Modalidade = 'CIF' | 'FOB';
@@ -170,6 +281,8 @@ export interface PropostaFrete {
   id: string;
   cotacaoId: string;
   transportadoraId: string;
+  /** Fase 4A.1 — presente só quando a proposta nasceu de uma solicitação/resposta automática; `null` nas propostas manuais (Fase 1). */
+  solicitacaoId: string | null;
   valorCusto: number;
   prazoDias: number | null;
   validade: string | null;
@@ -232,11 +345,20 @@ export type AcaoAuditoriaFrete =
   | 'MODALIDADE_ALTERADA'
   | 'COTACAO_CRIADA_DE_OMIE'
   | 'DESTINO_IMPORTADO_OMIE'
-  | 'DESTINO_ALTERADO_MANUALMENTE';
+  | 'DESTINO_ALTERADO_MANUALMENTE'
+  | 'SOLICITACAO_CRIADA'
+  | 'SOLICITACAO_ENVIADA'
+  | 'SOLICITACAO_ERRO'
+  | 'RESPOSTA_RECEBIDA'
+  | 'RESPOSTA_PROCESSADA'
+  | 'PROPOSTA_EXTRAIDA'
+  | 'PROPOSTA_VALIDADA'
+  | 'PROPOSTA_CORRIGIDA';
 
 export interface RegistroAuditoriaFrete {
   id: string;
-  usuarioId: string;
+  /** `null` só em eventos de origem máquina (webhook Fase 4A.1) sem usuário humano associado — ver `origem`. */
+  usuarioId: string | null;
   acao: AcaoAuditoriaFrete;
   entidade: string;
   entidadeId: string | null;
