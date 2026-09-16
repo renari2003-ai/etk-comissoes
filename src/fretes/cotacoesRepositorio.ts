@@ -225,13 +225,43 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
   return linhaParaCotacao(linha);
 }
 
-/** Fase 3.2, seção 25 — usada só para AVISAR o usuário que o pedido já tem cotação; nunca bloqueia nem sobrescreve. */
-export async function buscarCotacoesPorPedidoOmieId(pedidoOmieId: number): Promise<CotacaoFrete[]> {
+/**
+ * Fase 3.2, seção 25 — usada só para AVISAR o usuário que o pedido já tem cotação; nunca
+ * bloqueia nem sobrescreve.
+ *
+ * Fase 3.6 (correção de duplicidade, diagnóstico completo no relatório desta fase):
+ * `pedido_omie_id` guarda dois significados diferentes dependendo de como a cotação nasceu.
+ *
+ *   FLUXO NOVO (importação Omie, Fase 3.2 em diante): `pedido_omie_id` = `codigo_pedido`
+ *   (identificador interno estável da Omie) e `pedido_omie_numero` = `numero_pedido`
+ *   (número visível) SEMPRE vêm preenchidos juntos, direto da resposta da Omie.
+ *
+ *   FLUXO MANUAL (Fase 1/2, anterior à importação Omie): o formulário só tinha um campo
+ *   solto "Pedido Omie (nº)" — o usuário digitava o que reconhecia, tipicamente o NÚMERO
+ *   visível do pedido, não o `codigo_pedido` interno (que ninguém vê na tela da Omie).
+ *   Essas cotações têm `pedido_omie_numero` sempre NULL (o campo não existia nesse fluxo).
+ *
+ * Por isso a busca por `pedido_omie_id = codigo_pedido` sozinha não encontra cotações
+ * manuais antigas do mesmo pedido real. A correção adiciona um fallback: também casar
+ * `pedido_omie_id` com o NÚMERO do pedido, mas SOMENTE em linhas onde `pedido_omie_numero
+ * IS NULL` — ou seja, comprovadamente do fluxo manual antigo (nunca aplicado a uma linha que
+ * já passou pela importação Omie, mesmo que por coincidência numérica). Isso evita falso
+ * positivo (seção 6): nunca associa por cliente/nome/valor, só por este identificador, e só
+ * quando a origem do dado (`pedido_omie_numero IS NULL`) comprova que é legado.
+ */
+export async function buscarCotacoesRelacionadasAoPedidoOmie(
+  codigoPedido: number,
+  numeroPedido: string | null,
+): Promise<CotacaoFrete[]> {
   await garantirEsquemaFretes();
   const pool = obterPool();
+  const numero = numeroPedido !== null && numeroPedido.trim() !== '' ? numeroPedido.trim() : null;
   const { rows } = await pool.query<LinhaCotacao>(
-    `SELECT * FROM ${nomeTabelaCotacoes()} WHERE pedido_omie_id = $1 ORDER BY criado_em DESC`,
-    [pedidoOmieId],
+    `SELECT * FROM ${nomeTabelaCotacoes()}
+      WHERE pedido_omie_id = $1
+         OR (pedido_omie_numero IS NULL AND $2::text IS NOT NULL AND pedido_omie_id::text = $2)
+      ORDER BY criado_em DESC`,
+    [codigoPedido, numero],
   );
   return rows.map(linhaParaCotacao);
 }

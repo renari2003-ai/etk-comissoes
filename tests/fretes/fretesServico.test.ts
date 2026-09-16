@@ -720,3 +720,184 @@ describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
     expect(cotacao.valorMercadoria).toBe(50); // valor_total_pedido, não valor_frete
   });
 });
+
+// ============================================================================
+// FASE 3.6 — correção da detecção de duplicidade (compatibilidade com cotações manuais antigas)
+// ============================================================================
+
+async function importarRepositorio(): Promise<typeof import('../../src/fretes/cotacoesRepositorio.js')> {
+  vi.resetModules();
+  return import('../../src/fretes/cotacoesRepositorio.js');
+}
+
+/** Cria uma cotação "legada" (fluxo manual, Fase 1) — nunca preenche `pedidoOmieNumero`, exatamente como cotações reais criadas antes da Fase 3.2. */
+async function criarCotacaoLegado(servico: Awaited<ReturnType<typeof importarServico>>, pedidoOmieIdDigitado: number) {
+  return servico.servicoCriarCotacao(
+    {
+      clienteOmieId: null,
+      pedidoOmieId: pedidoOmieIdDigitado,
+      vendedorOmieId: null,
+      origem: null,
+      cepOrigem: null,
+      destino: null,
+      cepDestino: null,
+      peso: null,
+      volumes: null,
+      valorMercadoria: null,
+      modalidade: 'CIF',
+      modalidadeExecucao: 'TRANSPORTADORA',
+      veiculoId: null,
+      motoristaNome: null,
+      custoManual: null,
+      observacoes: null,
+    },
+    USUARIO_TESTE,
+  );
+}
+
+describe('buscarCotacoesRelacionadasAoPedidoOmie (Fase 3.6 — correção de duplicidade)', () => {
+  it('caso 1: nova cotação com identificador Omie correto é detectada ao consultar novamente', async () => {
+    const repo = await importarRepositorio();
+    await repo.criarCotacao(
+      {
+        clienteOmieId: null,
+        pedidoOmieId: 2421339467,
+        pedidoOmieNumero: '130',
+        vendedorOmieId: null,
+        origem: null,
+        cepOrigem: null,
+        destino: null,
+        cepDestino: null,
+        peso: null,
+        volumes: null,
+        valorMercadoria: null,
+        modalidade: 'CIF',
+        modalidadeExecucao: 'TRANSPORTADORA',
+        veiculoId: null,
+        motoristaNome: null,
+        custoManual: null,
+        observacoes: null,
+      },
+      USUARIO_TESTE,
+    );
+    const encontradas = await repo.buscarCotacoesRelacionadasAoPedidoOmie(2421339467, '130');
+    expect(encontradas).toHaveLength(1);
+  });
+
+  it('caso 2: cotação legada com pedido_omie_id = número do pedido (não o codigo_pedido) é detectada via fallback', async () => {
+    const servico = await importarServico();
+    const repo = await importarRepositorio();
+    // Legado: usuário digitou "130" (o número visível), nunca o codigo_pedido real (2421339467).
+    await criarCotacaoLegado(servico, 130);
+
+    const encontradas = await repo.buscarCotacoesRelacionadasAoPedidoOmie(2421339467, '130');
+    expect(encontradas).toHaveLength(1);
+  });
+
+  it('caso 3: pedido diferente não gera correspondência', async () => {
+    const servico = await importarServico();
+    const repo = await importarRepositorio();
+    await criarCotacaoLegado(servico, 130);
+
+    const encontradas = await repo.buscarCotacoesRelacionadasAoPedidoOmie(999999999, '999');
+    expect(encontradas).toHaveLength(0);
+  });
+
+  it('caso 4: mesmo cliente, pedido diferente — não associa por cliente', async () => {
+    const servico = await importarServico();
+    const repo = await importarRepositorio();
+    await servico.servicoCriarCotacao(
+      {
+        clienteOmieId: 321,
+        pedidoOmieId: 111,
+        vendedorOmieId: null,
+        origem: null,
+        cepOrigem: null,
+        destino: null,
+        cepDestino: null,
+        peso: null,
+        volumes: null,
+        valorMercadoria: null,
+        modalidade: 'CIF',
+        modalidadeExecucao: 'TRANSPORTADORA',
+        veiculoId: null,
+        motoristaNome: null,
+        custoManual: null,
+        observacoes: null,
+      },
+      USUARIO_TESTE,
+    );
+    // Mesmo clienteOmieId (321), mas outro pedido (codigo/número 222).
+    const encontradas = await repo.buscarCotacoesRelacionadasAoPedidoOmie(222, '222');
+    expect(encontradas).toHaveLength(0);
+  });
+
+  it('caso 5: cotação sem pedido_omie_id nunca é associada', async () => {
+    const servico = await importarServico();
+    const repo = await importarRepositorio();
+    await criarCotacaoDeTeste(servico); // pedidoOmieId: null
+
+    const encontradas = await repo.buscarCotacoesRelacionadasAoPedidoOmie(2421339467, '130');
+    expect(encontradas).toHaveLength(0);
+  });
+
+  it('caso 6: identificadores conflitantes — linha do fluxo novo cujo pedido_omie_id coincide com o número buscado NÃO é pega pelo fallback (só linhas comprovadamente legadas, com pedido_omie_numero NULL)', async () => {
+    const repo = await importarRepositorio();
+    // Linha "nova" cujo pedido_omie_id (codigo_pedido) é, por coincidência, igual ao NÚMERO
+    // que vamos buscar (999) — mas pedido_omie_numero está preenchido com outro valor,
+    // provando que essa linha já passou pela importação Omie e não é legado ambíguo.
+    await repo.criarCotacao(
+      {
+        clienteOmieId: null,
+        pedidoOmieId: 999,
+        pedidoOmieNumero: '777', // valor real e diferente do número buscado
+        vendedorOmieId: null,
+        origem: null,
+        cepOrigem: null,
+        destino: null,
+        cepDestino: null,
+        peso: null,
+        volumes: null,
+        valorMercadoria: null,
+        modalidade: 'CIF',
+        modalidadeExecucao: 'TRANSPORTADORA',
+        veiculoId: null,
+        motoristaNome: null,
+        custoManual: null,
+        observacoes: null,
+      },
+      USUARIO_TESTE,
+    );
+    // Buscando por um pedido totalmente diferente (codigo_pedido 123456) cujo número visível é "999".
+    const encontradas = await repo.buscarCotacoesRelacionadasAoPedidoOmie(123456, '999');
+    expect(encontradas).toHaveLength(0);
+  });
+
+  it('caso 7: recotação — aviso não impede criar uma nova cotação para o mesmo pedido', async () => {
+    const servico = await importarServico();
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
+    const primeira = await servico.servicoCriarCotacaoDeOmie(
+      cliente,
+      '888001',
+      null,
+      { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    expect(preparacao.cotacoesExistentes).toHaveLength(1);
+    expect(preparacao.cotacoesExistentes[0]?.id).toBe(primeira.id);
+
+    // Recotação intencional: nada no fluxo impede criar uma segunda cotação para o mesmo pedido.
+    const segunda = await servico.servicoCriarCotacaoDeOmie(
+      cliente,
+      '888001',
+      null,
+      { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    expect(segunda.id).not.toBe(primeira.id);
+
+    const preparacaoFinal = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    expect(preparacaoFinal.cotacoesExistentes).toHaveLength(2);
+  });
+});

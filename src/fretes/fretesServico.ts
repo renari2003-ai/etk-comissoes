@@ -13,7 +13,7 @@ import { calcularFreteFinal, calcularPercentualAcrescimo, calcularValorAcrescimo
 import {
   atualizarCotacao,
   buscarCotacaoPorId,
-  buscarCotacoesPorPedidoOmieId,
+  buscarCotacoesRelacionadasAoPedidoOmie,
   criarCotacao,
   definirStatusCotacao,
   listarCotacoes,
@@ -213,7 +213,7 @@ export interface PreparacaoCotacaoComAviso extends PreparacaoCotacaoOmie {
  */
 export async function servicoPrepararCotacaoDeOmie(cliente: ClienteOmie, numeroPedido: string): Promise<PreparacaoCotacaoComAviso> {
   const preparacao = await prepararCotacaoDeOmie(cliente, numeroPedido);
-  const cotacoesExistentes = await buscarCotacoesPorPedidoOmieId(preparacao.pedidoOmieId);
+  const cotacoesExistentes = await buscarCotacoesRelacionadasAoPedidoOmie(preparacao.pedidoOmieId, preparacao.pedidoOmieNumero);
   return { ...preparacao, cotacoesExistentes };
 }
 
