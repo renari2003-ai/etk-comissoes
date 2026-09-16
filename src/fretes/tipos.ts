@@ -13,6 +13,16 @@ export type StatusProposta = 'RECEBIDA' | 'EM_ANALISE' | 'SELECIONADA' | 'REJEIT
 /** Estrutura pensada para admitir outras modalidades no futuro sem reescrever o módulo (seção 6). */
 export type Modalidade = 'CIF' | 'FOB';
 
+/**
+ * QUEM EXECUTA o frete (Fase 2) — conceito DIFERENTE de `Modalidade` (CIF/FOB) acima, que
+ * é a responsabilidade fiscal/comercial pelo transporte e continua existindo sem nenhuma
+ * alteração. `ModalidadeExecucao` responde "como a entrega acontece": por transportadora
+ * terceirizada (fluxo da Fase 1, inalterado), por veículo próprio da ETK, ou retirada pelo
+ * próprio cliente. Default `TRANSPORTADORA` em cotações antigas — preserva o comportamento
+ * da Fase 1 sem exigir migração de dados.
+ */
+export type ModalidadeExecucao = 'TRANSPORTADORA' | 'VEICULO_PROPRIO' | 'RETIRA';
+
 export type ModoCalculoFechamento = 'PERCENTUAL' | 'VALOR_FINAL';
 
 export interface Transportadora {
@@ -30,9 +40,37 @@ export interface Transportadora {
 }
 
 /**
+ * Cadastro simples de veículo próprio da ETK (Fase 2, seção 4) — nenhum campo é
+ * obrigatório além de `descricao`, para não travar o cadastro por falta de dado
+ * secundário (placa/capacidade podem ser completados depois).
+ */
+export interface Veiculo {
+  id: string;
+  descricao: string;
+  placa: string | null;
+  tipo: string | null;
+  marca: string | null;
+  modelo: string | null;
+  ano: number | null;
+  capacidadeKg: number | null;
+  capacidadeM3: number | null;
+  ativo: boolean;
+  observacoes: string | null;
+  criadoEm: string;
+  atualizadoEm: string;
+}
+
+/**
  * `clienteOmieId`/`pedidoOmieId`/`vendedorOmieId` são apenas REFERÊNCIAS ao código do
  * cadastro na Omie (seção 22/30 do requisito) — o módulo nunca guarda uma cópia local
  * desses cadastros nem altera o pedido de origem na Omie.
+ *
+ * `veiculoId`/`motoristaNome`/`custoManual` só fazem sentido quando
+ * `modalidadeExecucao === 'VEICULO_PROPRIO'` — permanecem `null` nas demais modalidades
+ * (nunca exigidos na validação de TRANSPORTADORA/RETIRA, seção 9). `motoristaNome` é um
+ * campo de texto simples (seção 5): o projeto não tem cadastro de funcionários/RH hoje,
+ * então não foi criado um cadastro paralelo — só o vínculo com `usuarios` (login) já
+ * existente, que não é o mesmo conceito (nem todo motorista tem login no sistema).
  */
 export interface CotacaoFrete {
   id: string;
@@ -48,6 +86,11 @@ export interface CotacaoFrete {
   volumes: number | null;
   valorMercadoria: number | null;
   modalidade: Modalidade;
+  modalidadeExecucao: ModalidadeExecucao;
+  veiculoId: string | null;
+  motoristaNome: string | null;
+  /** Custo manual (seção 6) — só usado para VEICULO_PROPRIO; nunca calculado automaticamente (sem km/combustível/manutenção/depreciação). Ignorado na modalidade RETIRA (custo sempre R$ 0,00). */
+  custoManual: number | null;
   status: StatusCotacao;
   observacoes: string | null;
   criadoPor: string;
@@ -88,12 +131,20 @@ export interface PropostaFrete {
   atualizadoEm: string;
 }
 
-/** Representa a decisão final — uma cotação tem no máximo um fechamento (constraint UNIQUE, seção 35/36). */
+/**
+ * Representa a decisão final — uma cotação tem no máximo um fechamento (constraint
+ * UNIQUE, seção 35/36). `propostaId`/`transportadoraId` só são preenchidos quando
+ * `modalidadeExecucao === 'TRANSPORTADORA'`; `veiculoId`/`motoristaNome` só quando
+ * `VEICULO_PROPRIO`. Nunca os dois grupos preenchidos ao mesmo tempo.
+ */
 export interface FechamentoFrete {
   id: string;
   cotacaoId: string;
-  propostaId: string;
-  transportadoraId: string;
+  modalidadeExecucao: ModalidadeExecucao;
+  propostaId: string | null;
+  transportadoraId: string | null;
+  veiculoId: string | null;
+  motoristaNome: string | null;
   custoFrete: number;
   percentualAcrescimo: number;
   valorAcrescimo: number;
@@ -114,7 +165,12 @@ export type AcaoAuditoriaFrete =
   | 'PROPOSTA_REJEITADA'
   | 'COTACAO_FECHADA'
   | 'TRANSPORTADORA_CRIADA'
-  | 'TRANSPORTADORA_EDITADA';
+  | 'TRANSPORTADORA_EDITADA'
+  | 'VEICULO_CRIADO'
+  | 'VEICULO_EDITADO'
+  | 'VEICULO_ATIVADO'
+  | 'VEICULO_DESATIVADO'
+  | 'MODALIDADE_ALTERADA';
 
 export interface RegistroAuditoriaFrete {
   id: string;

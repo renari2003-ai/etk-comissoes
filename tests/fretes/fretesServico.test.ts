@@ -22,6 +22,7 @@ let sufixo: string;
 beforeEach(() => {
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   process.env.TRANSPORTADORAS_TABELA = `transportadoras_teste_${sufixo}`;
+  process.env.VEICULOS_FRETE_TABELA = `veiculos_frete_teste_${sufixo}`;
   process.env.COTACOES_FRETE_TABELA = `cotacoes_frete_teste_${sufixo}`;
   process.env.PROPOSTAS_FRETE_TABELA = `propostas_frete_teste_${sufixo}`;
   process.env.FECHAMENTOS_FRETE_TABELA = `fechamentos_frete_teste_${sufixo}`;
@@ -32,14 +33,16 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
-  // Ordem inversa às FKs (fechamentos/propostas antes de cotações/transportadoras).
+  // Ordem inversa às FKs (fechamentos/propostas antes de cotações/transportadoras/veículos).
   await pool.query(`DROP TABLE IF EXISTS ${process.env.FECHAMENTOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.PROPOSTAS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.COTACOES_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.TRANSPORTADORAS_TABELA}`).catch(() => undefined);
+  await pool.query(`DROP TABLE IF EXISTS ${process.env.VEICULOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.AUDITORIA_FRETES_TABELA}`).catch(() => undefined);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   delete process.env.TRANSPORTADORAS_TABELA;
+  delete process.env.VEICULOS_FRETE_TABELA;
   delete process.env.COTACOES_FRETE_TABELA;
   delete process.env.PROPOSTAS_FRETE_TABELA;
   delete process.env.FECHAMENTOS_FRETE_TABELA;
@@ -63,6 +66,10 @@ async function criarCotacaoDeTeste(servico: Awaited<ReturnType<typeof importarSe
       volumes: 5,
       valorMercadoria: 5000,
       modalidade: 'CIF',
+      modalidadeExecucao: 'TRANSPORTADORA',
+      veiculoId: null,
+      motoristaNome: null,
+      custoManual: null,
       observacoes: null,
     },
     USUARIO_TESTE,
@@ -327,5 +334,246 @@ describe('dashboard', () => {
     expect(dashboard.resumoFechamentos.custoTotal).toBe(200);
     expect(dashboard.resumoFechamentos.valorClienteTotal).toBe(220);
     expect(dashboard.resumoFechamentos.acrescimoTotal).toBe(20);
+  });
+});
+
+// ============================================================================
+// FASE 2 — modalidades TRANSPORTADORA / VEICULO_PROPRIO / RETIRA
+// ============================================================================
+
+async function criarCotacaoComModalidade(
+  servico: Awaited<ReturnType<typeof importarServico>>,
+  modalidadeExecucao: 'TRANSPORTADORA' | 'VEICULO_PROPRIO' | 'RETIRA',
+  extras: { veiculoId?: string | null; motoristaNome?: string | null; custoManual?: number | null } = {},
+) {
+  return servico.servicoCriarCotacao(
+    {
+      clienteOmieId: null,
+      pedidoOmieId: null,
+      vendedorOmieId: null,
+      origem: 'São Paulo',
+      cepOrigem: '01000-000',
+      destino: 'Curitiba',
+      cepDestino: '80000-000',
+      peso: 100,
+      volumes: 5,
+      valorMercadoria: 5000,
+      modalidade: 'CIF',
+      modalidadeExecucao,
+      veiculoId: extras.veiculoId ?? null,
+      motoristaNome: extras.motoristaNome ?? null,
+      custoManual: extras.custoManual ?? null,
+      observacoes: null,
+    },
+    USUARIO_TESTE,
+  );
+}
+
+describe('modalidade TRANSPORTADORA (Fase 2 — preserva o fluxo da Fase 1)', () => {
+  it('exige proposta antes do fechamento', async () => {
+    const servico = await importarServico();
+    const cotacao = await criarCotacaoComModalidade(servico, 'TRANSPORTADORA');
+    await expect(
+      servico.servicoFecharCotacao({ cotacaoId: cotacao.id, percentualAcrescimo: 10, observacoes: null }, USUARIO_TESTE),
+    ).rejects.toThrow('Selecione uma proposta');
+  });
+
+  it('permite seleção de proposta normalmente', async () => {
+    const servico = await importarServico();
+    const transportadora = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'ABC', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const cotacao = await criarCotacaoComModalidade(servico, 'TRANSPORTADORA');
+    const proposta = await servico.servicoCriarProposta(
+      {
+        cotacaoId: cotacao.id,
+        transportadoraId: transportadora.id,
+        valorCusto: 300,
+        prazoDias: null,
+        validade: null,
+        peso: null,
+        volumes: null,
+        origem: null,
+        destino: null,
+        tipoServico: null,
+        observacoes: null,
+      },
+      USUARIO_TESTE,
+    );
+    const selecionada = await servico.servicoSelecionarProposta(cotacao.id, proposta.id, USUARIO_TESTE);
+    expect(selecionada.selecionada).toBe(true);
+  });
+});
+
+describe('modalidade VEICULO_PROPRIO (Fase 2)', () => {
+  it('não exige transportadora nem proposta — fechamento direto com custo manual', async () => {
+    const servico = await importarServico();
+    const veiculo = await servico.servicoCriarVeiculo(
+      {
+        descricao: 'Caminhão ETK 01',
+        placa: 'ABC-1D23',
+        tipo: 'Caminhão',
+        marca: null,
+        modelo: null,
+        ano: null,
+        capacidadeKg: 5000,
+        capacidadeM3: null,
+        observacoes: null,
+      },
+      USUARIO_TESTE,
+    );
+    const cotacao = await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', {
+      veiculoId: veiculo.id,
+      motoristaNome: 'João',
+      custoManual: 500,
+    });
+
+    const fechamento = await servico.servicoFecharCotacao(
+      { cotacaoId: cotacao.id, percentualAcrescimo: 20, observacoes: null },
+      USUARIO_TESTE,
+    );
+    expect(fechamento.modalidadeExecucao).toBe('VEICULO_PROPRIO');
+    expect(fechamento.propostaId).toBeNull();
+    expect(fechamento.transportadoraId).toBeNull();
+    expect(fechamento.veiculoId).toBe(veiculo.id);
+    expect(fechamento.motoristaNome).toBe('João');
+    expect(fechamento.custoFrete).toBe(500);
+    expect(fechamento.valorAcrescimo).toBe(100);
+    expect(fechamento.valorFreteCliente).toBe(600);
+  });
+
+  it('veículo ativo pode ser vinculado a uma nova cotação', async () => {
+    const servico = await importarServico();
+    const veiculo = await servico.servicoCriarVeiculo(
+      { descricao: 'Van ETK 02', placa: null, tipo: null, marca: null, modelo: null, ano: null, capacidadeKg: null, capacidadeM3: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const cotacao = await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', { veiculoId: veiculo.id });
+    expect(cotacao.veiculoId).toBe(veiculo.id);
+  });
+
+  it('veículo inativo não pode ser selecionado numa nova cotação', async () => {
+    const servico = await importarServico();
+    const veiculo = await servico.servicoCriarVeiculo(
+      { descricao: 'Van Inativa', placa: null, tipo: null, marca: null, modelo: null, ano: null, capacidadeKg: null, capacidadeM3: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    await servico.servicoDefinirAtivoVeiculo(veiculo.id, false, USUARIO_TESTE);
+
+    await expect(criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', { veiculoId: veiculo.id })).rejects.toThrow('inativo');
+  });
+
+  it('não permite criar proposta de transportadora numa cotação VEICULO_PROPRIO', async () => {
+    const servico = await importarServico();
+    const transportadora = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'ABC', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const veiculo = await servico.servicoCriarVeiculo(
+      { descricao: 'Caminhão ETK 03', placa: null, tipo: null, marca: null, modelo: null, ano: null, capacidadeKg: null, capacidadeM3: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const cotacao = await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', { veiculoId: veiculo.id });
+
+    await expect(
+      servico.servicoCriarProposta(
+        {
+          cotacaoId: cotacao.id,
+          transportadoraId: transportadora.id,
+          valorCusto: 100,
+          prazoDias: null,
+          validade: null,
+          peso: null,
+          volumes: null,
+          origem: null,
+          destino: null,
+          tipoServico: null,
+          observacoes: null,
+        },
+        USUARIO_TESTE,
+      ),
+    ).rejects.toThrow('TRANSPORTADORA');
+  });
+
+  it('exige um veículo vinculado antes de fechar', async () => {
+    const servico = await importarServico();
+    const cotacao = await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO');
+    await expect(
+      servico.servicoFecharCotacao({ cotacaoId: cotacao.id, percentualAcrescimo: 0, observacoes: null }, USUARIO_TESTE),
+    ).rejects.toThrow('Vincule um veículo');
+  });
+
+  it('bloqueia o fechamento se o veículo for desativado DEPOIS de já vinculado à cotação (revalidação no fechamento, Prompt 2.2)', async () => {
+    const servico = await importarServico();
+    const veiculo = await servico.servicoCriarVeiculo(
+      { descricao: 'Caminhão ETK 05', placa: null, tipo: null, marca: null, modelo: null, ano: null, capacidadeKg: null, capacidadeM3: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const cotacao = await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', { veiculoId: veiculo.id, custoManual: 300 });
+
+    // Vínculo feito com o veículo ainda ativo — só depois disso ele é desativado.
+    await servico.servicoDefinirAtivoVeiculo(veiculo.id, false, USUARIO_TESTE);
+
+    await expect(
+      servico.servicoFecharCotacao({ cotacaoId: cotacao.id, percentualAcrescimo: 0, observacoes: null }, USUARIO_TESTE),
+    ).rejects.toThrow('inativo');
+  });
+});
+
+describe('modalidade RETIRA (Fase 2)', () => {
+  it('não exige transportadora, veículo nem proposta', async () => {
+    const servico = await importarServico();
+    const cotacao = await criarCotacaoComModalidade(servico, 'RETIRA');
+    expect(cotacao.modalidadeExecucao).toBe('RETIRA');
+    expect(cotacao.veiculoId).toBeNull();
+  });
+
+  it('gera frete R$ 0,00 no fechamento direto', async () => {
+    const servico = await importarServico();
+    const cotacao = await criarCotacaoComModalidade(servico, 'RETIRA');
+    const fechamento = await servico.servicoFecharCotacao({ cotacaoId: cotacao.id, observacoes: null }, USUARIO_TESTE);
+    expect(fechamento.modalidadeExecucao).toBe('RETIRA');
+    expect(fechamento.custoFrete).toBe(0);
+    expect(fechamento.valorFreteCliente).toBe(0);
+    expect(fechamento.propostaId).toBeNull();
+    expect(fechamento.transportadoraId).toBeNull();
+    expect(fechamento.veiculoId).toBeNull();
+  });
+
+  it('nunca gera acréscimo, mesmo que um percentual seja enviado por engano', async () => {
+    const servico = await importarServico();
+    const cotacao = await criarCotacaoComModalidade(servico, 'RETIRA');
+    const fechamento = await servico.servicoFecharCotacao(
+      { cotacaoId: cotacao.id, percentualAcrescimo: 50, observacoes: null },
+      USUARIO_TESTE,
+    );
+    expect(fechamento.percentualAcrescimo).toBe(0);
+    expect(fechamento.valorAcrescimo).toBe(0);
+    expect(fechamento.valorFreteCliente).toBe(0);
+  });
+});
+
+describe('isolamento entre modalidades (Fase 2)', () => {
+  it('cada modalidade é contada separadamente no dashboard', async () => {
+    const servico = await importarServico();
+    const transportadora = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'ABC', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const veiculo = await servico.servicoCriarVeiculo(
+      { descricao: 'Caminhão ETK 04', placa: null, tipo: null, marca: null, modelo: null, ano: null, capacidadeKg: null, capacidadeM3: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    await criarCotacaoComModalidade(servico, 'TRANSPORTADORA');
+    await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', { veiculoId: veiculo.id });
+    await criarCotacaoComModalidade(servico, 'VEICULO_PROPRIO', { veiculoId: veiculo.id });
+    await criarCotacaoComModalidade(servico, 'RETIRA');
+    void transportadora;
+
+    const dashboard = await servico.servicoDashboard();
+    expect(dashboard.cotacoesPorModalidadeExecucao.TRANSPORTADORA).toBe(1);
+    expect(dashboard.cotacoesPorModalidadeExecucao.VEICULO_PROPRIO).toBe(2);
+    expect(dashboard.cotacoesPorModalidadeExecucao.RETIRA).toBe(1);
   });
 });

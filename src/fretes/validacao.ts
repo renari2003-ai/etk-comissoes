@@ -1,7 +1,7 @@
 /** Validações específicas do módulo de Fretes (seção 11) — nunca confia só no frontend. */
 
 import { ErroValidacao } from '../validacao.js';
-import type { Modalidade } from './tipos.js';
+import type { Modalidade, ModalidadeExecucao } from './tipos.js';
 
 export function validarTextoObrigatorio(valor: unknown, campo: string): string {
   if (typeof valor !== 'string' || valor.trim() === '') {
@@ -71,6 +71,16 @@ export function validarModalidade(valor: unknown): Modalidade {
   return valor;
 }
 
+const MODALIDADES_EXECUCAO: readonly ModalidadeExecucao[] = ['TRANSPORTADORA', 'VEICULO_PROPRIO', 'RETIRA'];
+
+/** "Quem executa o frete" (Fase 2) — nunca confundir com `validarModalidade` (CIF/FOB) acima. */
+export function validarModalidadeExecucao(valor: unknown): ModalidadeExecucao {
+  if (typeof valor !== 'string' || !MODALIDADES_EXECUCAO.includes(valor as ModalidadeExecucao)) {
+    throw new ErroValidacao(`O campo "modalidadeExecucao" deve ser um dos: ${MODALIDADES_EXECUCAO.join(', ')}.`);
+  }
+  return valor as ModalidadeExecucao;
+}
+
 export function validarIdOmieOpcional(valor: unknown, campo: string): number | null {
   if (valor === undefined || valor === null || valor === '') return null;
   const numero = Number(valor);
@@ -85,4 +95,9 @@ export function validarUuid(valor: unknown, campo: string): string {
     throw new ErroValidacao(`O campo "${campo}" é inválido.`);
   }
   return valor;
+}
+
+export function validarUuidOpcional(valor: unknown, campo: string): string | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  return validarUuid(valor, campo);
 }

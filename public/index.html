@@ -127,6 +127,7 @@
       <button type="button" id="fretes-aba-dashboard" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">Dashboard</button>
       <button type="button" id="fretes-aba-cotacoes" class="aba-tipo-documento" role="tab" aria-selected="false">Cotações</button>
       <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
+      <button type="button" id="fretes-aba-veiculos" class="aba-tipo-documento" role="tab" aria-selected="false">Veículos</button>
     </nav>
 
     <section id="fretes-secao-dashboard">
@@ -138,6 +139,24 @@
         <h2 class="titulo-secao">Nova cotação</h2>
       </div>
       <form id="fretes-form-nova-cotacao" class="filtros-relatorio" autocomplete="off">
+        <fieldset class="permissoes-convidado" id="fretes-cotacao-modalidade-execucao-fieldset">
+          <legend>Modalidade do frete</legend>
+          <label><input type="radio" name="modalidadeExecucao" value="TRANSPORTADORA" checked /> Transportadora</label>
+          <label><input type="radio" name="modalidadeExecucao" value="VEICULO_PROPRIO" /> Veículo próprio</label>
+          <label><input type="radio" name="modalidadeExecucao" value="RETIRA" /> Retira</label>
+        </fieldset>
+        <div class="campo-filtro" id="fretes-cotacao-campo-veiculo" hidden>
+          <label for="fretes-cotacao-veiculo">Veículo</label>
+          <select id="fretes-cotacao-veiculo" name="veiculoId"></select>
+        </div>
+        <div class="campo-filtro" id="fretes-cotacao-campo-motorista" hidden>
+          <label for="fretes-cotacao-motorista">Motorista</label>
+          <input id="fretes-cotacao-motorista" name="motoristaNome" type="text" />
+        </div>
+        <div class="campo-filtro" id="fretes-cotacao-campo-custo-manual" hidden>
+          <label for="fretes-cotacao-custo-manual">Custo interno da entrega (opcional)</label>
+          <input id="fretes-cotacao-custo-manual" name="custoManual" type="number" min="0" step="0.01" />
+        </div>
         <div class="campo-filtro">
           <label for="fretes-cotacao-pedido">Pedido Omie (nº)</label>
           <input id="fretes-cotacao-pedido" name="pedidoOmieId" type="number" min="1" />
@@ -214,6 +233,7 @@
             <tr>
               <th scope="col">Código</th>
               <th scope="col">Origem → Destino</th>
+              <th scope="col">Execução</th>
               <th scope="col">Modalidade</th>
               <th scope="col">Status</th>
               <th scope="col">Criada em</th>
@@ -231,85 +251,103 @@
       <p id="fretes-detalhe-info" class="filtro-data-legenda"></p>
       <p id="fretes-detalhe-erro" class="painel-login-erro" hidden></p>
 
-      <section id="fretes-detalhe-form-secao">
-        <h3 class="titulo-secao">Nova proposta</h3>
-        <form id="fretes-form-nova-proposta" class="filtros-relatorio" autocomplete="off">
-          <div class="campo-filtro">
-            <label for="fretes-proposta-transportadora">Transportadora</label>
-            <select id="fretes-proposta-transportadora" name="transportadoraId" required></select>
-          </div>
-          <div class="campo-filtro">
-            <label for="fretes-proposta-custo">Custo</label>
-            <input id="fretes-proposta-custo" name="valorCusto" type="number" min="0" step="0.01" required />
-          </div>
-          <div class="campo-filtro">
-            <label for="fretes-proposta-prazo">Prazo (dias)</label>
-            <input id="fretes-proposta-prazo" name="prazoDias" type="number" min="0" step="1" />
-          </div>
-          <div class="campo-filtro">
-            <label for="fretes-proposta-validade">Validade</label>
-            <input id="fretes-proposta-validade" name="validade" type="date" />
-          </div>
-          <div class="campo-filtro">
-            <label for="fretes-proposta-servico">Serviço</label>
-            <input id="fretes-proposta-servico" name="tipoServico" type="text" placeholder="Rodoviário, expresso…" />
-          </div>
-          <div class="campo-filtro campo-filtro-busca">
-            <label for="fretes-proposta-observacoes">Observações</label>
-            <input id="fretes-proposta-observacoes" name="observacoes" type="text" />
-          </div>
-          <button type="submit" class="botao-secundario botao-aplicar-filtro">Adicionar proposta</button>
-        </form>
-        <p id="fretes-proposta-erro" class="painel-login-erro" hidden></p>
+      <section id="fretes-detalhe-bloco-transportadora">
+        <section id="fretes-detalhe-form-secao">
+          <h3 class="titulo-secao">Nova proposta</h3>
+          <form id="fretes-form-nova-proposta" class="filtros-relatorio" autocomplete="off">
+            <div class="campo-filtro">
+              <label for="fretes-proposta-transportadora">Transportadora</label>
+              <select id="fretes-proposta-transportadora" name="transportadoraId" required></select>
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-proposta-custo">Custo</label>
+              <input id="fretes-proposta-custo" name="valorCusto" type="number" min="0" step="0.01" required />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-proposta-prazo">Prazo (dias)</label>
+              <input id="fretes-proposta-prazo" name="prazoDias" type="number" min="0" step="1" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-proposta-validade">Validade</label>
+              <input id="fretes-proposta-validade" name="validade" type="date" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-proposta-servico">Serviço</label>
+              <input id="fretes-proposta-servico" name="tipoServico" type="text" placeholder="Rodoviário, expresso…" />
+            </div>
+            <div class="campo-filtro campo-filtro-busca">
+              <label for="fretes-proposta-observacoes">Observações</label>
+              <input id="fretes-proposta-observacoes" name="observacoes" type="text" />
+            </div>
+            <button type="submit" class="botao-secundario botao-aplicar-filtro">Adicionar proposta</button>
+          </form>
+          <p id="fretes-proposta-erro" class="painel-login-erro" hidden></p>
+        </section>
+
+        <h3 class="titulo-secao">Comparação de propostas</h3>
+        <p class="filtro-data-legenda">A comparação é só informativa — a escolha da proposta é sempre manual.</p>
+        <div class="tabela-rolagem">
+          <table id="fretes-tabela-propostas">
+            <thead>
+              <tr>
+                <th scope="col">Transportadora</th>
+                <th scope="col" class="col-num">Custo</th>
+                <th scope="col">Prazo</th>
+                <th scope="col">Validade</th>
+                <th scope="col">Serviço</th>
+                <th scope="col">Status</th>
+                <th scope="col">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="fretes-tabela-propostas-corpo"></tbody>
+          </table>
+        </div>
       </section>
 
-      <h3 class="titulo-secao">Comparação de propostas</h3>
-      <p class="filtro-data-legenda">A comparação é só informativa — a escolha da proposta é sempre manual.</p>
-      <div class="tabela-rolagem">
-        <table id="fretes-tabela-propostas">
-          <thead>
-            <tr>
-              <th scope="col">Transportadora</th>
-              <th scope="col" class="col-num">Custo</th>
-              <th scope="col">Prazo</th>
-              <th scope="col">Validade</th>
-              <th scope="col">Serviço</th>
-              <th scope="col">Status</th>
-              <th scope="col">Ações</th>
-            </tr>
-          </thead>
-          <tbody id="fretes-tabela-propostas-corpo"></tbody>
-        </table>
-      </div>
+      <section id="fretes-detalhe-bloco-veiculo" class="painel-fechamento" hidden>
+        <h3 class="titulo-secao">Veículo próprio</h3>
+        <div id="fretes-detalhe-veiculo-info"></div>
+      </section>
+
+      <section id="fretes-detalhe-bloco-retira" class="painel-fechamento" hidden>
+        <h3 class="titulo-secao">Retira</h3>
+        <p>O cliente retira a mercadoria na ETK — frete <strong>R$ 0,00</strong>, sem transportadora, veículo ou proposta.</p>
+      </section>
 
       <section id="fretes-painel-fechamento" hidden>
         <h3 class="titulo-secao">Fechamento do frete</h3>
         <div class="painel-fechamento" id="fretes-fechamento-resumo"></div>
         <form id="fretes-form-fechamento" autocomplete="off">
-          <div class="campo-filtro">
-            <label>
-              <input type="radio" name="modoCalculo" value="PERCENTUAL" checked /> Informar percentual de acréscimo
-            </label>
+          <div class="campo-filtro" id="fretes-fechamento-campo-custo-manual" hidden>
+            <label for="fretes-fechamento-custo-manual">Custo interno da entrega</label>
+            <input id="fretes-fechamento-custo-manual" name="custoManual" type="number" min="0" step="0.01" value="0" />
           </div>
-          <div class="campo-filtro" id="fretes-fechamento-campo-percentual">
-            <label for="fretes-fechamento-percentual">Acréscimo (%)</label>
-            <input id="fretes-fechamento-percentual" name="percentualAcrescimo" type="number" min="0" step="0.01" value="0" />
+          <div id="fretes-fechamento-bloco-acrescimo">
+            <div class="campo-filtro">
+              <label>
+                <input type="radio" name="modoCalculo" value="PERCENTUAL" checked /> Informar percentual de acréscimo
+              </label>
+            </div>
+            <div class="campo-filtro" id="fretes-fechamento-campo-percentual">
+              <label for="fretes-fechamento-percentual">Acréscimo (%)</label>
+              <input id="fretes-fechamento-percentual" name="percentualAcrescimo" type="number" min="0" step="0.01" value="0" />
+            </div>
+            <div class="campo-filtro">
+              <label>
+                <input type="radio" name="modoCalculo" value="VALOR_FINAL" /> Informar valor final para o cliente
+              </label>
+            </div>
+            <div class="campo-filtro" id="fretes-fechamento-campo-valor-final" hidden>
+              <label for="fretes-fechamento-valor-final">Valor final para o cliente</label>
+              <input id="fretes-fechamento-valor-final" name="valorFreteClienteInformado" type="number" min="0" step="0.01" />
+            </div>
+            <p id="fretes-fechamento-preview" class="filtro-data-legenda"></p>
           </div>
-          <div class="campo-filtro">
-            <label>
-              <input type="radio" name="modoCalculo" value="VALOR_FINAL" /> Informar valor final para o cliente
-            </label>
-          </div>
-          <div class="campo-filtro" id="fretes-fechamento-campo-valor-final" hidden>
-            <label for="fretes-fechamento-valor-final">Valor final para o cliente</label>
-            <input id="fretes-fechamento-valor-final" name="valorFreteClienteInformado" type="number" min="0" step="0.01" />
-          </div>
-          <p id="fretes-fechamento-preview" class="filtro-data-legenda"></p>
           <div class="campo-filtro campo-filtro-busca">
             <label for="fretes-fechamento-observacoes">Observações do fechamento</label>
             <input id="fretes-fechamento-observacoes" name="observacoes" type="text" />
           </div>
-          <button type="submit" class="botao-secundario botao-aplicar-filtro">Confirmar fechamento</button>
+          <button type="submit" class="botao-secundario botao-aplicar-filtro" id="fretes-fechamento-botao-confirmar">Confirmar fechamento</button>
         </form>
         <p id="fretes-fechamento-erro" class="painel-login-erro" hidden></p>
       </section>
@@ -365,6 +403,67 @@
             </tr>
           </thead>
           <tbody id="fretes-tabela-transportadoras-corpo"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="fretes-secao-veiculos" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Novo veículo</h2>
+      </div>
+      <form id="fretes-form-novo-veiculo" class="filtros-relatorio" autocomplete="off">
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-descricao">Descrição</label>
+          <input id="fretes-veiculo-descricao" name="descricao" type="text" placeholder="Caminhão ETK 01" required />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-placa">Placa</label>
+          <input id="fretes-veiculo-placa" name="placa" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-tipo">Tipo</label>
+          <input id="fretes-veiculo-tipo" name="tipo" type="text" placeholder="Caminhão, van, moto…" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-marca">Marca</label>
+          <input id="fretes-veiculo-marca" name="marca" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-modelo">Modelo</label>
+          <input id="fretes-veiculo-modelo" name="modelo" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-ano">Ano</label>
+          <input id="fretes-veiculo-ano" name="ano" type="number" min="1900" step="1" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-capacidade-kg">Capacidade (kg)</label>
+          <input id="fretes-veiculo-capacidade-kg" name="capacidadeKg" type="number" min="0" step="0.01" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-veiculo-capacidade-m3">Capacidade (m³)</label>
+          <input id="fretes-veiculo-capacidade-m3" name="capacidadeM3" type="number" min="0" step="0.01" />
+        </div>
+        <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar veículo</button>
+      </form>
+      <p id="fretes-veiculo-erro" class="painel-login-erro" hidden></p>
+
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Veículos cadastrados</h2>
+      </div>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-veiculos">
+          <thead>
+            <tr>
+              <th scope="col">Descrição</th>
+              <th scope="col">Placa</th>
+              <th scope="col">Tipo</th>
+              <th scope="col">Capacidade</th>
+              <th scope="col">Status</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-veiculos-corpo"></tbody>
         </table>
       </div>
     </section>

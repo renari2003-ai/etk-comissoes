@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeSequenciaCodigoCotacao, nomeTabelaCotacoes } from './schema.js';
-import type { CotacaoFrete, Modalidade, StatusCotacao } from './tipos.js';
+import type { CotacaoFrete, Modalidade, ModalidadeExecucao, StatusCotacao } from './tipos.js';
 
 interface LinhaCotacao {
   id: string;
@@ -18,6 +18,10 @@ interface LinhaCotacao {
   volumes: number | null;
   valor_mercadoria: string | null;
   modalidade: Modalidade;
+  modalidade_execucao: ModalidadeExecucao;
+  veiculo_id: string | null;
+  motorista_nome: string | null;
+  custo_manual: string | null;
   status: StatusCotacao;
   observacoes: string | null;
   criado_por: string;
@@ -45,6 +49,10 @@ function linhaParaCotacao(l: LinhaCotacao): CotacaoFrete {
     volumes: l.volumes,
     valorMercadoria: numeroOuNull(l.valor_mercadoria),
     modalidade: l.modalidade,
+    modalidadeExecucao: l.modalidade_execucao,
+    veiculoId: l.veiculo_id,
+    motoristaNome: l.motorista_nome,
+    custoManual: numeroOuNull(l.custo_manual),
     status: l.status,
     observacoes: l.observacoes,
     criadoPor: l.criado_por,
@@ -66,6 +74,10 @@ export interface DadosNovaCotacao {
   volumes: number | null;
   valorMercadoria: number | null;
   modalidade: Modalidade;
+  modalidadeExecucao: ModalidadeExecucao;
+  veiculoId: string | null;
+  motoristaNome: string | null;
+  custoManual: number | null;
   observacoes: string | null;
 }
 
@@ -78,6 +90,10 @@ export interface DadosAtualizacaoCotacao {
   volumes?: number | null;
   valorMercadoria?: number | null;
   modalidade?: Modalidade;
+  modalidadeExecucao?: ModalidadeExecucao;
+  veiculoId?: string | null;
+  motoristaNome?: string | null;
+  custoManual?: number | null;
   observacoes?: string | null;
 }
 
@@ -98,8 +114,9 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
   const { rows } = await pool.query<LinhaCotacao>(
     `INSERT INTO ${nomeTabelaCotacoes()}
        (id, codigo, cliente_omie_id, pedido_omie_id, vendedor_omie_id, origem, cep_origem, destino, cep_destino,
-        peso, volumes, valor_mercadoria, modalidade, status, observacoes, criado_por)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'RASCUNHO', $14, $15)
+        peso, volumes, valor_mercadoria, modalidade, modalidade_execucao, veiculo_id, motorista_nome, custo_manual,
+        status, observacoes, criado_por)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'RASCUNHO', $18, $19)
      RETURNING *`,
     [
       id,
@@ -115,6 +132,10 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
       dados.volumes,
       dados.valorMercadoria,
       dados.modalidade,
+      dados.modalidadeExecucao,
+      dados.veiculoId,
+      dados.motoristaNome,
+      dados.custoManual,
       dados.observacoes,
       criadoPor,
     ],
@@ -127,6 +148,7 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
 export interface FiltrosCotacao {
   status?: StatusCotacao;
   modalidade?: Modalidade;
+  modalidadeExecucao?: ModalidadeExecucao;
   codigo?: string;
 }
 
@@ -142,6 +164,10 @@ export async function listarCotacoes(filtros: FiltrosCotacao): Promise<CotacaoFr
   if (filtros.modalidade !== undefined) {
     valores.push(filtros.modalidade);
     condicoes.push(`modalidade = $${valores.length}`);
+  }
+  if (filtros.modalidadeExecucao !== undefined) {
+    valores.push(filtros.modalidadeExecucao);
+    condicoes.push(`modalidade_execucao = $${valores.length}`);
   }
   if (filtros.codigo !== undefined) {
     valores.push(`%${filtros.codigo}%`);
@@ -176,8 +202,9 @@ export async function atualizarCotacao(id: string, dados: DadosAtualizacaoCotaca
   const { rows } = await pool.query<LinhaCotacao>(
     `UPDATE ${nomeTabelaCotacoes()}
         SET origem = $1, cep_origem = $2, destino = $3, cep_destino = $4, peso = $5, volumes = $6,
-            valor_mercadoria = $7, modalidade = $8, observacoes = $9, atualizado_em = now()
-      WHERE id = $10
+            valor_mercadoria = $7, modalidade = $8, modalidade_execucao = $9, veiculo_id = $10,
+            motorista_nome = $11, custo_manual = $12, observacoes = $13, atualizado_em = now()
+      WHERE id = $14
       RETURNING *`,
     [
       dados.origem !== undefined ? dados.origem : atual.origem,
@@ -188,6 +215,10 @@ export async function atualizarCotacao(id: string, dados: DadosAtualizacaoCotaca
       dados.volumes !== undefined ? dados.volumes : atual.volumes,
       dados.valorMercadoria !== undefined ? dados.valorMercadoria : atual.valorMercadoria,
       dados.modalidade ?? atual.modalidade,
+      dados.modalidadeExecucao ?? atual.modalidadeExecucao,
+      dados.veiculoId !== undefined ? dados.veiculoId : atual.veiculoId,
+      dados.motoristaNome !== undefined ? dados.motoristaNome : atual.motoristaNome,
+      dados.custoManual !== undefined ? dados.custoManual : atual.custoManual,
       dados.observacoes !== undefined ? dados.observacoes : atual.observacoes,
       id,
     ],

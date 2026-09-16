@@ -35,13 +35,16 @@ export function obterPool(): Pool {
  * confirmado ao vivo em 2026-09-11 com duas invocações concorrentes criando
  * a mesma tabela do limitador (cenário real em cold starts simultâneos no
  * Vercel). Nos dois casos a tabela/índice já existe de verdade nesse ponto —
- * seguro ignorar e seguir em frente.
+ * seguro ignorar e seguir em frente. `42701` (duplicate_column) é a mesma
+ * corrida, só que para `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` — adicionada
+ * em 2026-09-16 para as colunas novas do módulo de Fretes (Fase 2), mas é
+ * genérica: qualquer `ADD COLUMN IF NOT EXISTS` concorrente se beneficia.
  */
 export async function executarDdlIdempotente(sql: string): Promise<void> {
   try {
     await obterPool().query(sql);
   } catch (erro) {
     const codigo = (erro as { code?: string }).code;
-    if (codigo !== '42P07' && codigo !== '23505') throw erro;
+    if (codigo !== '42P07' && codigo !== '23505' && codigo !== '42701') throw erro;
   }
 }

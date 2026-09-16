@@ -15,6 +15,9 @@ function nomeValidado(nome: string): string {
 export function nomeTabelaTransportadoras(): string {
   return nomeValidado(process.env.TRANSPORTADORAS_TABELA ?? 'transportadoras');
 }
+export function nomeTabelaVeiculos(): string {
+  return nomeValidado(process.env.VEICULOS_FRETE_TABELA ?? 'veiculos_frete');
+}
 export function nomeTabelaCotacoes(): string {
   return nomeValidado(process.env.COTACOES_FRETE_TABELA ?? 'cotacoes_frete');
 }
@@ -42,6 +45,7 @@ let esquemaGarantido: Promise<void> | null = null;
 export function garantirEsquemaFretes(): Promise<void> {
   esquemaGarantido ??= (async () => {
     const transportadoras = nomeTabelaTransportadoras();
+    const veiculos = nomeTabelaVeiculos();
     const cotacoes = nomeTabelaCotacoes();
     const propostas = nomeTabelaPropostas();
     const fechamentos = nomeTabelaFechamentos();
@@ -63,10 +67,35 @@ export function garantirEsquemaFretes(): Promise<void> {
       )
     `);
 
+    // Veículos próprios (Fase 2, seção 4) — só `descricao` é obrigatória; placa/tipo/
+    // capacidade são opcionais para não travar o cadastro por falta de dado secundário.
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${veiculos} (
+        id UUID PRIMARY KEY,
+        descricao TEXT NOT NULL,
+        placa TEXT,
+        tipo TEXT,
+        marca TEXT,
+        modelo TEXT,
+        ano INTEGER,
+        capacidade_kg NUMERIC,
+        capacidade_m3 NUMERIC,
+        ativo BOOLEAN NOT NULL DEFAULT true,
+        observacoes TEXT,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
     // Sequência global (não reinicia por ano) — só precisa garantir unicidade do código
     // visível (seção 5), nunca precisa "resetar" pra continuar sendo um identificador válido.
     await executarDdlIdempotente(`CREATE SEQUENCE IF NOT EXISTS ${nomeSequenciaCodigoCotacao()}`);
 
+    // `modalidade` (CIF/FOB, Fase 1) e `modalidade_execucao` (TRANSPORTADORA/VEICULO_PROPRIO/
+    // RETIRA, Fase 2) são colunas DIFERENTES e independentes — ver comentário em `tipos.ts`.
+    // `veiculo_id`/`motorista_nome`/`custo_manual` só usados quando `modalidade_execucao =
+    // 'VEICULO_PROPRIO'`. `DEFAULT 'TRANSPORTADORA'` preserva o comportamento da Fase 1 em
+    // linhas antigas sem precisar de uma migração de dados.
     await executarDdlIdempotente(`
       CREATE TABLE IF NOT EXISTS ${cotacoes} (
         id UUID PRIMARY KEY,
@@ -82,6 +111,10 @@ export function garantirEsquemaFretes(): Promise<void> {
         volumes INTEGER,
         valor_mercadoria NUMERIC,
         modalidade TEXT NOT NULL CHECK (modalidade IN ('CIF','FOB')),
+        modalidade_execucao TEXT NOT NULL DEFAULT 'TRANSPORTADORA' CHECK (modalidade_execucao IN ('TRANSPORTADORA','VEICULO_PROPRIO','RETIRA')),
+        veiculo_id UUID REFERENCES ${veiculos}(id),
+        motorista_nome TEXT,
+        custo_manual NUMERIC,
         status TEXT NOT NULL CHECK (status IN ('RASCUNHO','AGUARDANDO_PROPOSTAS','EM_ANALISE','AGUARDANDO_APROVACAO','FECHADA','CANCELADA')),
         observacoes TEXT,
         criado_por UUID NOT NULL,
@@ -90,6 +123,16 @@ export function garantirEsquemaFretes(): Promise<void> {
         fechado_em TIMESTAMPTZ
       )
     `);
+    // Defensivo: cobre uma tabela `cotacoes_frete` já criada por uma versão anterior (Fase 1)
+    // do código, sem essas colunas ainda — nunca dá erro se elas já existirem. O CHECK inline
+    // só é aplicado quando a coluna é criada agora (ADD COLUMN IF NOT EXISTS não retroage sobre
+    // uma coluna já existente) — cobre o caso realista de primeira criação da tabela nesta fase.
+    await executarDdlIdempotente(
+      `ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS modalidade_execucao TEXT NOT NULL DEFAULT 'TRANSPORTADORA' CHECK (modalidade_execucao IN ('TRANSPORTADORA','VEICULO_PROPRIO','RETIRA'))`,
+    );
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS veiculo_id UUID REFERENCES ${veiculos}(id)`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS motorista_nome TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS custo_manual NUMERIC`);
 
     await executarDdlIdempotente(`
       CREATE TABLE IF NOT EXISTS ${propostas} (
@@ -120,12 +163,17 @@ export function garantirEsquemaFretes(): Promise<void> {
     // UNIQUE (cotacao_id): trava em nível de banco que uma cotação nunca tenha mais de um
     // fechamento — segunda camada de proteção contra dupla execução, além da trava
     // transacional em `fretesServico.ts` (seção 35/36: concorrência/idempotência).
+    // `proposta_id`/`transportadora_id` viraram NULLABLE na Fase 2: só preenchidos quando
+    // `modalidade_execucao = 'TRANSPORTADORA'` (ver `FechamentoFrete` em `tipos.ts`).
     await executarDdlIdempotente(`
       CREATE TABLE IF NOT EXISTS ${fechamentos} (
         id UUID PRIMARY KEY,
         cotacao_id UUID NOT NULL UNIQUE REFERENCES ${cotacoes}(id),
-        proposta_id UUID NOT NULL REFERENCES ${propostas}(id),
-        transportadora_id UUID NOT NULL REFERENCES ${transportadoras}(id),
+        modalidade_execucao TEXT NOT NULL DEFAULT 'TRANSPORTADORA' CHECK (modalidade_execucao IN ('TRANSPORTADORA','VEICULO_PROPRIO','RETIRA')),
+        proposta_id UUID REFERENCES ${propostas}(id),
+        transportadora_id UUID REFERENCES ${transportadoras}(id),
+        veiculo_id UUID REFERENCES ${veiculos}(id),
+        motorista_nome TEXT,
         custo_frete NUMERIC NOT NULL,
         percentual_acrescimo NUMERIC NOT NULL,
         valor_acrescimo NUMERIC NOT NULL,
@@ -136,6 +184,14 @@ export function garantirEsquemaFretes(): Promise<void> {
         criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Defensivo, mesmo motivo do bloco de `cotacoes` acima (tabela pode já existir da Fase 1).
+    await executarDdlIdempotente(
+      `ALTER TABLE ${fechamentos} ADD COLUMN IF NOT EXISTS modalidade_execucao TEXT NOT NULL DEFAULT 'TRANSPORTADORA' CHECK (modalidade_execucao IN ('TRANSPORTADORA','VEICULO_PROPRIO','RETIRA'))`,
+    );
+    await executarDdlIdempotente(`ALTER TABLE ${fechamentos} ADD COLUMN IF NOT EXISTS veiculo_id UUID REFERENCES ${veiculos}(id)`);
+    await executarDdlIdempotente(`ALTER TABLE ${fechamentos} ADD COLUMN IF NOT EXISTS motorista_nome TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${fechamentos} ALTER COLUMN proposta_id DROP NOT NULL`);
+    await executarDdlIdempotente(`ALTER TABLE ${fechamentos} ALTER COLUMN transportadora_id DROP NOT NULL`);
 
     await executarDdlIdempotente(`
       CREATE TABLE IF NOT EXISTS ${auditoria} (

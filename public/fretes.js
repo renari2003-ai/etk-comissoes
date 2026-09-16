@@ -5,6 +5,11 @@
  * estrutural de `usuarios.ts`/`relatorios.ts`: `{ ativar }` plugado pelo `app.ts`.
  */
 import { formatarMoeda, formatarPercentual } from './formatacao.js';
+const ROTULOS_MODALIDADE_EXECUCAO = {
+    TRANSPORTADORA: 'Transportadora',
+    VEICULO_PROPRIO: 'Veículo próprio',
+    RETIRA: 'Retira',
+};
 const ROTULOS_STATUS_COTACAO = {
     RASCUNHO: 'Rascunho',
     AGUARDANDO_PROPOSTAS: 'Aguardando propostas',
@@ -40,21 +45,27 @@ export function inicializarFretes() {
     const abaDashboard = el('fretes-aba-dashboard');
     const abaCotacoes = el('fretes-aba-cotacoes');
     const abaTransportadoras = el('fretes-aba-transportadoras');
+    const abaVeiculos = el('fretes-aba-veiculos');
     const secaoDashboard = el('fretes-secao-dashboard');
     const secaoCotacoes = el('fretes-secao-cotacoes');
     const secaoDetalhe = el('fretes-secao-detalhe');
     const secaoTransportadoras = el('fretes-secao-transportadoras');
+    const secaoVeiculos = el('fretes-secao-veiculos');
     let ativado = false;
     let transportadorasCache = [];
+    let veiculosCache = [];
     let cotacaoAtualId = null;
+    let modalidadeExecucaoAtual = 'TRANSPORTADORA';
     function mostrarSubAba(sub) {
         secaoDashboard.hidden = sub !== 'dashboard';
         secaoCotacoes.hidden = sub !== 'cotacoes';
         secaoDetalhe.hidden = sub !== 'detalhe';
         secaoTransportadoras.hidden = sub !== 'transportadoras';
+        secaoVeiculos.hidden = sub !== 'veiculos';
         abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
         abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
         abaTransportadoras.classList.toggle('aba-ativa', sub === 'transportadoras');
+        abaVeiculos.classList.toggle('aba-ativa', sub === 'veiculos');
     }
     // --- Dashboard -----------------------------------------------------------
     async function carregarDashboard() {
@@ -71,9 +82,15 @@ export function inicializarFretes() {
             { rotulo: 'Em análise', valor: String(dados.cotacoesPorStatus.EM_ANALISE) },
             { rotulo: 'Aguardando aprovação', valor: String(dados.cotacoesPorStatus.AGUARDANDO_APROVACAO) },
             { rotulo: 'Fechadas', valor: String(dados.cotacoesPorStatus.FECHADA) },
+            { rotulo: 'Cotações — Transportadora', valor: String(dados.cotacoesPorModalidadeExecucao.TRANSPORTADORA) },
+            { rotulo: 'Cotações — Veículo próprio', valor: String(dados.cotacoesPorModalidadeExecucao.VEICULO_PROPRIO) },
+            { rotulo: 'Cotações — Retira', valor: String(dados.cotacoesPorModalidadeExecucao.RETIRA) },
             { rotulo: 'Custo total de fretes', valor: formatarMoeda(dados.resumoFechamentos.custoTotal) },
             { rotulo: 'Valor total repassado', valor: formatarMoeda(dados.resumoFechamentos.valorClienteTotal) },
             { rotulo: 'Total de acréscimos', valor: formatarMoeda(dados.resumoFechamentos.acrescimoTotal) },
+            { rotulo: 'Fretes fechados — Transportadora', valor: String(dados.resumoFechamentosPorModalidadeExecucao.TRANSPORTADORA.quantidade) },
+            { rotulo: 'Fretes fechados — Veículo próprio', valor: String(dados.resumoFechamentosPorModalidadeExecucao.VEICULO_PROPRIO.quantidade) },
+            { rotulo: 'Retiradas fechadas', valor: String(dados.resumoFechamentosPorModalidadeExecucao.RETIRA.quantidade) },
         ];
         for (const item of indicadores) {
             const div = document.createElement('div');
@@ -179,6 +196,100 @@ export function inicializarFretes() {
             void carregarTransportadoras();
         })();
     });
+    // --- Veículos próprios (Fase 2) -------------------------------------------
+    async function carregarVeiculos() {
+        const resposta = await fetch('/api/fretes/veiculos');
+        if (resposta.ok) {
+            const dados = (await resposta.json());
+            veiculosCache = dados.veiculos;
+        }
+        renderizarTabelaVeiculos();
+        renderizarSelectVeiculos();
+    }
+    function renderizarTabelaVeiculos() {
+        const corpo = el('fretes-tabela-veiculos-corpo');
+        corpo.textContent = '';
+        for (const v of veiculosCache) {
+            const tr = document.createElement('tr');
+            const celula = (texto) => {
+                const td = document.createElement('td');
+                td.textContent = texto;
+                return td;
+            };
+            tr.appendChild(celula(v.descricao));
+            tr.appendChild(celula(v.placa ?? '—'));
+            tr.appendChild(celula(v.tipo ?? '—'));
+            tr.appendChild(celula(v.capacidadeKg !== null ? `${v.capacidadeKg} kg` : '—'));
+            tr.appendChild(celula(v.ativo ? 'Ativo' : 'Inativo'));
+            const tdAcoes = document.createElement('td');
+            const botao = document.createElement('button');
+            botao.type = 'button';
+            botao.className = 'botao-secundario';
+            botao.textContent = v.ativo ? 'Desativar' : 'Ativar';
+            botao.addEventListener('click', () => {
+                void (async () => {
+                    const resposta = await fetch(`/api/fretes/veiculos/${v.id}/${v.ativo ? 'desativar' : 'ativar'}`, { method: 'POST' });
+                    if (!resposta.ok) {
+                        window.alert(await extrairMensagemErro(resposta));
+                        return;
+                    }
+                    void carregarVeiculos();
+                })();
+            });
+            tdAcoes.appendChild(botao);
+            tr.appendChild(tdAcoes);
+            corpo.appendChild(tr);
+        }
+    }
+    /** Só veículos ATIVOS aparecem para seleção em novas cotações/entregas (seção 18). */
+    function renderizarSelectVeiculos() {
+        const select = document.getElementById('fretes-cotacao-veiculo');
+        if (select === null)
+            return;
+        const valorAtual = select.value;
+        select.textContent = '';
+        const optPlaceholder = document.createElement('option');
+        optPlaceholder.value = '';
+        optPlaceholder.textContent = 'Selecione…';
+        select.appendChild(optPlaceholder);
+        for (const v of veiculosCache.filter((x) => x.ativo)) {
+            const option = document.createElement('option');
+            option.value = v.id;
+            option.textContent = v.placa ? `${v.descricao} (${v.placa})` : v.descricao;
+            select.appendChild(option);
+        }
+        select.value = valorAtual;
+    }
+    const formNovoVeiculo = el('fretes-form-novo-veiculo');
+    const erroVeiculo = el('fretes-veiculo-erro');
+    formNovoVeiculo.addEventListener('submit', (evento) => {
+        evento.preventDefault();
+        void (async () => {
+            erroVeiculo.hidden = true;
+            const dadosForm = new FormData(formNovoVeiculo);
+            const resposta = await fetch('/api/fretes/veiculos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    descricao: dadosForm.get('descricao'),
+                    placa: textoOuNulo(dadosForm.get('placa')),
+                    tipo: textoOuNulo(dadosForm.get('tipo')),
+                    marca: textoOuNulo(dadosForm.get('marca')),
+                    modelo: textoOuNulo(dadosForm.get('modelo')),
+                    ano: numeroOuNulo(dadosForm.get('ano')),
+                    capacidadeKg: numeroOuNulo(dadosForm.get('capacidadeKg')),
+                    capacidadeM3: numeroOuNulo(dadosForm.get('capacidadeM3')),
+                }),
+            });
+            if (!resposta.ok) {
+                erroVeiculo.textContent = await extrairMensagemErro(resposta);
+                erroVeiculo.hidden = false;
+                return;
+            }
+            formNovoVeiculo.reset();
+            void carregarVeiculos();
+        })();
+    });
     // --- Cotações ----------------------------------------------------------
     function classeStatus(status) {
         if (status === 'FECHADA')
@@ -205,6 +316,7 @@ export function inicializarFretes() {
             };
             tr.appendChild(celula(cotacao.codigo));
             tr.appendChild(celula(`${cotacao.origem ?? '—'} → ${cotacao.destino ?? '—'}`));
+            tr.appendChild(celula(ROTULOS_MODALIDADE_EXECUCAO[cotacao.modalidadeExecucao]));
             tr.appendChild(celula(cotacao.modalidade));
             const tdStatus = document.createElement('td');
             const spanStatus = document.createElement('span');
@@ -226,6 +338,23 @@ export function inicializarFretes() {
     }
     const formNovaCotacao = el('fretes-form-nova-cotacao');
     const erroCotacao = el('fretes-cotacao-erro');
+    const campoVeiculoCotacao = el('fretes-cotacao-campo-veiculo');
+    const campoMotoristaCotacao = el('fretes-cotacao-campo-motorista');
+    const campoCustoManualCotacao = el('fretes-cotacao-campo-custo-manual');
+    const campoVeiculoSelect = el('fretes-cotacao-veiculo');
+    /** Mostra só os campos relevantes pra cada modalidade (seção 13/15/16) — veículo é exigido no frontend para VEICULO_PROPRIO, mas a validação real está no backend (nunca confia só na UI). */
+    function atualizarCamposPorModalidadeExecucao() {
+        const modalidade = document.querySelector('input[name="modalidadeExecucao"]:checked')?.value;
+        const ehVeiculoProprio = modalidade === 'VEICULO_PROPRIO';
+        campoVeiculoCotacao.hidden = !ehVeiculoProprio;
+        campoMotoristaCotacao.hidden = !ehVeiculoProprio;
+        campoCustoManualCotacao.hidden = !ehVeiculoProprio;
+        campoVeiculoSelect.required = ehVeiculoProprio;
+    }
+    Array.from(document.querySelectorAll('input[name="modalidadeExecucao"]')).forEach((radio) => {
+        radio.addEventListener('change', atualizarCamposPorModalidadeExecucao);
+    });
+    atualizarCamposPorModalidadeExecucao();
     formNovaCotacao.addEventListener('submit', (evento) => {
         evento.preventDefault();
         void (async () => {
@@ -246,6 +375,10 @@ export function inicializarFretes() {
                     volumes: numeroOuNulo(dadosForm.get('volumes')),
                     valorMercadoria: numeroOuNulo(dadosForm.get('valorMercadoria')),
                     modalidade: dadosForm.get('modalidade'),
+                    modalidadeExecucao: dadosForm.get('modalidadeExecucao'),
+                    veiculoId: textoOuNulo(dadosForm.get('veiculoId')),
+                    motoristaNome: textoOuNulo(dadosForm.get('motoristaNome')),
+                    custoManual: numeroOuNulo(dadosForm.get('custoManual')),
                     observacoes: textoOuNulo(dadosForm.get('observacoes')),
                 }),
             });
@@ -255,6 +388,7 @@ export function inicializarFretes() {
                 return;
             }
             formNovaCotacao.reset();
+            atualizarCamposPorModalidadeExecucao();
             void carregarCotacoes();
         })();
     });
@@ -263,7 +397,29 @@ export function inicializarFretes() {
     async function abrirDetalheCotacao(id) {
         cotacaoAtualId = id;
         mostrarSubAba('detalhe');
-        await Promise.all([carregarTransportadoras(), carregarDetalheCotacao()]);
+        await Promise.all([carregarTransportadoras(), carregarVeiculos(), carregarDetalheCotacao()]);
+    }
+    function renderizarInfoVeiculo(cotacao) {
+        const container = el('fretes-detalhe-veiculo-info');
+        container.textContent = '';
+        const veiculo = veiculosCache.find((v) => v.id === cotacao.veiculoId);
+        const linhas = [
+            ['Veículo', veiculo ? (veiculo.placa ? `${veiculo.descricao} (${veiculo.placa})` : veiculo.descricao) : 'Nenhum vinculado'],
+            ['Motorista', cotacao.motoristaNome ?? '—'],
+            ['Custo interno informado na cotação', cotacao.custoManual !== null ? formatarMoeda(cotacao.custoManual) : 'Não informado ainda'],
+        ];
+        for (const [rotulo, valor] of linhas) {
+            const div = document.createElement('div');
+            const spanRotulo = document.createElement('span');
+            spanRotulo.className = 'metrica-rotulo';
+            spanRotulo.textContent = rotulo;
+            const spanValor = document.createElement('span');
+            spanValor.className = 'metrica-valor';
+            spanValor.textContent = valor;
+            div.appendChild(spanRotulo);
+            div.appendChild(spanValor);
+            container.appendChild(div);
+        }
     }
     async function carregarDetalheCotacao() {
         if (cotacaoAtualId === null)
@@ -277,17 +433,33 @@ export function inicializarFretes() {
             return;
         }
         const cotacao = (await respostaCotacao.json());
+        const modalidadeExecucao = cotacao.modalidadeExecucao;
+        modalidadeExecucaoAtual = modalidadeExecucao;
         el('fretes-detalhe-titulo').textContent = `Cotação ${cotacao.codigo}`;
         el('fretes-detalhe-info').textContent =
-            `${cotacao.origem ?? '—'} → ${cotacao.destino ?? '—'} • ${cotacao.modalidade} • Status: ${ROTULOS_STATUS_COTACAO[cotacao.status]}`;
+            `${cotacao.origem ?? '—'} → ${cotacao.destino ?? '—'} • ${ROTULOS_MODALIDADE_EXECUCAO[modalidadeExecucao]} • ${cotacao.modalidade} • Status: ${ROTULOS_STATUS_COTACAO[cotacao.status]}`;
         const cotacaoEncerrada = cotacao.status === 'FECHADA' || cotacao.status === 'CANCELADA';
+        // Cada modalidade mostra só os blocos relevantes (seção 14/15/16) — nunca transportadora/proposta
+        // para VEICULO_PROPRIO/RETIRA, nunca veículo para as outras duas.
+        el('fretes-detalhe-bloco-transportadora').hidden = modalidadeExecucao !== 'TRANSPORTADORA';
+        el('fretes-detalhe-bloco-veiculo').hidden = modalidadeExecucao !== 'VEICULO_PROPRIO';
+        el('fretes-detalhe-bloco-retira').hidden = modalidadeExecucao !== 'RETIRA';
         el('fretes-detalhe-form-secao').hidden = cotacaoEncerrada;
-        const respostaPropostas = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/propostas`);
-        const propostas = respostaPropostas.ok ? (await respostaPropostas.json()).propostas : [];
-        renderizarTabelaPropostas(propostas, cotacaoEncerrada);
-        const propostaSelecionada = propostas.find((p) => p.selecionada) ?? null;
+        let propostaSelecionada = null;
+        if (modalidadeExecucao === 'TRANSPORTADORA') {
+            const respostaPropostas = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/propostas`);
+            const propostas = respostaPropostas.ok ? (await respostaPropostas.json()).propostas : [];
+            renderizarTabelaPropostas(propostas, cotacaoEncerrada);
+            propostaSelecionada = propostas.find((p) => p.selecionada) ?? null;
+        }
+        else if (modalidadeExecucao === 'VEICULO_PROPRIO') {
+            renderizarInfoVeiculo(cotacao);
+        }
         const painelFechamento = el('fretes-painel-fechamento');
         const painelConcluido = el('fretes-fechamento-concluido');
+        const campoCustoManualFechamento = el('fretes-fechamento-campo-custo-manual');
+        const blocoAcrescimo = el('fretes-fechamento-bloco-acrescimo');
+        const botaoConfirmar = el('fretes-fechamento-botao-confirmar');
         if (cotacao.status === 'FECHADA') {
             painelFechamento.hidden = true;
             const respostaFechamento = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/fechamento`);
@@ -296,12 +468,34 @@ export function inicializarFretes() {
                 renderizarFechamentoConcluido(fechamento);
                 painelConcluido.hidden = false;
             }
+            return;
         }
-        else {
-            painelConcluido.hidden = true;
+        painelConcluido.hidden = true;
+        if (modalidadeExecucao === 'TRANSPORTADORA') {
+            campoCustoManualFechamento.hidden = true;
+            blocoAcrescimo.hidden = false;
+            botaoConfirmar.textContent = 'Confirmar fechamento';
             painelFechamento.hidden = propostaSelecionada === null;
             if (propostaSelecionada !== null)
                 atualizarPreviewFechamento(propostaSelecionada.valorCusto);
+        }
+        else if (modalidadeExecucao === 'VEICULO_PROPRIO') {
+            campoCustoManualFechamento.hidden = false;
+            blocoAcrescimo.hidden = false;
+            botaoConfirmar.textContent = 'Confirmar fechamento';
+            painelFechamento.hidden = cotacao.veiculoId === null;
+            const custoInicial = cotacao.custoManual ?? 0;
+            el('fretes-fechamento-custo-manual').value = String(custoInicial);
+            if (cotacao.veiculoId !== null)
+                atualizarPreviewFechamento(custoInicial);
+        }
+        else {
+            // RETIRA (seção 12/16): sem custo, sem acréscimo — só confirmação direta.
+            campoCustoManualFechamento.hidden = true;
+            blocoAcrescimo.hidden = true;
+            botaoConfirmar.textContent = 'Confirmar retirada (frete R$ 0,00)';
+            painelFechamento.hidden = false;
+            el('fretes-fechamento-resumo').textContent = '';
         }
     }
     function renderizarTabelaPropostas(propostas, cotacaoEncerrada) {
@@ -411,7 +605,15 @@ export function inicializarFretes() {
         resumo.appendChild(linhaCusto);
         recalcularPreview();
     }
+    /** Custo base do fechamento: fixo (proposta selecionada) para TRANSPORTADORA, editável (custo interno) para VEICULO_PROPRIO. */
+    function obterCustoBaseAtual() {
+        if (modalidadeExecucaoAtual === 'VEICULO_PROPRIO') {
+            return Number(el('fretes-fechamento-custo-manual').value || '0');
+        }
+        return custoDaPropostaSelecionada;
+    }
     function recalcularPreview() {
+        const custoBase = obterCustoBaseAtual();
         const modoPercentual = document.querySelector('input[name="modoCalculo"]:checked')?.value !== 'VALOR_FINAL';
         const campoPercentual = el('fretes-fechamento-campo-percentual');
         const campoValorFinal = el('fretes-fechamento-campo-valor-final');
@@ -420,13 +622,13 @@ export function inicializarFretes() {
         const preview = el('fretes-fechamento-preview');
         if (modoPercentual) {
             const percentual = Number(el('fretes-fechamento-percentual').value || '0');
-            const acrescimo = Math.round(custoDaPropostaSelecionada * (percentual / 100) * 100) / 100;
-            const total = Math.round((custoDaPropostaSelecionada + acrescimo) * 100) / 100;
+            const acrescimo = Math.round(custoBase * (percentual / 100) * 100) / 100;
+            const total = Math.round((custoBase + acrescimo) * 100) / 100;
             preview.textContent = `Acréscimo: ${formatarMoeda(acrescimo)} • Frete para o cliente: ${formatarMoeda(total)}`;
         }
         else {
             const valorFinal = Number(el('fretes-fechamento-valor-final').value || '0');
-            const percentual = custoDaPropostaSelecionada === 0 ? 0 : (valorFinal / custoDaPropostaSelecionada - 1) * 100;
+            const percentual = custoBase === 0 ? 0 : (valorFinal / custoBase - 1) * 100;
             preview.textContent = `Acréscimo implícito: ${formatarPercentual(Math.round(percentual * 100) / 100)} (conferência — o custo original não é alterado)`;
         }
     }
@@ -435,10 +637,13 @@ export function inicializarFretes() {
     });
     el('fretes-fechamento-percentual').addEventListener('input', recalcularPreview);
     el('fretes-fechamento-valor-final').addEventListener('input', recalcularPreview);
+    el('fretes-fechamento-custo-manual').addEventListener('input', recalcularPreview);
     function renderizarFechamentoConcluido(fechamento) {
         const container = el('fretes-fechamento-concluido');
         container.textContent = '';
         const linhas = [
+            ['Modalidade', ROTULOS_MODALIDADE_EXECUCAO[fechamento.modalidadeExecucao]],
+            ...(fechamento.motoristaNome !== null ? [['Motorista', fechamento.motoristaNome]] : []),
             ['Custo do frete', formatarMoeda(fechamento.custoFrete)],
             ['Acréscimo', formatarPercentual(fechamento.percentualAcrescimo)],
             ['Valor do acréscimo', formatarMoeda(fechamento.valorAcrescimo)],
@@ -464,18 +669,26 @@ export function inicializarFretes() {
         void (async () => {
             if (cotacaoAtualId === null)
                 return;
-            if (!window.confirm('Confirmar o fechamento deste frete? Depois de fechada, a cotação não pode ser reaberta nesta fase.'))
+            const mensagemConfirmacao = modalidadeExecucaoAtual === 'RETIRA'
+                ? 'Confirmar a retirada desta cotação (frete R$ 0,00)? Depois de fechada, não pode ser reaberta nesta fase.'
+                : 'Confirmar o fechamento deste frete? Depois de fechada, a cotação não pode ser reaberta nesta fase.';
+            if (!window.confirm(mensagemConfirmacao))
                 return;
             erroFechamento.hidden = true;
-            const modoPercentual = document.querySelector('input[name="modoCalculo"]:checked')?.value !== 'VALOR_FINAL';
             const corpo = {
                 observacoes: textoOuNulo(el('fretes-fechamento-observacoes').value),
             };
-            if (modoPercentual) {
-                corpo.percentualAcrescimo = Number(el('fretes-fechamento-percentual').value || '0');
+            if (modalidadeExecucaoAtual === 'VEICULO_PROPRIO') {
+                corpo.custoManual = Number(el('fretes-fechamento-custo-manual').value || '0');
             }
-            else {
-                corpo.valorFreteClienteInformado = Number(el('fretes-fechamento-valor-final').value || '0');
+            if (modalidadeExecucaoAtual !== 'RETIRA') {
+                const modoPercentual = document.querySelector('input[name="modoCalculo"]:checked')?.value !== 'VALOR_FINAL';
+                if (modoPercentual) {
+                    corpo.percentualAcrescimo = Number(el('fretes-fechamento-percentual').value || '0');
+                }
+                else {
+                    corpo.valorFreteClienteInformado = Number(el('fretes-fechamento-valor-final').value || '0');
+                }
             }
             const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/fechamento`, {
                 method: 'POST',
@@ -509,6 +722,10 @@ export function inicializarFretes() {
         mostrarSubAba('transportadoras');
         void carregarTransportadoras();
     });
+    abaVeiculos.addEventListener('click', () => {
+        mostrarSubAba('veiculos');
+        void carregarVeiculos();
+    });
     return {
         ativar() {
             if (ativado)
@@ -517,6 +734,7 @@ export function inicializarFretes() {
             mostrarSubAba('dashboard');
             void carregarDashboard();
             void carregarTransportadoras();
+            void carregarVeiculos();
         },
     };
 }

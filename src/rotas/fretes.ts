@@ -4,6 +4,7 @@ import { ErroValidacao } from '../validacao.js';
 import {
   servicoAtualizarCotacao,
   servicoAtualizarTransportadora,
+  servicoAtualizarVeiculo,
   servicoBuscarCotacao,
   servicoBuscarFechamento,
   servicoCancelarCotacao,
@@ -11,29 +12,43 @@ import {
   servicoCriarCotacao,
   servicoCriarProposta,
   servicoCriarTransportadora,
+  servicoCriarVeiculo,
   servicoDashboard,
   servicoDefinirAtivaTransportadora,
+  servicoDefinirAtivoVeiculo,
   servicoFecharCotacao,
   servicoListarCotacoes,
   servicoListarPropostas,
   servicoListarTransportadoras,
+  servicoListarVeiculos,
   servicoRejeitarProposta,
   servicoSelecionarProposta,
 } from '../fretes/fretesServico.js';
-import type { StatusCotacao } from '../fretes/tipos.js';
+import type { ModalidadeExecucao, StatusCotacao } from '../fretes/tipos.js';
 import {
   validarCnpjOpcional,
   validarEmailOpcional,
   validarIdOmieOpcional,
   validarInteiroNaoNegativoOpcional,
   validarModalidade,
+  validarModalidadeExecucao,
   validarNumeroNaoNegativoObrigatorio,
   validarNumeroNaoNegativoOpcional,
   validarTextoObrigatorio,
   validarTextoOpcional,
   validarUuid,
+  validarUuidOpcional,
 } from '../fretes/validacao.js';
 import { assincrono } from './erroHttp.js';
+
+const MODALIDADES_EXECUCAO_VALIDAS: readonly ModalidadeExecucao[] = ['TRANSPORTADORA', 'VEICULO_PROPRIO', 'RETIRA'];
+function validarModalidadeExecucaoOpcional(valor: unknown): ModalidadeExecucao | undefined {
+  if (valor === undefined || valor === null || valor === '') return undefined;
+  if (typeof valor !== 'string' || !MODALIDADES_EXECUCAO_VALIDAS.includes(valor as ModalidadeExecucao)) {
+    throw new ErroValidacao(`O parâmetro "modalidadeExecucao" deve ser um dos: ${MODALIDADES_EXECUCAO_VALIDAS.join(', ')}.`);
+  }
+  return valor as ModalidadeExecucao;
+}
 
 const STATUS_VALIDOS: readonly StatusCotacao[] = [
   'RASCUNHO',
@@ -128,6 +143,74 @@ export function criarRotaFretes(): Router {
     }),
   );
 
+  // --- Veículos próprios (Fase 2) -------------------------------------------
+
+  rotas.get(
+    '/api/fretes/veiculos',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const somenteAtivos = req.query.somenteAtivos === 'true';
+      res.json({ veiculos: await servicoListarVeiculos(somenteAtivos) });
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/veiculos',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const dados = {
+        descricao: validarTextoObrigatorio(req.body?.descricao, 'descricao'),
+        placa: validarTextoOpcional(req.body?.placa, 'placa'),
+        tipo: validarTextoOpcional(req.body?.tipo, 'tipo'),
+        marca: validarTextoOpcional(req.body?.marca, 'marca'),
+        modelo: validarTextoOpcional(req.body?.modelo, 'modelo'),
+        ano: validarInteiroNaoNegativoOpcional(req.body?.ano, 'ano'),
+        capacidadeKg: validarNumeroNaoNegativoOpcional(req.body?.capacidadeKg, 'capacidadeKg'),
+        capacidadeM3: validarNumeroNaoNegativoOpcional(req.body?.capacidadeM3, 'capacidadeM3'),
+        observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+      };
+      const veiculo = await servicoCriarVeiculo(dados, req.usuario!.id);
+      res.status(201).json(veiculo);
+    }),
+  );
+
+  rotas.put(
+    '/api/fretes/veiculos/:id',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      const dados: Record<string, unknown> = {};
+      if (req.body?.descricao !== undefined) dados.descricao = validarTextoObrigatorio(req.body.descricao, 'descricao');
+      if (req.body?.placa !== undefined) dados.placa = validarTextoOpcional(req.body.placa, 'placa');
+      if (req.body?.tipo !== undefined) dados.tipo = validarTextoOpcional(req.body.tipo, 'tipo');
+      if (req.body?.marca !== undefined) dados.marca = validarTextoOpcional(req.body.marca, 'marca');
+      if (req.body?.modelo !== undefined) dados.modelo = validarTextoOpcional(req.body.modelo, 'modelo');
+      if (req.body?.ano !== undefined) dados.ano = validarInteiroNaoNegativoOpcional(req.body.ano, 'ano');
+      if (req.body?.capacidadeKg !== undefined) dados.capacidadeKg = validarNumeroNaoNegativoOpcional(req.body.capacidadeKg, 'capacidadeKg');
+      if (req.body?.capacidadeM3 !== undefined) dados.capacidadeM3 = validarNumeroNaoNegativoOpcional(req.body.capacidadeM3, 'capacidadeM3');
+      if (req.body?.observacoes !== undefined) dados.observacoes = validarTextoOpcional(req.body.observacoes, 'observacoes');
+      res.json(await servicoAtualizarVeiculo(id, dados, req.usuario!.id));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/veiculos/:id/ativar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoDefinirAtivoVeiculo(id, true, req.usuario!.id));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/veiculos/:id/desativar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoDefinirAtivoVeiculo(id, false, req.usuario!.id));
+    }),
+  );
+
   // --- Cotações --------------------------------------------------------
 
   rotas.get(
@@ -136,8 +219,9 @@ export function criarRotaFretes(): Router {
     assincrono(async (req, res) => {
       const status = validarStatusOpcional(req.query.status);
       const modalidade = req.query.modalidade === 'CIF' || req.query.modalidade === 'FOB' ? req.query.modalidade : undefined;
+      const modalidadeExecucao = validarModalidadeExecucaoOpcional(req.query.modalidadeExecucao);
       const codigo = validarTextoOpcional(req.query.codigo, 'codigo') ?? undefined;
-      res.json({ cotacoes: await servicoListarCotacoes({ status, modalidade, codigo }) });
+      res.json({ cotacoes: await servicoListarCotacoes({ status, modalidade, modalidadeExecucao, codigo }) });
     }),
   );
 
@@ -157,6 +241,10 @@ export function criarRotaFretes(): Router {
         volumes: validarInteiroNaoNegativoOpcional(req.body?.volumes, 'volumes'),
         valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
         modalidade: validarModalidade(req.body?.modalidade),
+        modalidadeExecucao: validarModalidadeExecucao(req.body?.modalidadeExecucao ?? 'TRANSPORTADORA'),
+        veiculoId: validarUuidOpcional(req.body?.veiculoId, 'veiculoId'),
+        motoristaNome: validarTextoOpcional(req.body?.motoristaNome, 'motoristaNome'),
+        custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
         observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
       };
       const cotacao = await servicoCriarCotacao(dados, req.usuario!.id);
@@ -187,6 +275,10 @@ export function criarRotaFretes(): Router {
       if (req.body?.volumes !== undefined) dados.volumes = validarInteiroNaoNegativoOpcional(req.body.volumes, 'volumes');
       if (req.body?.valorMercadoria !== undefined) dados.valorMercadoria = validarNumeroNaoNegativoOpcional(req.body.valorMercadoria, 'valorMercadoria');
       if (req.body?.modalidade !== undefined) dados.modalidade = validarModalidade(req.body.modalidade);
+      if (req.body?.modalidadeExecucao !== undefined) dados.modalidadeExecucao = validarModalidadeExecucao(req.body.modalidadeExecucao);
+      if (req.body?.veiculoId !== undefined) dados.veiculoId = validarUuidOpcional(req.body.veiculoId, 'veiculoId');
+      if (req.body?.motoristaNome !== undefined) dados.motoristaNome = validarTextoOpcional(req.body.motoristaNome, 'motoristaNome');
+      if (req.body?.custoManual !== undefined) dados.custoManual = validarNumeroNaoNegativoOpcional(req.body.custoManual, 'custoManual');
       if (req.body?.observacoes !== undefined) dados.observacoes = validarTextoOpcional(req.body.observacoes, 'observacoes');
       res.json(await servicoAtualizarCotacao(id, dados, req.usuario!.id));
     }),
@@ -286,9 +378,14 @@ export function criarRotaFretes(): Router {
       const cotacaoId = validarUuid(req.params.id, 'id');
       const temPercentual = req.body?.percentualAcrescimo !== undefined && req.body?.percentualAcrescimo !== null && req.body?.percentualAcrescimo !== '';
       const temValorFinal = req.body?.valorFreteClienteInformado !== undefined && req.body?.valorFreteClienteInformado !== null && req.body?.valorFreteClienteInformado !== '';
-      if (temPercentual === temValorFinal) {
-        throw new ErroValidacao('Informe exatamente um dos dois: "percentualAcrescimo" OU "valorFreteClienteInformado".');
+      // "Exatamente um dos dois" só é exigido quando os dois foram informados ao mesmo tempo
+      // (ambíguo) — a ausência dos dois é válida para a modalidade RETIRA (sempre R$ 0,00,
+      // ignora acréscimo por completo, seção 12); `fretesServico.servicoFecharCotacao` já
+      // rejeita a ausência dos dois para as demais modalidades.
+      if (temPercentual && temValorFinal) {
+        throw new ErroValidacao('Informe apenas um dos dois: "percentualAcrescimo" OU "valorFreteClienteInformado".');
       }
+      const temCustoManual = req.body?.custoManual !== undefined && req.body?.custoManual !== null && req.body?.custoManual !== '';
       const fechamento = await servicoFecharCotacao(
         {
           cotacaoId,
@@ -296,6 +393,7 @@ export function criarRotaFretes(): Router {
           valorFreteClienteInformado: temValorFinal
             ? validarNumeroNaoNegativoObrigatorio(req.body.valorFreteClienteInformado, 'valorFreteClienteInformado')
             : undefined,
+          custoManual: temCustoManual ? validarNumeroNaoNegativoObrigatorio(req.body.custoManual, 'custoManual') : undefined,
           observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
         },
         req.usuario!.id,
