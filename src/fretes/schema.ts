@@ -1,6 +1,52 @@
 import { executarDdlIdempotente } from '../db.js';
 
 /**
+ * Correção cirúrgica (homologação 2026-09-16, Fase 4A.3): três FKs do domínio de Fretes
+ * foram criadas, na primeira execução real de `garantirEsquemaFretes()`, apontando para
+ * tabelas de TESTE (`*_teste_1789577687814_airk3qshvlj`) em vez das tabelas reais —
+ * evidência direta via `pg_constraint`: `solicitacoes_cotacao_frete.cotacao_frete_id`,
+ * `solicitacoes_cotacao_frete.transportadora_id` e
+ * `extracoes_proposta_frete.proposta_id` apontavam para tabelas de teste com o MESMO
+ * sufixo de timestamp, confirmando uma única execução corrompida (variáveis `*_TABELA` de
+ * teste ativas no processo no exato instante em que essas 2 tabelas foram criadas pela
+ * primeira vez em produção). Nunca reproduzido nos testes porque lá TODAS as variáveis
+ * `*_TABELA` são sempre sobrescritas juntas em `beforeEach`; a causa mais provável é
+ * vazamento de `process.env` entre arquivos de teste rodando na mesma worker thread do
+ * Vitest (pool "threads" compartilha o processo, e portanto `process.env`, entre arquivos
+ * concorrentes) coincidindo com uma chamada real ao servidor no mesmo processo.
+ *
+ * `CREATE TABLE IF NOT EXISTS` nunca corrige uma FK já existente — por isso essa correção
+ * é necessária e roda a cada start (idempotente: no-op quando a FK já está correta).
+ * Localiza a constraint pela COLUNA (não pelo nome, mais robusto), e só a substitui se o
+ * alvo atual divergir da tabela real resolvida neste processo. `ADD CONSTRAINT` revalida
+ * as linhas existentes contra a tabela nova — se existisse alguma linha órfã, a migração
+ * falharia alto e claro em vez de mascarar o problema; nenhuma linha é apagada ou alterada.
+ */
+async function repararFkSeApontarParaTabelaErrada(tabelaOrigem: string, colunaOrigem: string, tabelaCorreta: string): Promise<void> {
+  await executarDdlIdempotente(`
+    DO $$
+    DECLARE
+      nome_constraint text;
+      tabela_atual text;
+    BEGIN
+      SELECT con.conname, rel_ref.relname INTO nome_constraint, tabela_atual
+      FROM pg_constraint con
+      JOIN pg_class rel_src ON rel_src.oid = con.conrelid
+      JOIN pg_class rel_ref ON rel_ref.oid = con.confrelid
+      JOIN pg_attribute att ON att.attrelid = rel_src.oid AND att.attnum = con.conkey[1]
+      WHERE rel_src.relname = '${tabelaOrigem}' AND con.contype = 'f'
+        AND array_length(con.conkey, 1) = 1 AND att.attname = '${colunaOrigem}';
+
+      IF nome_constraint IS NOT NULL AND tabela_atual IS DISTINCT FROM '${tabelaCorreta}' THEN
+        EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', '${tabelaOrigem}', nome_constraint);
+        EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I FOREIGN KEY (${colunaOrigem}) REFERENCES %I (id)',
+          '${tabelaOrigem}', nome_constraint, '${tabelaCorreta}');
+      END IF;
+    END $$;
+  `);
+}
+
+/**
  * Nomes de tabela — só sobrescritos nos testes (uma var de ambiente por tabela, mesmo
  * padrão de `USUARIOS_TABELA`/`SESSOES_TABELA`), pra rodar contra tabelas isoladas e
  * descartáveis no MESMO banco Supabase (não há um segundo projeto só pra teste). Nunca
@@ -290,6 +336,11 @@ export function garantirEsquemaFretes(): Promise<void> {
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${solicitacoes}_transportadora ON ${solicitacoes} (transportadora_id)`);
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${solicitacoes}_status ON ${solicitacoes} (status)`);
 
+    // Ver comentário completo de `repararFkSeApontarParaTabelaErrada` no topo do arquivo.
+    // As 2 FKs de `${solicitacoes}` foram as primeiras encontradas com o problema.
+    await repararFkSeApontarParaTabelaErrada(solicitacoes, 'cotacao_frete_id', cotacoes);
+    await repararFkSeApontarParaTabelaErrada(solicitacoes, 'transportadora_id', transportadoras);
+
     // Material bruto — NUNCA alterado depois de criado (seção 18); correções humanas
     // alteram só a proposta estruturada. UNIQUE (canal, identificador_mensagem) é a
     // idempotência em nível de banco (seção 19): a mesma mensagem chegando duas vezes
@@ -328,6 +379,10 @@ export function garantirEsquemaFretes(): Promise<void> {
       )
     `);
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${extracoes}_resposta ON ${extracoes} (resposta_id)`);
+
+    // Ver comentário completo de `repararFkSeApontarParaTabelaErrada` no topo do arquivo —
+    // terceira e última FK encontrada com o mesmo problema (mesma execução corrompida).
+    await repararFkSeApontarParaTabelaErrada(extracoes, 'proposta_id', propostas);
 
     // Rastreabilidade proposta ↔ solicitação (seção 33) — NULL em toda proposta manual
     // (Fase 1, inalterada). Aditivo/nullable, mesmo padrão das demais colunas desta fase.
