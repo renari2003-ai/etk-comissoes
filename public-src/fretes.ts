@@ -48,6 +48,8 @@ interface Transportadora {
   telefone: string | null;
   contato: string | null;
   ativo: boolean;
+  /** Fase 4A.4.1 — código do cadastro na Omie; `null` quando não vinculado (canal EMAIL exige e-mail manual nesse caso). */
+  codigoClienteOmie: number | null;
 }
 
 interface Veiculo {
@@ -104,6 +106,9 @@ interface SolicitacaoCotacao {
   codigoReferencia: string;
   dataEnvio: string | null;
   dataResposta: string | null;
+  /** Fase 4A.4.1 — snapshot do e-mail efetivamente usado (só canal EMAIL). */
+  emailDestino: string | null;
+  emailOrigem: 'OMIE' | 'MANUAL' | null;
 }
 
 /** Fase 4A.1 (seção 14/15/17) — origem bruta + extraída de uma proposta automática, para a revisão lado a lado. */
@@ -386,6 +391,7 @@ export function inicializarFretes(): { ativar: () => void } {
           email: textoOuNulo(dadosForm.get('email')),
           telefone: textoOuNulo(dadosForm.get('telefone')),
           contato: textoOuNulo(dadosForm.get('contato')),
+          codigoClienteOmie: numeroOuNulo(dadosForm.get('codigoClienteOmie')),
         }),
       });
       if (!resposta.ok) {
@@ -804,19 +810,40 @@ export function inicializarFretes(): { ativar: () => void } {
     return Number.isNaN(data.getTime()) ? '—' : data.toLocaleString('pt-BR');
   }
 
+  /**
+   * Fase 4A.4.1 (seção 7/8) — este painel é sempre canal EMAIL (`canal: 'EMAIL'` já fixo no
+   * envio, ver `botaoSolicitarCotacao` abaixo). Cada transportadora marcada ganha um campo de
+   * e-mail opcional: em branco, o ETK resolve automaticamente pelo Omie (se a transportadora
+   * tiver `codigoClienteOmie`); preenchido, vale como override manual SÓ para esta
+   * solicitação (nunca grava em `transportadoras.email` nem na Omie — a resolução real e o
+   * e-mail/fonte efetivamente usados só são conhecidos depois do envio, na tabela abaixo).
+   */
   function renderizarCheckboxesSolicitacao(): void {
     const container = el<HTMLElement>('fretes-solicitacoes-checkboxes');
     container.textContent = '';
     for (const t of transportadorasCache.filter((t) => t.ativo)) {
+      const linha = document.createElement('div');
+      linha.className = 'campo-filtro';
       const label = document.createElement('label');
-      label.className = 'campo-filtro';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.value = t.id;
       input.name = 'solicitacao-transportadora';
       label.appendChild(input);
       label.append(` ${t.nomeFantasia ? `${t.nomeRazaoSocial} (${t.nomeFantasia})` : t.nomeRazaoSocial}`);
-      container.appendChild(label);
+      linha.appendChild(label);
+
+      const inputEmail = document.createElement('input');
+      inputEmail.type = 'email';
+      inputEmail.dataset.transportadoraId = t.id;
+      inputEmail.className = 'fretes-solicitacao-email-manual';
+      inputEmail.placeholder =
+        t.codigoClienteOmie !== null
+          ? 'Em branco = usa o e-mail do Omie. Preencha para substituir só nesta solicitação.'
+          : 'Transportadora sem código Omie — informe o e-mail para esta solicitação.';
+      linha.appendChild(inputEmail);
+
+      container.appendChild(linha);
     }
   }
 
@@ -841,6 +868,8 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(ROTULOS_STATUS_SOLICITACAO[s.status]));
       tr.appendChild(celula(formatarDataHoraOuTraco(s.dataEnvio)));
       tr.appendChild(celula(formatarDataHoraOuTraco(s.dataResposta)));
+      tr.appendChild(celula(s.emailDestino ?? '—'));
+      tr.appendChild(celula(s.emailOrigem === 'OMIE' ? 'Omie' : s.emailOrigem === 'MANUAL' ? 'Manual' : '—'));
 
       const tdAcoes = document.createElement('td');
       if (s.status === 'ERRO') {
@@ -872,16 +901,19 @@ export function inicializarFretes(): { ativar: () => void } {
       if (cotacaoAtualId === null) return;
       erroSolicitacao.hidden = true;
       const marcadas = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="solicitacao-transportadora"]:checked'));
-      const transportadoraIds = marcadas.map((i) => i.value);
-      if (transportadoraIds.length === 0) {
+      if (marcadas.length === 0) {
         erroSolicitacao.textContent = 'Selecione ao menos uma transportadora.';
         erroSolicitacao.hidden = false;
         return;
       }
+      const transportadoras = marcadas.map((i) => {
+        const inputEmail = document.querySelector<HTMLInputElement>(`.fretes-solicitacao-email-manual[data-transportadora-id="${i.value}"]`);
+        return { id: i.value, emailManual: textoOuNulo(inputEmail?.value ?? '') };
+      });
       const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/solicitacoes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transportadoraIds, canal: 'EMAIL' }),
+        body: JSON.stringify({ transportadoras, canal: 'EMAIL' }),
       });
       if (!resposta.ok) {
         erroSolicitacao.textContent = await extrairMensagemErro(resposta);
@@ -889,6 +921,10 @@ export function inicializarFretes(): { ativar: () => void } {
         return;
       }
       for (const i of marcadas) i.checked = false;
+      for (const t of transportadoras) {
+        const inputEmail = document.querySelector<HTMLInputElement>(`.fretes-solicitacao-email-manual[data-transportadora-id="${t.id}"]`);
+        if (inputEmail !== null) inputEmail.value = '';
+      }
       void carregarSolicitacoes();
     })();
   });

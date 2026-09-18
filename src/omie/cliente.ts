@@ -130,6 +130,8 @@ export interface Cliente {
   enderecoCadastral: EnderecoCadastralOmie;
   /** `null` quando a Omie não retornou nenhum campo preenchido neste bloco — nunca um objeto com todos os campos `null` (ver Fase 3.2, seção 11: objeto presente não significa endereço válido). */
   enderecoEntrega: EnderecoEntregaOmie | null;
+  /** Fase 4A.4.1 — e-mail do cadastro (cliente/fornecedor/transportadora usam o mesmo cadastro na Omie). `null` quando a Omie não devolveu o campo ou ele veio vazio — nunca inventado. */
+  email: string | null;
 }
 
 /** Campos usados de `ConsultarProduto` — a Omie devolve muito mais campos além destes. */
@@ -439,6 +441,7 @@ export class ClienteOmie {
           cidade?: string;
           estado?: string;
           cidade_ibge?: string;
+          email?: string;
           enderecoEntrega?: {
             entCEP?: string;
             entEndereco?: string;
@@ -468,6 +471,7 @@ export class ClienteOmie {
             uf: resposta.estado ?? null,
             codigoMunicipio: resposta.cidade_ibge ?? null,
           },
+          email: (resposta.email ?? '').trim() === '' ? null : resposta.email!.trim(),
           enderecoEntrega: entregaPreenchida
             ? {
                 cep: entrega?.entCEP ?? null,

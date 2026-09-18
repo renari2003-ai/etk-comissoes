@@ -96,7 +96,17 @@ async function prepararSolicitacao(servico: typeof import('../../src/fretes/fret
     },
     USUARIO_TESTE,
   );
-  const [solicitacao] = await servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+  // Fase 4A.4.1: `servicoSolicitarCotacoes` exige `ClienteOmie` + e-mail resolvido para canal
+  // EMAIL — este arquivo testa o webhook inbound, não a resolução de e-mail, então usa um
+  // e-mail manual fixo (a Omie nunca é consultada nestes testes).
+  const clienteOmieFake = { consultarCliente: async () => null } as unknown as ClienteOmie;
+  const [solicitacao] = await servicoSolicitarCotacoes(
+    clienteOmieFake,
+    cotacao.id,
+    [{ transportadoraId: transportadora.id, emailManual: 'transportadora@teste.com' }],
+    'EMAIL',
+    USUARIO_TESTE,
+  );
   if (solicitacao === undefined) throw new Error('Falha ao preparar solicitação de teste.');
   return { transportadora, cotacao, solicitacao };
 }

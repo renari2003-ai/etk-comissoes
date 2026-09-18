@@ -50,6 +50,9 @@ export type StatusExtracaoProposta = 'EXTRAIDA' | 'REQUER_REVISAO' | 'ERRO';
  * transportadora (seção 24) — é ele, nunca nome/assunto/texto aproximado, que reconcilia a
  * resposta recebida de volta com esta solicitação (seção 23).
  */
+/** Fase 4A.4.1 (seção 3/6) — de onde veio o e-mail efetivamente usado numa solicitação por canal EMAIL. Regra: MANUAL > OMIE > bloqueio (nunca inferido/inventado). */
+export type EmailOrigem = 'OMIE' | 'MANUAL';
+
 export interface SolicitacaoCotacao {
   id: string;
   cotacaoFreteId: string;
@@ -62,6 +65,13 @@ export interface SolicitacaoCotacao {
   identificadorExterno: string | null;
   tentativas: number;
   erroUltimaTentativa: string | null;
+  /**
+   * Fase 4A.4.1 (seção 2) — snapshot do e-mail efetivamente usado (só canal EMAIL; `null`
+   * nos demais canais). Nunca recalculado depois de criado — histórico permanece estável
+   * mesmo que o cadastro da transportadora ou o cadastro na Omie mudem depois.
+   */
+  emailDestino: string | null;
+  emailOrigem: EmailOrigem | null;
   criadoPor: string;
   criadoEm: string;
   atualizadoEm: string;
@@ -174,6 +184,13 @@ export interface Transportadora {
   contato: string | null;
   ativo: boolean;
   observacoes: string | null;
+  /**
+   * Fase 4A.4.1 (seção 1/4) — código do cadastro na Omie (cliente/fornecedor/transportadora
+   * compartilham o mesmo cadastro, `ConsultarCliente`). Informado manualmente pelo usuário;
+   * nunca sincronizado automaticamente, nunca escreve na Omie. `null` quando a transportadora
+   * não tem vínculo Omie — nesse caso, canal EMAIL depende de e-mail manual por solicitação.
+   */
+  codigoClienteOmie: number | null;
   criadoEm: string;
   atualizadoEm: string;
 }

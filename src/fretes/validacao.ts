@@ -38,6 +38,16 @@ export function validarEmailOpcional(valor: unknown): string | null {
   return valor.trim();
 }
 
+/**
+ * Versão que nunca lança (Fase 4A.4.1, seção 5) — usada para checar o e-mail devolvido pela
+ * Omie: um e-mail ausente/vazio/malformado no cadastro Omie deve ser tratado como "fonte
+ * indisponível" (segue para bloqueio ou exige manual), nunca como um erro de validação de
+ * entrada do usuário.
+ */
+export function emailValido(valor: string | null): valor is string {
+  return valor !== null && REGEX_EMAIL.test(valor.trim());
+}
+
 export function validarNumeroNaoNegativoOpcional(valor: unknown, campo: string): number | null {
   if (valor === undefined || valor === null || valor === '') return null;
   const numero = Number(valor);

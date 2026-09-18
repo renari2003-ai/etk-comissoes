@@ -180,6 +180,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         telefone: validarTextoOpcional(req.body?.telefone, 'telefone'),
         contato: validarTextoOpcional(req.body?.contato, 'contato'),
         observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+        codigoClienteOmie: validarIdOmieOpcional(req.body?.codigoClienteOmie, 'codigoClienteOmie'),
       };
       const transportadora = await servicoCriarTransportadora(dados, req.usuario!.id);
       res.status(201).json(transportadora);
@@ -199,6 +200,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       if (req.body?.telefone !== undefined) dados.telefone = validarTextoOpcional(req.body.telefone, 'telefone');
       if (req.body?.contato !== undefined) dados.contato = validarTextoOpcional(req.body.contato, 'contato');
       if (req.body?.observacoes !== undefined) dados.observacoes = validarTextoOpcional(req.body.observacoes, 'observacoes');
+      if (req.body?.codigoClienteOmie !== undefined) dados.codigoClienteOmie = validarIdOmieOpcional(req.body.codigoClienteOmie, 'codigoClienteOmie');
       const transportadora = await servicoAtualizarTransportadora(id, dados, req.usuario!.id);
       res.json(transportadora);
     }),
@@ -450,16 +452,30 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     ...protegida,
     assincrono(async (req, res) => {
       const cotacaoId = validarUuid(req.params.id, 'id');
-      const bruto = req.body?.transportadoraIds;
-      if (!Array.isArray(bruto) || bruto.length === 0) {
-        throw new ErroValidacao('O campo "transportadoraIds" deve ser uma lista com ao menos um id.');
+      // Fase 4A.4.1 (seção 7): aceita `transportadoras: [{ id, emailManual? }]` (permite
+      // override de e-mail por transportadora, só válido para canal EMAIL). Mantém
+      // compatibilidade com o formato anterior `transportadoraIds: string[]` (sem override).
+      const brutoTransportadoras = req.body?.transportadoras;
+      const brutoIds = req.body?.transportadoraIds;
+      let itens: { transportadoraId: string; emailManual: string | null }[];
+      if (Array.isArray(brutoTransportadoras) && brutoTransportadoras.length > 0) {
+        itens = brutoTransportadoras.map((v: unknown, i: number) => {
+          const item = v as Record<string, unknown>;
+          return {
+            transportadoraId: validarUuid(item?.id, `transportadoras[${i}].id`),
+            emailManual: validarEmailOpcional(item?.emailManual),
+          };
+        });
+      } else if (Array.isArray(brutoIds) && brutoIds.length > 0) {
+        itens = brutoIds.map((v, i) => ({ transportadoraId: validarUuid(v, `transportadoraIds[${i}]`), emailManual: null }));
+      } else {
+        throw new ErroValidacao('Informe "transportadoras" (lista com ao menos um item) ou "transportadoraIds".');
       }
-      const transportadoraIds = bruto.map((v, i) => validarUuid(v, `transportadoraIds[${i}]`));
       const canal = validarCanalOpcional(req.body?.canal);
       // Fase 4A.2: o destino do envio (URL/segredo do n8n) vem exclusivamente de
       // `config` (variáveis de ambiente do servidor) — nunca de `req.body` (seção 36/37,
       // nunca SSRF via URL escolhida pelo cliente).
-      const solicitacoes = await servicoSolicitarCotacoes(cotacaoId, transportadoraIds, canal, req.usuario!.id);
+      const solicitacoes = await servicoSolicitarCotacoes(cliente, cotacaoId, itens, canal, req.usuario!.id);
       res.status(201).json({ solicitacoes });
     }),
   );

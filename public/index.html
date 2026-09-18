@@ -397,6 +397,8 @@
                   <th scope="col">Status</th>
                   <th scope="col">Enviado em</th>
                   <th scope="col">Respondido em</th>
+                  <th scope="col">E-mail</th>
+                  <th scope="col">Fonte</th>
                   <th scope="col">Ações</th>
                 </tr>
               </thead>
@@ -536,6 +538,10 @@
         <div class="campo-filtro">
           <label for="fretes-transportadora-contato">Contato</label>
           <input id="fretes-transportadora-contato" name="contato" type="text" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-codigo-omie">Código Omie</label>
+          <input id="fretes-transportadora-codigo-omie" name="codigoClienteOmie" type="number" min="1" step="1" placeholder="Opcional — habilita e-mail automático" />
         </div>
         <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar transportadora</button>
       </form>

@@ -122,6 +122,11 @@ export function garantirEsquemaFretes(): Promise<void> {
         atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Fase 4A.4.1 (seção 1) — código do cadastro na Omie (cliente/fornecedor/transportadora
+    // compartilham o mesmo cadastro, `ConsultarCliente`). Nullable, informado manualmente pelo
+    // usuário no cadastro da transportadora; nunca uma FK (não há uma tabela local de
+    // cadastros Omie para referenciar) e nunca sincronizado automaticamente com a Omie.
+    await executarDdlIdempotente(`ALTER TABLE ${transportadoras} ADD COLUMN IF NOT EXISTS codigo_cliente_omie BIGINT`);
 
     // Veículos próprios (Fase 2, seção 4) — só `descricao` é obrigatória; placa/tipo/
     // capacidade são opcionais para não travar o cadastro por falta de dado secundário.
@@ -340,6 +345,15 @@ export function garantirEsquemaFretes(): Promise<void> {
     // As 2 FKs de `${solicitacoes}` foram as primeiras encontradas com o problema.
     await repararFkSeApontarParaTabelaErrada(solicitacoes, 'cotacao_frete_id', cotacoes);
     await repararFkSeApontarParaTabelaErrada(solicitacoes, 'transportadora_id', transportadoras);
+
+    // Fase 4A.4.1 (seção 2) — snapshot do destinatário de e-mail efetivamente usado nesta
+    // solicitação (regra MANUAL > OMIE > BLOQUEIO). Nullable: só faz sentido para canal
+    // EMAIL; nunca recalculado depois de criado (mesmo espírito do restante do módulo —
+    // mudanças futuras no cadastro/Omie não reescrevem o histórico já enviado).
+    await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS email_destino TEXT`);
+    await executarDdlIdempotente(
+      `ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS email_origem TEXT CHECK (email_origem IN ('OMIE','MANUAL'))`,
+    );
 
     // Material bruto — NUNCA alterado depois de criado (seção 18); correções humanas
     // alteram só a proposta estruturada. UNIQUE (canal, identificador_mensagem) é a

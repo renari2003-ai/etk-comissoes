@@ -14,6 +14,8 @@ interface LinhaTransportadora {
   contato: string | null;
   ativo: boolean;
   observacoes: string | null;
+  /** BIGINT — `pg` sempre devolve como string, nunca number (mesmo motivo de `pedido_omie_id` etc.). */
+  codigo_cliente_omie: string | null;
   criado_em: Date;
   atualizado_em: Date;
 }
@@ -29,6 +31,7 @@ function linhaParaTransportadora(l: LinhaTransportadora): Transportadora {
     contato: l.contato,
     ativo: l.ativo,
     observacoes: l.observacoes,
+    codigoClienteOmie: l.codigo_cliente_omie === null ? null : Number(l.codigo_cliente_omie),
     criadoEm: l.criado_em.toISOString(),
     atualizadoEm: l.atualizado_em.toISOString(),
   };
@@ -42,6 +45,8 @@ export interface DadosTransportadora {
   telefone: string | null;
   contato: string | null;
   observacoes: string | null;
+  /** Fase 4A.4.1 — opcional; `undefined` em chamadas que não mexem nesse campo (ver `atualizarTransportadora`). */
+  codigoClienteOmie?: number | null;
 }
 
 export async function listarTransportadoras(somenteAtivas: boolean): Promise<Transportadora[]> {
@@ -68,10 +73,20 @@ export async function criarTransportadora(dados: DadosTransportadora): Promise<T
   const id = randomUUID();
   const { rows } = await pool.query<LinhaTransportadora>(
     `INSERT INTO ${nomeTabelaTransportadoras()}
-       (id, nome_razao_social, nome_fantasia, cnpj, email, telefone, contato, ativo, observacoes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)
+       (id, nome_razao_social, nome_fantasia, cnpj, email, telefone, contato, ativo, observacoes, codigo_cliente_omie)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9)
      RETURNING *`,
-    [id, dados.nomeRazaoSocial, dados.nomeFantasia, dados.cnpj, dados.email, dados.telefone, dados.contato, dados.observacoes],
+    [
+      id,
+      dados.nomeRazaoSocial,
+      dados.nomeFantasia,
+      dados.cnpj,
+      dados.email,
+      dados.telefone,
+      dados.contato,
+      dados.observacoes,
+      dados.codigoClienteOmie ?? null,
+    ],
   );
   const linha = rows[0];
   if (linha === undefined) throw new Error('Falha ao criar transportadora.');
@@ -90,15 +105,16 @@ export async function atualizarTransportadora(id: string, dados: Partial<DadosTr
   const telefone = dados.telefone !== undefined ? dados.telefone : atual.telefone;
   const contato = dados.contato !== undefined ? dados.contato : atual.contato;
   const observacoes = dados.observacoes !== undefined ? dados.observacoes : atual.observacoes;
+  const codigoClienteOmie = dados.codigoClienteOmie !== undefined ? dados.codigoClienteOmie : atual.codigoClienteOmie;
 
   const pool = obterPool();
   const { rows } = await pool.query<LinhaTransportadora>(
     `UPDATE ${nomeTabelaTransportadoras()}
         SET nome_razao_social = $1, nome_fantasia = $2, cnpj = $3, email = $4, telefone = $5, contato = $6,
-            observacoes = $7, atualizado_em = now()
-      WHERE id = $8
+            observacoes = $7, codigo_cliente_omie = $8, atualizado_em = now()
+      WHERE id = $9
       RETURNING *`,
-    [nomeRazaoSocial, nomeFantasia, cnpj, email, telefone, contato, observacoes, id],
+    [nomeRazaoSocial, nomeFantasia, cnpj, email, telefone, contato, observacoes, codigoClienteOmie, id],
   );
   const linha = rows[0];
   if (linha === undefined) throw new ErroValidacao('Transportadora não encontrada.');

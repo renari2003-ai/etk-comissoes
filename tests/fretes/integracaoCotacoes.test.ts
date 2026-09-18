@@ -2,6 +2,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ClienteOmie } from '../../src/omie/cliente.js';
 
 vi.setConfig({ testTimeout: 20000 });
 
@@ -55,6 +56,21 @@ async function importarServico(): Promise<typeof import('../../src/fretes/fretes
 
 async function importarIntegracao(): Promise<typeof import('../../src/fretes/integracaoCotacoesServico.js')> {
   return import('../../src/fretes/integracaoCotacoesServico.js');
+}
+
+/**
+ * Fase 4A.4.1 — `servicoSolicitarCotacoes` passou a exigir `ClienteOmie` (resolução de
+ * e-mail para canal EMAIL). Estes testes (Fase 4A.1/4A.2) não são sobre resolução de
+ * e-mail — usam um e-mail manual fixo para que o comportamento testado (outbound,
+ * idempotência, proposta pendente etc.) continue exatamente o mesmo de antes; a Omie nunca
+ * precisa ser consultada nesses casos.
+ */
+function clienteOmieFakeSemFornecedor(): ClienteOmie {
+  return { consultarCliente: async () => null } as unknown as ClienteOmie;
+}
+const EMAIL_TESTE_FIXO = 'transportadora@teste.com';
+function itensComEmail(...transportadoraIds: string[]): { transportadoraId: string; emailManual: string }[] {
+  return transportadoraIds.map((transportadoraId) => ({ transportadoraId, emailManual: EMAIL_TESTE_FIXO }));
 }
 
 async function prepararCotacaoETransportadora(servico: Awaited<ReturnType<typeof importarServico>>) {
@@ -111,7 +127,13 @@ describe('solicitações de cotação (Fase 4A.1/4A.2, seção 12)', () => {
     const integracao = await importarIntegracao();
     const { transportadora, outraTransportadora, cotacao } = await prepararCotacaoETransportadora(servico);
 
-    const solicitacoes = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id, outraTransportadora.id], 'EMAIL', USUARIO_TESTE);
+    const solicitacoes = await integracao.servicoSolicitarCotacoes(
+      clienteOmieFakeSemFornecedor(),
+      cotacao.id,
+      itensComEmail(transportadora.id, outraTransportadora.id),
+      'EMAIL',
+      USUARIO_TESTE,
+    );
     expect(solicitacoes).toHaveLength(2);
     // Fase 4A.2: sem N8N_WEBHOOK_URL/SECRET no ambiente de teste, o envio é recusado de forma
     // controlada (fail closed, seção 8) — a solicitação fica registrada com status ERRO, nunca
@@ -128,7 +150,7 @@ describe('solicitações de cotação (Fase 4A.1/4A.2, seção 12)', () => {
     const servico = await importarServico();
     const integracao = await importarIntegracao();
     const { cotacao } = await prepararCotacaoETransportadora(servico);
-    await expect(integracao.servicoSolicitarCotacoes(cotacao.id, [], 'EMAIL', USUARIO_TESTE)).rejects.toThrow();
+    await expect(integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, [], 'EMAIL', USUARIO_TESTE)).rejects.toThrow();
   });
 
   it('rejeita solicitar cotação numa cotação de modalidade VEICULO_PROPRIO (só se aplica a TRANSPORTADORA)', async () => {
@@ -144,7 +166,9 @@ describe('solicitações de cotação (Fase 4A.1/4A.2, seção 12)', () => {
       },
       USUARIO_TESTE,
     );
-    await expect(integracao.servicoSolicitarCotacoes(cotacaoVeiculo.id, [transportadora.id], 'EMAIL', USUARIO_TESTE)).rejects.toThrow();
+    await expect(
+      integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacaoVeiculo.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE),
+    ).rejects.toThrow();
   });
 });
 
@@ -157,7 +181,7 @@ describe('proposta pendente de validação (Fase 4A.1, seção 7/38/39/40)', () 
     mensagemId = `msg-${Math.random()}`,
   ) {
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     const payload = {
       referencia: solicitacao.codigoReferencia,
@@ -241,7 +265,7 @@ describe('proposta pendente de validação (Fase 4A.1, seção 7/38/39/40)', () 
     const servico = await importarServico();
     const integracao = await importarIntegracao();
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     const payload = {
       referencia: solicitacao.codigoReferencia,
@@ -371,7 +395,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     const integracao = await importarIntegracao();
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
 
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
 
     expect(solicitacao.status).toBe('ENVIADA');
@@ -395,7 +419,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     const integracao = await importarIntegracao();
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
 
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     expect(solicitacao.status).toBe('ERRO');
     expect(solicitacao.erroUltimaTentativa).toContain('500');
@@ -406,7 +430,9 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     expect(propostas).toHaveLength(0);
   });
 
-  it('reenvio manual reusa a MESMA solicitação (mesma referência/id) — nunca cria uma segunda linha', async () => {
+  it(
+    'reenvio manual reusa a MESMA solicitação (mesma referência/id) — nunca cria uma segunda linha',
+    async () => {
     mock = await iniciarMockN8n(() => ({ status: 500 }));
     process.env.N8N_WEBHOOK_URL = mock.url;
     process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
@@ -414,7 +440,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     const servico = await importarServico();
     const integracao = await importarIntegracao();
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     expect(solicitacao.status).toBe('ERRO');
     expect(solicitacao.tentativas).toBe(1);
@@ -437,7 +463,13 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
 
     const listadas = await integracaoAtualizada.servicoListarSolicitacoes(cotacao.id);
     expect(listadas).toHaveLength(1); // nunca duplicou
-  });
+    },
+    // Fase 4A.4.1: este teste roda `garantirEsquemaFretes()` DUAS vezes (2 resets de módulo)
+    // — o crescimento aditivo do schema ao longo das fases (mais 3 colunas nesta fase) somado
+    // a 2 servidores mock HTTP fez o tempo total passar dos 20000ms padrão do arquivo. Único
+    // teste da suíte com esse padrão de "reset duplo"; os demais continuam bem dentro do limite.
+    45000,
+  );
 
   it('reenvio só é permitido quando o status atual é ERRO', async () => {
     mock = await iniciarMockN8n(() => ({ status: 200 }));
@@ -447,7 +479,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     const servico = await importarServico();
     const integracao = await importarIntegracao();
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     expect(solicitacao.status).toBe('ENVIADA');
 
@@ -465,7 +497,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
 
     // `servicoSolicitarCotacoes` nem aceita um parâmetro de URL — não há como o chamador
     // (rota HTTP) direcionar o envio para outro destino, mesmo que tentasse.
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     expect(solicitacao.status).toBe('ENVIADA');
     expect(mock.chamadas).toHaveLength(1); // o único destino possível é a URL configurada no servidor
@@ -479,7 +511,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     const servico = await importarServico();
     const integracao = await importarIntegracao();
     const { transportadora, cotacao } = await prepararCotacaoETransportadora(servico);
-    const [solicitacao] = await integracao.servicoSolicitarCotacoes(cotacao.id, [transportadora.id], 'EMAIL', USUARIO_TESTE);
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
     if (solicitacao === undefined) throw new Error('setup falhou');
     expect(solicitacao.status).toBe('ENVIADA');
 

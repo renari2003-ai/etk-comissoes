@@ -6,8 +6,10 @@
  * `fretesServico.ts`, inalteradas.
  */
 import { randomBytes } from 'node:crypto';
+import type { ClienteOmie } from '../omie/cliente.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
+import { emailValido } from './validacao.js';
 import { servicoBuscarCotacao } from './fretesServico.js';
 import {
   buscarExtracaoPorPropostaId,
@@ -38,7 +40,7 @@ import {
 } from './solicitacoesRepositorio.js';
 import { buscarTransportadoraPorId } from './transportadorasRepositorio.js';
 import { enviarSolicitacaoAoN8n, type PayloadSolicitacaoN8n } from './integracoes/n8nCliente.js';
-import type { CanalOrigemProposta, CotacaoFrete, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao } from './tipos.js';
+import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
 import type { PayloadRespostaWebhook } from './webhookCotacoes.js';
 
 // --- Solicitação de cotação (seção 12/25/27) -------------------------------------------
@@ -51,7 +53,8 @@ function gerarCodigoReferencia(codigoCotacao: string): string {
 /**
  * Payload outbound (Fase 4A.2, seção 12/13) — só campos logísticos necessários pra cotar.
  * NUNCA inclui margem/comissão/custo de produto/markup ETK/valor de venda/credenciais —
- * esses conceitos nem existem neste objeto.
+ * esses conceitos nem existem neste objeto. Fase 4A.4.1 (seção 9): `transportadora.email`/
+ * `fonteEmail` são o SNAPSHOT já gravado na solicitação — o n8n nunca decide/consulta Omie.
  */
 function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao): PayloadSolicitacaoN8n {
   return {
@@ -60,7 +63,11 @@ function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao
     solicitacaoId: solicitacao.id,
     referencia: solicitacao.codigoReferencia,
     cotacaoId: cotacao.id,
-    transportadora: { id: solicitacao.transportadoraId },
+    transportadora: {
+      id: solicitacao.transportadoraId,
+      email: solicitacao.emailDestino,
+      fonteEmail: solicitacao.emailOrigem,
+    },
     canal: solicitacao.canal,
     logistica: {
       origem: cotacao.origem,
@@ -74,6 +81,37 @@ function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao
       especie: cotacao.especieVolumes,
     },
   };
+}
+
+/**
+ * Resolução do e-mail de destino (Fase 4A.4.1, seção 6) — regra fixa, sempre nesta ordem:
+ * MANUAL (só para esta solicitação) > OMIE (cadastro na Omie, via `codigoClienteOmie` já
+ * vinculado à transportadora) > BLOQUEIO. Nunca inventa e-mail, nunca usa fallback
+ * genérico/silencioso. `ClienteOmie.consultarCliente` já existe (mesmo cache/limitador/
+ * tratamento de erro da Fase 3.2) — nenhum método ou endpoint novo na Omie.
+ */
+async function resolverEmailDestino(
+  cliente: ClienteOmie,
+  transportadora: Transportadora,
+  emailManual: string | null,
+): Promise<{ emailDestino: string; emailOrigem: EmailOrigem }> {
+  // Seção 5.F: um e-mail manual informado (não vazio) mas malformado é rejeitado
+  // explicitamente — nunca cai silenciosamente para a Omie como se nada tivesse sido digitado.
+  if (emailManual !== null && emailManual.trim() !== '' && !emailValido(emailManual)) {
+    throw new ErroValidacao('O e-mail manual informado não é um endereço válido.');
+  }
+  if (emailValido(emailManual)) {
+    return { emailDestino: emailManual, emailOrigem: 'MANUAL' };
+  }
+  if (transportadora.codigoClienteOmie !== null) {
+    const registro = await cliente.consultarCliente(transportadora.codigoClienteOmie);
+    if (registro !== null && emailValido(registro.email)) {
+      return { emailDestino: registro.email, emailOrigem: 'OMIE' };
+    }
+  }
+  throw new ErroValidacao(
+    `EMAIL_TRANSPORTADORA_NAO_CADASTRADO: nenhum e-mail disponível para "${transportadora.nomeRazaoSocial}" — informe um e-mail manual para esta solicitação ou cadastre o código Omie da transportadora com um e-mail válido.`,
+  );
 }
 
 /**
@@ -109,9 +147,16 @@ async function tentarEnviarAoN8n(cotacao: CotacaoFrete, solicitacao: Solicitacao
   }
 }
 
+/** Um item por transportadora selecionada (seção 7) — `emailManual` só é relevante para canal EMAIL, vale só para esta solicitação e nunca altera `transportadoras.email` nem a Omie. */
+export interface ItemSolicitacaoCotacao {
+  transportadoraId: string;
+  emailManual?: string | null;
+}
+
 export async function servicoSolicitarCotacoes(
+  cliente: ClienteOmie,
   cotacaoId: string,
-  transportadoraIds: string[],
+  itens: ItemSolicitacaoCotacao[],
   canal: CanalOrigemProposta,
   usuarioId: string,
 ): Promise<SolicitacaoCotacao[]> {
@@ -122,18 +167,31 @@ export async function servicoSolicitarCotacoes(
   if (cotacao.modalidadeExecucao !== 'TRANSPORTADORA') {
     throw new ErroValidacao(`Solicitação de cotação só se aplica à modalidade TRANSPORTADORA (esta cotação é ${cotacao.modalidadeExecucao}).`);
   }
-  if (transportadoraIds.length === 0) throw new ErroValidacao('Selecione ao menos uma transportadora.');
+  if (itens.length === 0) throw new ErroValidacao('Selecione ao menos uma transportadora.');
 
   const resultado: SolicitacaoCotacao[] = [];
-  for (const transportadoraId of transportadoraIds) {
-    const transportadora = await buscarTransportadoraPorId(transportadoraId);
-    if (transportadora === null) throw new ErroValidacao(`Transportadora não encontrada: ${transportadoraId}.`);
+  for (const item of itens) {
+    const transportadora = await buscarTransportadoraPorId(item.transportadoraId);
+    if (transportadora === null) throw new ErroValidacao(`Transportadora não encontrada: ${item.transportadoraId}.`);
+
+    // Seção 6: resolução só se aplica ao canal EMAIL — demais canais nunca exigem e-mail nem
+    // tocam a Omie (nenhuma consulta é feita para canal API/MANUAL/WHATSAPP/OUTRO).
+    let emailDestino: string | null = null;
+    let emailOrigem: EmailOrigem | null = null;
+    if (canal === 'EMAIL') {
+      const resolvido = await resolverEmailDestino(cliente, transportadora, item.emailManual ?? null);
+      emailDestino = resolvido.emailDestino;
+      emailOrigem = resolvido.emailOrigem;
+    }
+
     const solicitacao = await criarSolicitacao({
       cotacaoFreteId: cotacao.id,
-      transportadoraId,
+      transportadoraId: item.transportadoraId,
       canal,
       codigoReferencia: gerarCodigoReferencia(cotacao.codigo),
       criadoPor: usuarioId,
+      emailDestino,
+      emailOrigem,
     });
     await registrarAuditoria({
       usuarioId,

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeTabelaSolicitacoes } from './schema.js';
-import type { CanalOrigemProposta, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
+import type { CanalOrigemProposta, EmailOrigem, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
 
 interface LinhaSolicitacao {
   id: string;
@@ -16,6 +16,8 @@ interface LinhaSolicitacao {
   identificador_externo: string | null;
   tentativas: number;
   erro_ultima_tentativa: string | null;
+  email_destino: string | null;
+  email_origem: EmailOrigem | null;
   criado_por: string;
   criado_em: Date;
   atualizado_em: Date;
@@ -34,6 +36,8 @@ function linhaParaSolicitacao(l: LinhaSolicitacao): SolicitacaoCotacao {
     identificadorExterno: l.identificador_externo,
     tentativas: l.tentativas,
     erroUltimaTentativa: l.erro_ultima_tentativa,
+    emailDestino: l.email_destino,
+    emailOrigem: l.email_origem,
     criadoPor: l.criado_por,
     criadoEm: l.criado_em.toISOString(),
     atualizadoEm: l.atualizado_em.toISOString(),
@@ -46,6 +50,9 @@ export interface DadosNovaSolicitacao {
   canal: CanalOrigemProposta;
   codigoReferencia: string;
   criadoPor: string;
+  /** Fase 4A.4.1 — só preenchido para canal EMAIL; `undefined`/`null` nos demais canais. */
+  emailDestino?: string | null;
+  emailOrigem?: EmailOrigem | null;
 }
 
 export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<SolicitacaoCotacao> {
@@ -54,10 +61,19 @@ export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<Sol
   const id = randomUUID();
   const { rows } = await pool.query<LinhaSolicitacao>(
     `INSERT INTO ${nomeTabelaSolicitacoes()}
-       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por)
-     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6)
+       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por, email_destino, email_origem)
+     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6, $7, $8)
      RETURNING *`,
-    [id, dados.cotacaoFreteId, dados.transportadoraId, dados.canal, dados.codigoReferencia, dados.criadoPor],
+    [
+      id,
+      dados.cotacaoFreteId,
+      dados.transportadoraId,
+      dados.canal,
+      dados.codigoReferencia,
+      dados.criadoPor,
+      dados.emailDestino ?? null,
+      dados.emailOrigem ?? null,
+    ],
   );
   const linha = rows[0];
   if (linha === undefined) throw new Error('Falha ao criar solicitação de cotação.');

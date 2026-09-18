@@ -15,7 +15,12 @@ export interface PayloadSolicitacaoN8n {
   solicitacaoId: string;
   referencia: string;
   cotacaoId: string;
-  transportadora: { id: string };
+  /**
+   * `email`/`fonteEmail` (Fase 4A.4.1, seção 9) são o destinatário JÁ RESOLVIDO pelo ETK
+   * (regra MANUAL > OMIE > bloqueio) — `null` para canais diferentes de EMAIL. O n8n nunca
+   * decide a fonte nem consulta a Omie; só usa o valor recebido aqui.
+   */
+  transportadora: { id: string; email: string | null; fonteEmail: 'OMIE' | 'MANUAL' | null };
   canal: string;
   logistica: {
     origem: string | null;
