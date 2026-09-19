@@ -7,6 +7,10 @@ const CHAVES_PERMISSAO = [
     { chave: 'relatorioOrcamentos', rotulo: 'Relatórios — Orçamentos' },
     { chave: 'relatorioComissionamento', rotulo: 'Relatórios — Comissionamento' },
     { chave: 'fretes', rotulo: 'Fretes' },
+    { chave: 'fretesLogistica', rotulo: 'Fretes — Central da Logística' },
+    { chave: 'fretesComercial', rotulo: 'Fretes — Central do Vendedor' },
+    { chave: 'fretesSubstituicao', rotulo: 'Fretes — Aprovar em substituição' },
+    { chave: 'fretesGerencia', rotulo: 'Fretes — Visão ampliada (gerência)' },
 ];
 function el(id) {
     const elemento = document.getElementById(id);
@@ -36,6 +40,10 @@ export function inicializarUsuarios() {
             relatorioOrcamentos: false,
             relatorioComissionamento: false,
             fretes: false,
+            fretesLogistica: false,
+            fretesComercial: false,
+            fretesSubstituicao: false,
+            fretesGerencia: false,
         };
     }
     function atualizarVisibilidadePermissoes() {
@@ -95,6 +103,31 @@ export function inicializarUsuarios() {
         }
         tr.appendChild(tdPermissoes);
         const tdAcoes = document.createElement('td');
+        // Fase 4A.6 — vínculo login↔vendedor Omie (Central do Vendedor: cada vendedor só vê as
+        // próprias cotações). Disponível pra qualquer papel — não é uma "permissão", é um dado.
+        const botaoVendedor = document.createElement('button');
+        botaoVendedor.type = 'button';
+        botaoVendedor.className = 'botao-secundario';
+        botaoVendedor.textContent = usuarioListado.vendedorOmieId !== null ? `Vendedor Omie: ${usuarioListado.vendedorOmieId}` : 'Vincular vendedor Omie';
+        botaoVendedor.addEventListener('click', () => {
+            void (async () => {
+                const digitado = window.prompt('Código do vendedor na Omie vinculado a este login (vazio para remover o vínculo):', usuarioListado.vendedorOmieId !== null ? String(usuarioListado.vendedorOmieId) : '');
+                if (digitado === null)
+                    return;
+                const vendedorOmieId = digitado.trim() === '' ? null : Number(digitado.trim());
+                const resposta = await fetch(`/api/auth/usuarios/${usuarioListado.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ vendedorOmieId }),
+                });
+                if (!resposta.ok) {
+                    window.alert(await extrairMensagemErro(resposta));
+                    return;
+                }
+                void carregarUsuarios();
+            })();
+        });
+        tdAcoes.appendChild(botaoVendedor);
         // Recuperação de acesso é restrita ao administrador master (regra de 2026-09-11: só Ricardo e
         // Wendell) — o backend já bloqueia (403) um admin comum, mas nem mostrar o botão evita o clique
         // frustrado. Um admin comum vê "(só o administrador master pode)" no lugar do botão.
@@ -174,6 +207,7 @@ export function inicializarUsuarios() {
             const permissoes = permissoesVazias();
             for (const { chave } of CHAVES_PERMISSAO)
                 permissoes[chave] = dadosForm.get(chave) !== null;
+            const vendedorOmieIdDigitado = String(dadosForm.get('vendedorOmieId') ?? '').trim();
             const resposta = await fetch('/api/auth/usuarios', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -183,6 +217,7 @@ export function inicializarUsuarios() {
                     senha: dadosForm.get('senha'),
                     papel,
                     permissoes,
+                    vendedorOmieId: vendedorOmieIdDigitado === '' ? null : Number(vendedorOmieIdDigitado),
                 }),
             });
             if (!resposta.ok) {

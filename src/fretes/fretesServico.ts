@@ -7,6 +7,7 @@
 
 import type { ClienteOmie } from '../omie/cliente.js';
 import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
+import type { UsuarioPublico } from '../auth/tipos.js';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
@@ -27,8 +28,10 @@ import type { DestinoManualInformado } from './validacao.js';
 import { buscarFechamentoPorCotacao, inserirFechamento, resumirFechamentos, resumirFechamentosPorModalidade, type ResumoFechamentos } from './fechamentosRepositorio.js';
 import {
   atualizarStatusProposta,
+  atualizarStatusRevisaoProposta,
   criarProposta,
   listarPropostasPorCotacao,
+  listarPropostasPorStatusRevisao,
   selecionarPropostaTransacional,
   type DadosNovaProposta,
 } from './propostasRepositorio.js';
@@ -373,6 +376,176 @@ export async function servicoRejeitarProposta(propostaId: string, usuarioId: str
   const proposta = await atualizarStatusProposta(propostaId, 'REJEITADA');
   await registrarAuditoria({ usuarioId, acao: 'PROPOSTA_REJEITADA', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });
   return proposta;
+}
+
+// --- Fase 4A.6 — Central da Logística + Central do Vendedor ---------------
+//
+// Regras (relatório da fase): Logística faz a triagem (libera/descarta) e SÓ propostas
+// liberadas ficam visíveis ao vendedor; o vendedor vê/age só nas próprias cotações
+// (`cotacao.vendedorOmieId === usuario.vendedorOmieId`), salvo visão ampliada (administrador
+// ou permissão `fretesGerencia`) ou aprovação EXPLÍCITA em substituição (`fretesSubstituicao`,
+// sempre com motivo). Nunca há seleção/aprovação automática — toda transição exige uma ação
+// humana com a permissão certa. Deliberadamente NÃO reescreve `servicoSelecionarProposta`
+// (Fase 1, inalterada, ainda usada por quem tem só `fretes`): `servicoEscolherFreteVencedor`
+// abaixo é a nova porta de entrada da Central do Vendedor — valida logística/dono/substituição
+// e SÓ DEPOIS delega a `servicoSelecionarProposta` a mesma transição já existente.
+
+export interface LinhaCentralFrete {
+  cotacao: CotacaoFrete;
+  proposta: PropostaFrete;
+  transportadora: Transportadora;
+}
+
+async function montarLinhasCentral(propostas: PropostaFrete[]): Promise<LinhaCentralFrete[]> {
+  const [cotacoes, transportadoras] = await Promise.all([listarCotacoes({}), listarTransportadoras(false)]);
+  const cotacoesPorId = new Map(cotacoes.map((c) => [c.id, c]));
+  const transportadorasPorId = new Map(transportadoras.map((t) => [t.id, t]));
+  return propostas
+    .map((proposta) => {
+      const cotacao = cotacoesPorId.get(proposta.cotacaoId);
+      const transportadora = transportadorasPorId.get(proposta.transportadoraId);
+      if (cotacao === undefined || transportadora === undefined) return null;
+      return { cotacao, proposta, transportadora };
+    })
+    .filter((linha): linha is LinhaCentralFrete => linha !== null);
+}
+
+/** Central da Logística (seção "Mostrar"): propostas ainda na triagem + já triadas recentemente, para contexto. Nunca escolhe a vencedora sozinha. */
+export async function servicoListarCentralLogistica(): Promise<LinhaCentralFrete[]> {
+  const propostas = await listarPropostasPorStatusRevisao(['AGUARDANDO_LOGISTICA', 'LIBERADA', 'DESCARTADA']);
+  return montarLinhasCentral(propostas);
+}
+
+/** true quando `usuario` é o vendedor "dono" da cotação (mesmo `vendedorOmieId`) — nunca true se a cotação não tiver vendedor definido. */
+function ehVendedorResponsavel(usuario: UsuarioPublico, cotacao: CotacaoFrete): boolean {
+  return cotacao.vendedorOmieId !== null && usuario.vendedorOmieId !== null && usuario.vendedorOmieId === cotacao.vendedorOmieId;
+}
+
+/** Administrador ou permissão `fretesGerencia` — visão ampliada (seção 5 do relatório: "Gerente/Admin pode ter visão ampliada"). */
+function temVisaoAmpliadaFrete(usuario: UsuarioPublico): boolean {
+  return usuario.papel === 'administrador' || usuario.permissoes.fretesGerencia;
+}
+
+/** Central do Vendedor (seção "Mostrar somente propostas liberadas para aquele vendedor"): só LIBERADA/EM_NEGOCIACAO/ESCOLHIDA, filtradas pelo vendedor dono — exceto visão ampliada. */
+export async function servicoListarCentralVendedor(usuario: UsuarioPublico): Promise<LinhaCentralFrete[]> {
+  const propostas = await listarPropostasPorStatusRevisao(['LIBERADA', 'EM_NEGOCIACAO', 'ESCOLHIDA']);
+  const linhas = await montarLinhasCentral(propostas);
+  if (temVisaoAmpliadaFrete(usuario)) return linhas;
+  return linhas.filter((linha) => ehVendedorResponsavel(usuario, linha.cotacao));
+}
+
+function exigirPermissaoLogistica(usuario: UsuarioPublico): void {
+  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesLogistica) {
+    throw new ErroValidacao('Você não tem permissão para triar propostas na Central da Logística (permissão "fretesLogistica" necessária).');
+  }
+}
+
+/** Logística libera a proposta — só a partir daí ela aparece na Central do Vendedor (seção "Permitir: liberar proposta ao vendedor"). Nunca escolhe a vencedora. */
+export async function servicoLiberarPropostaLogistica(propostaId: string, usuario: UsuarioPublico): Promise<PropostaFrete> {
+  exigirPermissaoLogistica(usuario);
+  const proposta = await atualizarStatusRevisaoProposta(propostaId, 'LIBERADA');
+  await registrarAuditoria({ usuarioId: usuario.id, acao: 'PROPOSTA_LIBERADA_LOGISTICA', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });
+  return proposta;
+}
+
+/** Logística descarta na triagem (diferente de `servicoRejeitarProposta`, que é a rejeição comercial já existente — ver comentário de `StatusRevisaoProposta`). */
+export async function servicoDescartarPropostaLogistica(propostaId: string, usuario: UsuarioPublico): Promise<PropostaFrete> {
+  exigirPermissaoLogistica(usuario);
+  const proposta = await atualizarStatusRevisaoProposta(propostaId, 'DESCARTADA');
+  await registrarAuditoria({ usuarioId: usuario.id, acao: 'PROPOSTA_DESCARTADA_LOGISTICA', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });
+  return proposta;
+}
+
+/**
+ * Verifica se `usuario` pode agir comercialmente (negociar/escolher) sobre `cotacao` — dono
+ * (`fretesComercial` + mesmo vendedor), visão ampliada (admin/`fretesGerencia`), ou
+ * substituição explícita (`fretesSubstituicao`). Nunca deixa passar silenciosamente: quem não
+ * se encaixa em nenhum dos três recebe um erro explicando o motivo (seção "Segurança": vendedor
+ * não pode ver/agir em fretes de outros vendedores).
+ */
+function exigirAcessoComercial(usuario: UsuarioPublico, cotacao: CotacaoFrete): { substituicao: boolean } {
+  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesComercial) {
+    throw new ErroValidacao('Você não tem permissão para negociar/escolher fretes (permissão "fretesComercial" necessária).');
+  }
+  if (ehVendedorResponsavel(usuario, cotacao) || temVisaoAmpliadaFrete(usuario)) {
+    return { substituicao: false };
+  }
+  if (usuario.permissoes.fretesSubstituicao) {
+    return { substituicao: true };
+  }
+  throw new ErroValidacao('Este frete pertence a outro vendedor — você não tem permissão para agir em substituição (permissão "fretesSubstituicao" necessária).');
+}
+
+/** Vendedor marca a proposta liberada como "em negociação" com o cliente (seção "Permitir: marcar em negociação"). */
+export async function servicoMarcarPropostaEmNegociacao(cotacaoId: string, propostaId: string, usuario: UsuarioPublico): Promise<PropostaFrete> {
+  const cotacao = await servicoBuscarCotacao(cotacaoId);
+  exigirAcessoComercial(usuario, cotacao);
+  const propostas = await listarPropostasPorCotacao(cotacaoId);
+  const alvo = propostas.find((p) => p.id === propostaId);
+  if (alvo === undefined) throw new ErroValidacao('Proposta não encontrada nesta cotação.');
+  if (alvo.statusRevisao !== 'LIBERADA') {
+    throw new ErroValidacao('Só é possível negociar uma proposta já liberada pela Logística.');
+  }
+  const proposta = await atualizarStatusRevisaoProposta(propostaId, 'EM_NEGOCIACAO');
+  await registrarAuditoria({ usuarioId: usuario.id, acao: 'PROPOSTA_EM_NEGOCIACAO', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });
+  return proposta;
+}
+
+export interface SubstituicaoEscolhaFrete {
+  /** Obrigatório sempre que quem escolhe não é o vendedor dono da cotação (seção "Substituição": "registrar... motivo"). */
+  motivo: string;
+}
+
+/**
+ * Vendedor (ou substituto autorizado) escolhe o frete vencedor — a nova porta de entrada da
+ * Central do Vendedor (seção "Permitir: escolher frete vencedor"). Exige que a proposta já
+ * tenha sido liberada pela Logística (`LIBERADA`/`EM_NEGOCIACAO`); delega a transição em si a
+ * `servicoSelecionarProposta` (Fase 1, inalterada) e só then marca `statusRevisao='ESCOLHIDA'`.
+ * Em substituição, registra uma auditoria ADICIONAL (nunca substitui a de
+ * `servicoSelecionarProposta`) com vendedor responsável/usuário que aprovou/permissão usada/
+ * motivo/data — histórico nunca apagado (seção "Auditoria").
+ */
+export async function servicoEscolherFreteVencedor(
+  cotacaoId: string,
+  propostaId: string,
+  usuario: UsuarioPublico,
+  substituicaoInformada?: SubstituicaoEscolhaFrete,
+): Promise<PropostaFrete> {
+  const cotacao = await servicoBuscarCotacao(cotacaoId);
+  const { substituicao } = exigirAcessoComercial(usuario, cotacao);
+
+  const motivo = substituicaoInformada?.motivo?.trim() ?? '';
+  if (substituicao && motivo === '') {
+    throw new ErroValidacao('Aprovação em substituição exige um motivo.');
+  }
+
+  const propostasAtuais = await listarPropostasPorCotacao(cotacaoId);
+  const alvo = propostasAtuais.find((p) => p.id === propostaId);
+  if (alvo === undefined) throw new ErroValidacao('Proposta não encontrada nesta cotação.');
+  if (alvo.statusRevisao !== 'LIBERADA' && alvo.statusRevisao !== 'EM_NEGOCIACAO') {
+    throw new ErroValidacao('Esta proposta ainda não foi liberada pela Logística — não pode ser escolhida.');
+  }
+
+  const proposta = await servicoSelecionarProposta(cotacaoId, propostaId, usuario.id);
+  const propostaFinal = await atualizarStatusRevisaoProposta(proposta.id, 'ESCOLHIDA');
+
+  if (substituicao) {
+    await registrarAuditoria({
+      usuarioId: usuario.id,
+      acao: 'PROPOSTA_SELECIONADA',
+      entidade: 'proposta_frete',
+      entidadeId: propostaFinal.id,
+      valorNovo: {
+        substituicao: true,
+        vendedorResponsavelOmieId: cotacao.vendedorOmieId,
+        usuarioResponsavelId: usuario.id,
+        papel: usuario.papel,
+        permissaoUsada: 'fretesSubstituicao',
+        motivo,
+      },
+    });
+  }
+  return propostaFinal;
 }
 
 // --- Comparação (seção 25 — só informativa, nunca decide sozinha) ---------

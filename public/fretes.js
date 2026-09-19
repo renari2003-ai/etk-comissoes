@@ -5,6 +5,14 @@
  * estrutural de `usuarios.ts`/`relatorios.ts`: `{ ativar }` plugado pelo `app.ts`.
  */
 import { formatarMoeda, formatarPercentual } from './formatacao.js';
+import { obterUsuarioLogado } from './auth.js';
+const ROTULOS_STATUS_REVISAO = {
+    AGUARDANDO_LOGISTICA: 'Aguardando triagem',
+    LIBERADA: 'Liberada para o vendedor',
+    DESCARTADA: 'Descartada pela Logística',
+    EM_NEGOCIACAO: 'Em negociação',
+    ESCOLHIDA: 'Frete escolhido',
+};
 const ROTULOS_CANAL = {
     EMAIL: 'E-mail',
     WHATSAPP: 'WhatsApp',
@@ -69,6 +77,8 @@ export function inicializarFretes() {
     const abaTransportadoras = el('fretes-aba-transportadoras');
     const abaVeiculos = el('fretes-aba-veiculos');
     const abaPropostasRecebidas = el('fretes-aba-propostas-recebidas');
+    const abaCentralLogistica = el('fretes-aba-central-logistica');
+    const abaCentralVendedor = el('fretes-aba-central-vendedor');
     const secaoDashboard = el('fretes-secao-dashboard');
     const secaoCotacoes = el('fretes-secao-cotacoes');
     const secaoImportarOmie = el('fretes-secao-importar-omie');
@@ -76,6 +86,8 @@ export function inicializarFretes() {
     const secaoTransportadoras = el('fretes-secao-transportadoras');
     const secaoVeiculos = el('fretes-secao-veiculos');
     const secaoPropostasRecebidas = el('fretes-secao-propostas-recebidas');
+    const secaoCentralLogistica = el('fretes-secao-central-logistica');
+    const secaoCentralVendedor = el('fretes-secao-central-vendedor');
     const badgePendentes = el('fretes-badge-pendentes');
     let ativado = false;
     let transportadorasCache = [];
@@ -93,12 +105,174 @@ export function inicializarFretes() {
         secaoTransportadoras.hidden = sub !== 'transportadoras';
         secaoVeiculos.hidden = sub !== 'veiculos';
         secaoPropostasRecebidas.hidden = sub !== 'propostas-recebidas';
+        secaoCentralLogistica.hidden = sub !== 'central-logistica';
+        secaoCentralVendedor.hidden = sub !== 'central-vendedor';
         abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
         abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
         abaImportarOmie.classList.toggle('aba-ativa', sub === 'importar-omie');
         abaTransportadoras.classList.toggle('aba-ativa', sub === 'transportadoras');
         abaVeiculos.classList.toggle('aba-ativa', sub === 'veiculos');
         abaPropostasRecebidas.classList.toggle('aba-ativa', sub === 'propostas-recebidas');
+        abaCentralLogistica.classList.toggle('aba-ativa', sub === 'central-logistica');
+        abaCentralVendedor.classList.toggle('aba-ativa', sub === 'central-vendedor');
+    }
+    // --- Fase 4A.6 — Central da Logística + Central do Vendedor ---------------
+    /** Abas visíveis só pra quem tem a permissão de "porta" — administrador sempre vê ambas. */
+    function aplicarVisibilidadeCentrais() {
+        const usuarioLogado = obterUsuarioLogado();
+        const admin = usuarioLogado?.papel === 'administrador';
+        abaCentralLogistica.hidden = !(admin || usuarioLogado?.permissoes.fretesLogistica);
+        abaCentralVendedor.hidden = !(admin || usuarioLogado?.permissoes.fretesComercial);
+    }
+    function formatarPrazo(prazoDias) {
+        return prazoDias !== null ? `${prazoDias} dia(s)` : '—';
+    }
+    async function carregarCentralLogistica() {
+        const corpo = el('fretes-tabela-central-logistica-corpo');
+        const vazio = el('fretes-central-logistica-vazio');
+        corpo.textContent = '';
+        const resposta = await fetch('/api/fretes/central-logistica');
+        if (!resposta.ok) {
+            vazio.textContent = await extrairMensagemErro(resposta);
+            vazio.hidden = false;
+            return;
+        }
+        const dados = (await resposta.json());
+        const pendentes = dados.linhas.filter((l) => l.proposta.statusRevisao === 'AGUARDANDO_LOGISTICA');
+        vazio.hidden = pendentes.length > 0;
+        const celula = (texto) => {
+            const td = document.createElement('td');
+            td.textContent = texto;
+            return td;
+        };
+        for (const linha of pendentes) {
+            const tr = document.createElement('tr');
+            tr.appendChild(celula(linha.cotacao.codigo));
+            tr.appendChild(celula(linha.cotacao.clienteNomeSnapshot ?? '—'));
+            tr.appendChild(celula(linha.cotacao.vendedorOmieId !== null ? String(linha.cotacao.vendedorOmieId) : '—'));
+            tr.appendChild(celula(linha.transportadora.nomeRazaoSocial));
+            tr.appendChild(celula(formatarMoeda(linha.proposta.valorCusto)));
+            tr.appendChild(celula(formatarPrazo(linha.proposta.prazoDias)));
+            tr.appendChild(celula(ROTULOS_CANAL[linha.proposta.origemProposta] ?? linha.proposta.origemProposta));
+            tr.appendChild(celula(ROTULOS_STATUS_REVISAO[linha.proposta.statusRevisao]));
+            tr.appendChild(celula(new Date(linha.proposta.criadoEm).toLocaleString('pt-BR')));
+            const tdAcoes = document.createElement('td');
+            const botaoLiberar = document.createElement('button');
+            botaoLiberar.type = 'button';
+            botaoLiberar.className = 'botao-secundario';
+            botaoLiberar.textContent = 'Liberar ao vendedor';
+            botaoLiberar.addEventListener('click', () => {
+                void (async () => {
+                    const resp = await fetch(`/api/fretes/propostas/${linha.proposta.id}/liberar`, { method: 'POST' });
+                    if (!resp.ok) {
+                        window.alert(await extrairMensagemErro(resp));
+                        return;
+                    }
+                    void carregarCentralLogistica();
+                })();
+            });
+            const botaoDescartar = document.createElement('button');
+            botaoDescartar.type = 'button';
+            botaoDescartar.className = 'botao-secundario';
+            botaoDescartar.textContent = 'Descartar';
+            botaoDescartar.addEventListener('click', () => {
+                void (async () => {
+                    if (!window.confirm('Descartar esta proposta na triagem? O vendedor nunca vai vê-la.'))
+                        return;
+                    const resp = await fetch(`/api/fretes/propostas/${linha.proposta.id}/descartar`, { method: 'POST' });
+                    if (!resp.ok) {
+                        window.alert(await extrairMensagemErro(resp));
+                        return;
+                    }
+                    void carregarCentralLogistica();
+                })();
+            });
+            tdAcoes.appendChild(botaoLiberar);
+            tdAcoes.appendChild(botaoDescartar);
+            tr.appendChild(tdAcoes);
+            corpo.appendChild(tr);
+        }
+    }
+    async function carregarCentralVendedor() {
+        const corpo = el('fretes-tabela-central-vendedor-corpo');
+        const vazio = el('fretes-central-vendedor-vazio');
+        corpo.textContent = '';
+        const resposta = await fetch('/api/fretes/central-vendedor');
+        if (!resposta.ok) {
+            vazio.textContent = await extrairMensagemErro(resposta);
+            vazio.hidden = false;
+            return;
+        }
+        const dados = (await resposta.json());
+        vazio.hidden = dados.linhas.length > 0;
+        const celula = (texto) => {
+            const td = document.createElement('td');
+            td.textContent = texto;
+            return td;
+        };
+        for (const linha of dados.linhas) {
+            const tr = document.createElement('tr');
+            tr.appendChild(celula(linha.cotacao.codigo));
+            tr.appendChild(celula(linha.cotacao.clienteNomeSnapshot ?? '—'));
+            tr.appendChild(celula(linha.transportadora.nomeRazaoSocial));
+            tr.appendChild(celula(formatarMoeda(linha.proposta.valorCusto)));
+            tr.appendChild(celula(formatarPrazo(linha.proposta.prazoDias)));
+            tr.appendChild(celula(linha.proposta.observacoes ?? '—'));
+            tr.appendChild(celula(ROTULOS_STATUS_REVISAO[linha.proposta.statusRevisao]));
+            const tdAcoes = document.createElement('td');
+            const ehResponsavel = obterUsuarioLogado()?.vendedorOmieId !== null && obterUsuarioLogado()?.vendedorOmieId === linha.cotacao.vendedorOmieId;
+            if (linha.proposta.statusRevisao === 'LIBERADA') {
+                const botaoNegociar = document.createElement('button');
+                botaoNegociar.type = 'button';
+                botaoNegociar.className = 'botao-secundario';
+                botaoNegociar.textContent = 'Marcar em negociação';
+                botaoNegociar.addEventListener('click', () => {
+                    void (async () => {
+                        const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/negociar`, { method: 'POST' });
+                        if (!resp.ok) {
+                            window.alert(await extrairMensagemErro(resp));
+                            return;
+                        }
+                        void carregarCentralVendedor();
+                    })();
+                });
+                tdAcoes.appendChild(botaoNegociar);
+            }
+            if (linha.proposta.statusRevisao === 'LIBERADA' || linha.proposta.statusRevisao === 'EM_NEGOCIACAO') {
+                const botaoEscolher = document.createElement('button');
+                botaoEscolher.type = 'button';
+                botaoEscolher.className = 'botao-secundario';
+                botaoEscolher.textContent = 'Escolher frete vencedor';
+                botaoEscolher.addEventListener('click', () => {
+                    void (async () => {
+                        let corpoRequisicao = {};
+                        // Substituição (seção "Substituição"): aviso claro ANTES de confirmar, sempre com motivo.
+                        if (!ehResponsavel) {
+                            const motivo = window.prompt('Este frete pertence a outro vendedor. Você está prestes a escolher em SUBSTITUIÇÃO ao vendedor responsável — informe o motivo:');
+                            if (motivo === null || motivo.trim() === '') {
+                                if (motivo !== null)
+                                    window.alert('A aprovação em substituição exige um motivo.');
+                                return;
+                            }
+                            corpoRequisicao = { substituicao: { motivo: motivo.trim() } };
+                        }
+                        const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/escolher`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(corpoRequisicao),
+                        });
+                        if (!resp.ok) {
+                            window.alert(await extrairMensagemErro(resp));
+                            return;
+                        }
+                        void carregarCentralVendedor();
+                    })();
+                });
+                tdAcoes.appendChild(botaoEscolher);
+            }
+            tr.appendChild(tdAcoes);
+            corpo.appendChild(tr);
+        }
     }
     // --- Dashboard -----------------------------------------------------------
     async function carregarDashboard() {
@@ -1278,11 +1452,20 @@ export function inicializarFretes() {
         mostrarSubAba('propostas-recebidas');
         void carregarPropostasRecebidas();
     });
+    abaCentralLogistica.addEventListener('click', () => {
+        mostrarSubAba('central-logistica');
+        void carregarCentralLogistica();
+    });
+    abaCentralVendedor.addEventListener('click', () => {
+        mostrarSubAba('central-vendedor');
+        void carregarCentralVendedor();
+    });
     return {
         ativar() {
             if (ativado)
                 return;
             ativado = true;
+            aplicarVisibilidadeCentrais();
             mostrarSubAba('dashboard');
             void carregarDashboard();
             void carregarTransportadoras();

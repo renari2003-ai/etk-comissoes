@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeTabelaPropostas } from './schema.js';
-import type { CanalOrigemProposta, PropostaFrete, StatusProposta } from './tipos.js';
+import type { CanalOrigemProposta, PropostaFrete, StatusProposta, StatusRevisaoProposta } from './tipos.js';
 
 interface LinhaProposta {
   id: string;
@@ -26,6 +26,7 @@ interface LinhaProposta {
   confianca: string | null;
   requer_revisao: boolean;
   selecionada: boolean;
+  status_revisao: StatusRevisaoProposta;
   criado_em: Date;
   atualizado_em: Date;
 }
@@ -56,6 +57,7 @@ function linhaParaProposta(l: LinhaProposta): PropostaFrete {
     confianca: numeroOuNull(l.confianca),
     requerRevisao: l.requer_revisao,
     selecionada: l.selecionada,
+    statusRevisao: l.status_revisao,
     criadoEm: l.criado_em.toISOString(),
     atualizadoEm: l.atualizado_em.toISOString(),
   };
@@ -133,6 +135,30 @@ export async function atualizarStatusProposta(id: string, status: StatusProposta
   const linha = rows[0];
   if (linha === undefined) throw new ErroValidacao('Proposta não encontrada.');
   return linhaParaProposta(linha);
+}
+
+/** Fase 4A.6 — transição da trilha de revisão Logística → Vendedor (ver `StatusRevisaoProposta`, independente de `atualizarStatusProposta` acima). */
+export async function atualizarStatusRevisaoProposta(id: string, statusRevisao: StatusRevisaoProposta): Promise<PropostaFrete> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaProposta>(
+    `UPDATE ${nomeTabelaPropostas()} SET status_revisao = $1, atualizado_em = now() WHERE id = $2 RETURNING *`,
+    [statusRevisao, id],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new ErroValidacao('Proposta não encontrada.');
+  return linhaParaProposta(linha);
+}
+
+/** Fase 4A.6 — usado pelas Centrais da Logística/Vendedor (cross-cotação, ao contrário de `listarPropostasPorCotacao`). */
+export async function listarPropostasPorStatusRevisao(status: readonly StatusRevisaoProposta[]): Promise<PropostaFrete[]> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaProposta>(
+    `SELECT * FROM ${nomeTabelaPropostas()} WHERE status_revisao = ANY($1) ORDER BY criado_em ASC`,
+    [status],
+  );
+  return rows.map(linhaParaProposta);
 }
 
 /**

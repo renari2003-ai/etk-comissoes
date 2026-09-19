@@ -18,6 +18,14 @@ export interface Permissoes {
   relatorioComissionamento: boolean;
   /** Módulo de Fretes (Fase 1) — cotação/transportadoras/propostas/fechamento. */
   fretes: boolean;
+  /** Fase 4A.6 — Central da Logística (triagem/liberação de propostas). */
+  fretesLogistica: boolean;
+  /** Fase 4A.6 — Central do Vendedor (negociação/escolha do frete vencedor). */
+  fretesComercial: boolean;
+  /** Fase 4A.6 — aprovar/escolher em nome de outro vendedor (sempre com motivo). */
+  fretesSubstituicao: boolean;
+  /** Fase 4A.6 — visão ampliada: vê propostas de todos os vendedores na Central do Vendedor. */
+  fretesGerencia: boolean;
 }
 
 export interface UsuarioLogado {
@@ -30,6 +38,8 @@ export interface UsuarioLogado {
   senhaProvisoria: boolean;
   /** "Administrador master" (só Ricardo/Wendell) — único papel que pode redefinir a senha de outra pessoa. */
   mestre: boolean;
+  /** Fase 4A.6 — código de vendedor na Omie vinculado a este login (`null` = sem vínculo). */
+  vendedorOmieId: number | null;
 }
 
 let usuarioLogadoAtual: UsuarioLogado | null = null;

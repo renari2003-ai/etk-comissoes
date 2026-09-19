@@ -21,6 +21,17 @@ export type StatusCotacao =
 export type StatusProposta = 'RECEBIDA' | 'EM_ANALISE' | 'SELECIONADA' | 'REJEITADA' | 'PENDENTE_VALIDACAO';
 
 /**
+ * Fase 4A.6 — trilha de revisão Logística → Vendedor, INDEPENDENTE de `StatusProposta` acima
+ * (que continua controlando comparação/seleção/fechamento, inalterado). Toda proposta nasce
+ * `AGUARDANDO_LOGISTICA`; só passa a aparecer na Central do Vendedor depois de `LIBERADA`.
+ * `DESCARTADA` é a triagem da Logística (descarte antes mesmo de chegar ao vendedor) —
+ * conceito diferente de `StatusProposta.REJEITADA` (rejeição comercial, já existente,
+ * inalterada). `EM_NEGOCIACAO`/`ESCOLHIDA` espelham a etapa comercial (negociação com o
+ * cliente e escolha final do frete vencedor, ver `fretesServico.servicoEscolherFreteVencedor`).
+ */
+export type StatusRevisaoProposta = 'AGUARDANDO_LOGISTICA' | 'LIBERADA' | 'DESCARTADA' | 'EM_NEGOCIACAO' | 'ESCOLHIDA';
+
+/**
  * Canal de origem de uma solicitação/resposta de cotação (Fase 4A.1, seção 11). `MANUAL`
  * é o único canal já em uso (propostas criadas direto pela tela, Fase 1) — os demais
  * existem desde já para não exigir migração de schema quando os canais reais (n8n/e-mail/
@@ -326,6 +337,8 @@ export interface PropostaFrete {
   confianca: number | null;
   requerRevisao: boolean;
   selecionada: boolean;
+  /** Fase 4A.6 — ver `StatusRevisaoProposta`. Sempre `AGUARDANDO_LOGISTICA` em propostas criadas antes desta fase (histórico nunca reescrito, default de coluna aditiva). */
+  statusRevisao: StatusRevisaoProposta;
   criadoEm: string;
   atualizadoEm: string;
 }
@@ -382,7 +395,10 @@ export type AcaoAuditoriaFrete =
   | 'PROPOSTA_VALIDADA'
   | 'PROPOSTA_CORRIGIDA'
   | 'SOLICITACAO_ENVIADA_N8N'
-  | 'SOLICITACAO_ERRO_N8N';
+  | 'SOLICITACAO_ERRO_N8N'
+  | 'PROPOSTA_LIBERADA_LOGISTICA'
+  | 'PROPOSTA_DESCARTADA_LOGISTICA'
+  | 'PROPOSTA_EM_NEGOCIACAO';
 
 export interface RegistroAuditoriaFrete {
   id: string;

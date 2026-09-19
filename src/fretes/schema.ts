@@ -258,6 +258,13 @@ export function garantirEsquemaFretes(): Promise<void> {
       )
     `);
 
+    // Fase 4A.6 — trilha de revisão Logística → Vendedor, independente de `status` acima (ver
+    // comentário completo de `StatusRevisaoProposta` em `tipos.ts`). Aditivo: toda proposta já
+    // existente vira `AGUARDANDO_LOGISTICA` via `DEFAULT`, sem reescrever nada.
+    await executarDdlIdempotente(
+      `ALTER TABLE ${propostas} ADD COLUMN IF NOT EXISTS status_revisao TEXT NOT NULL DEFAULT 'AGUARDANDO_LOGISTICA' CHECK (status_revisao IN ('AGUARDANDO_LOGISTICA','LIBERADA','DESCARTADA','EM_NEGOCIACAO','ESCOLHIDA'))`,
+    );
+
     // UNIQUE (cotacao_id): trava em nível de banco que uma cotação nunca tenha mais de um
     // fechamento — segunda camada de proteção contra dupla execução, além da trava
     // transacional em `fretesServico.ts` (seção 35/36: concorrência/idempotência).

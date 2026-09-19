@@ -6,10 +6,21 @@
  */
 
 import { formatarMoeda, formatarPercentual } from './formatacao.js';
+import { obterUsuarioLogado } from './auth.js';
 
 type StatusCotacao = 'RASCUNHO' | 'AGUARDANDO_PROPOSTAS' | 'EM_ANALISE' | 'AGUARDANDO_APROVACAO' | 'FECHADA' | 'CANCELADA';
 /** `PENDENTE_VALIDACAO` (Fase 4A.1) — proposta chegada por canal automático, ainda não conferida por um humano; nunca selecionável. */
 type StatusProposta = 'RECEBIDA' | 'EM_ANALISE' | 'SELECIONADA' | 'REJEITADA' | 'PENDENTE_VALIDACAO';
+/** Fase 4A.6 — trilha Logística → Vendedor, independente de `StatusProposta` acima (ver `fretes/tipos.ts`). */
+type StatusRevisaoProposta = 'AGUARDANDO_LOGISTICA' | 'LIBERADA' | 'DESCARTADA' | 'EM_NEGOCIACAO' | 'ESCOLHIDA';
+
+const ROTULOS_STATUS_REVISAO: Record<StatusRevisaoProposta, string> = {
+  AGUARDANDO_LOGISTICA: 'Aguardando triagem',
+  LIBERADA: 'Liberada para o vendedor',
+  DESCARTADA: 'Descartada pela Logística',
+  EM_NEGOCIACAO: 'Em negociação',
+  ESCOLHIDA: 'Frete escolhido',
+};
 type CanalOrigemProposta = 'EMAIL' | 'WHATSAPP' | 'MANUAL' | 'API' | 'OUTRO';
 type StatusSolicitacaoCotacao = 'PENDENTE_ENVIO' | 'ENVIADA' | 'ENTREGUE' | 'RESPONDIDA' | 'ERRO' | 'CANCELADA';
 
@@ -77,6 +88,9 @@ interface CotacaoFrete {
   custoManual: number | null;
   status: StatusCotacao;
   criadoEm: string;
+  /** Fase 4A.6 (Central da Logística/Vendedor) — snapshot do cliente e código do vendedor na Omie. */
+  clienteNomeSnapshot: string | null;
+  vendedorOmieId: number | null;
 }
 
 interface PropostaFrete {
@@ -94,6 +108,16 @@ interface PropostaFrete {
   origemProposta: string;
   confianca: number | null;
   requerRevisao: boolean;
+  /** Fase 4A.6 — ver `StatusRevisaoProposta`. */
+  statusRevisao: StatusRevisaoProposta;
+  criadoEm: string;
+}
+
+/** Fase 4A.6 — uma linha das Centrais (Logística/Vendedor): proposta + cotação + transportadora já resolvidas pelo backend. */
+interface LinhaCentralFrete {
+  cotacao: CotacaoFrete;
+  proposta: PropostaFrete;
+  transportadora: Transportadora;
 }
 
 /** Fase 4A.1 (seção 12) — uma solicitação enviada a UMA transportadora para UMA cotação. */
@@ -232,6 +256,8 @@ export function inicializarFretes(): { ativar: () => void } {
   const abaTransportadoras = el<HTMLButtonElement>('fretes-aba-transportadoras');
   const abaVeiculos = el<HTMLButtonElement>('fretes-aba-veiculos');
   const abaPropostasRecebidas = el<HTMLButtonElement>('fretes-aba-propostas-recebidas');
+  const abaCentralLogistica = el<HTMLButtonElement>('fretes-aba-central-logistica');
+  const abaCentralVendedor = el<HTMLButtonElement>('fretes-aba-central-vendedor');
   const secaoDashboard = el<HTMLElement>('fretes-secao-dashboard');
   const secaoCotacoes = el<HTMLElement>('fretes-secao-cotacoes');
   const secaoImportarOmie = el<HTMLElement>('fretes-secao-importar-omie');
@@ -239,6 +265,8 @@ export function inicializarFretes(): { ativar: () => void } {
   const secaoTransportadoras = el<HTMLElement>('fretes-secao-transportadoras');
   const secaoVeiculos = el<HTMLElement>('fretes-secao-veiculos');
   const secaoPropostasRecebidas = el<HTMLElement>('fretes-secao-propostas-recebidas');
+  const secaoCentralLogistica = el<HTMLElement>('fretes-secao-central-logistica');
+  const secaoCentralVendedor = el<HTMLElement>('fretes-secao-central-vendedor');
   const badgePendentes = el<HTMLElement>('fretes-badge-pendentes');
 
   let ativado = false;
@@ -250,7 +278,16 @@ export function inicializarFretes(): { ativar: () => void } {
   let numeroPedidoOmieAtual: string | null = null;
   let tipoDocumentoOmieAtual: TipoDocumentoOmie = 'PEDIDO';
 
-  type SubAba = 'dashboard' | 'cotacoes' | 'importar-omie' | 'detalhe' | 'transportadoras' | 'veiculos' | 'propostas-recebidas';
+  type SubAba =
+    | 'dashboard'
+    | 'cotacoes'
+    | 'importar-omie'
+    | 'detalhe'
+    | 'transportadoras'
+    | 'veiculos'
+    | 'propostas-recebidas'
+    | 'central-logistica'
+    | 'central-vendedor';
   function mostrarSubAba(sub: SubAba): void {
     secaoDashboard.hidden = sub !== 'dashboard';
     secaoCotacoes.hidden = sub !== 'cotacoes';
@@ -259,12 +296,183 @@ export function inicializarFretes(): { ativar: () => void } {
     secaoTransportadoras.hidden = sub !== 'transportadoras';
     secaoVeiculos.hidden = sub !== 'veiculos';
     secaoPropostasRecebidas.hidden = sub !== 'propostas-recebidas';
+    secaoCentralLogistica.hidden = sub !== 'central-logistica';
+    secaoCentralVendedor.hidden = sub !== 'central-vendedor';
     abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
     abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
     abaImportarOmie.classList.toggle('aba-ativa', sub === 'importar-omie');
     abaTransportadoras.classList.toggle('aba-ativa', sub === 'transportadoras');
     abaVeiculos.classList.toggle('aba-ativa', sub === 'veiculos');
     abaPropostasRecebidas.classList.toggle('aba-ativa', sub === 'propostas-recebidas');
+    abaCentralLogistica.classList.toggle('aba-ativa', sub === 'central-logistica');
+    abaCentralVendedor.classList.toggle('aba-ativa', sub === 'central-vendedor');
+  }
+
+  // --- Fase 4A.6 — Central da Logística + Central do Vendedor ---------------
+
+  /** Abas visíveis só pra quem tem a permissão de "porta" — administrador sempre vê ambas. */
+  function aplicarVisibilidadeCentrais(): void {
+    const usuarioLogado = obterUsuarioLogado();
+    const admin = usuarioLogado?.papel === 'administrador';
+    abaCentralLogistica.hidden = !(admin || usuarioLogado?.permissoes.fretesLogistica);
+    abaCentralVendedor.hidden = !(admin || usuarioLogado?.permissoes.fretesComercial);
+  }
+
+  function formatarPrazo(prazoDias: number | null): string {
+    return prazoDias !== null ? `${prazoDias} dia(s)` : '—';
+  }
+
+  async function carregarCentralLogistica(): Promise<void> {
+    const corpo = el<HTMLTableSectionElement>('fretes-tabela-central-logistica-corpo');
+    const vazio = el<HTMLElement>('fretes-central-logistica-vazio');
+    corpo.textContent = '';
+    const resposta = await fetch('/api/fretes/central-logistica');
+    if (!resposta.ok) {
+      vazio.textContent = await extrairMensagemErro(resposta);
+      vazio.hidden = false;
+      return;
+    }
+    const dados = (await resposta.json()) as { linhas: LinhaCentralFrete[] };
+    const pendentes = dados.linhas.filter((l) => l.proposta.statusRevisao === 'AGUARDANDO_LOGISTICA');
+    vazio.hidden = pendentes.length > 0;
+    const celula = (texto: string) => {
+      const td = document.createElement('td');
+      td.textContent = texto;
+      return td;
+    };
+    for (const linha of pendentes) {
+      const tr = document.createElement('tr');
+      tr.appendChild(celula(linha.cotacao.codigo));
+      tr.appendChild(celula(linha.cotacao.clienteNomeSnapshot ?? '—'));
+      tr.appendChild(celula(linha.cotacao.vendedorOmieId !== null ? String(linha.cotacao.vendedorOmieId) : '—'));
+      tr.appendChild(celula(linha.transportadora.nomeRazaoSocial));
+      tr.appendChild(celula(formatarMoeda(linha.proposta.valorCusto)));
+      tr.appendChild(celula(formatarPrazo(linha.proposta.prazoDias)));
+      tr.appendChild(celula(ROTULOS_CANAL[linha.proposta.origemProposta as CanalOrigemProposta] ?? linha.proposta.origemProposta));
+      tr.appendChild(celula(ROTULOS_STATUS_REVISAO[linha.proposta.statusRevisao]));
+      tr.appendChild(celula(new Date(linha.proposta.criadoEm).toLocaleString('pt-BR')));
+
+      const tdAcoes = document.createElement('td');
+      const botaoLiberar = document.createElement('button');
+      botaoLiberar.type = 'button';
+      botaoLiberar.className = 'botao-secundario';
+      botaoLiberar.textContent = 'Liberar ao vendedor';
+      botaoLiberar.addEventListener('click', () => {
+        void (async () => {
+          const resp = await fetch(`/api/fretes/propostas/${linha.proposta.id}/liberar`, { method: 'POST' });
+          if (!resp.ok) {
+            window.alert(await extrairMensagemErro(resp));
+            return;
+          }
+          void carregarCentralLogistica();
+        })();
+      });
+      const botaoDescartar = document.createElement('button');
+      botaoDescartar.type = 'button';
+      botaoDescartar.className = 'botao-secundario';
+      botaoDescartar.textContent = 'Descartar';
+      botaoDescartar.addEventListener('click', () => {
+        void (async () => {
+          if (!window.confirm('Descartar esta proposta na triagem? O vendedor nunca vai vê-la.')) return;
+          const resp = await fetch(`/api/fretes/propostas/${linha.proposta.id}/descartar`, { method: 'POST' });
+          if (!resp.ok) {
+            window.alert(await extrairMensagemErro(resp));
+            return;
+          }
+          void carregarCentralLogistica();
+        })();
+      });
+      tdAcoes.appendChild(botaoLiberar);
+      tdAcoes.appendChild(botaoDescartar);
+      tr.appendChild(tdAcoes);
+      corpo.appendChild(tr);
+    }
+  }
+
+  async function carregarCentralVendedor(): Promise<void> {
+    const corpo = el<HTMLTableSectionElement>('fretes-tabela-central-vendedor-corpo');
+    const vazio = el<HTMLElement>('fretes-central-vendedor-vazio');
+    corpo.textContent = '';
+    const resposta = await fetch('/api/fretes/central-vendedor');
+    if (!resposta.ok) {
+      vazio.textContent = await extrairMensagemErro(resposta);
+      vazio.hidden = false;
+      return;
+    }
+    const dados = (await resposta.json()) as { linhas: LinhaCentralFrete[] };
+    vazio.hidden = dados.linhas.length > 0;
+    const celula = (texto: string) => {
+      const td = document.createElement('td');
+      td.textContent = texto;
+      return td;
+    };
+    for (const linha of dados.linhas) {
+      const tr = document.createElement('tr');
+      tr.appendChild(celula(linha.cotacao.codigo));
+      tr.appendChild(celula(linha.cotacao.clienteNomeSnapshot ?? '—'));
+      tr.appendChild(celula(linha.transportadora.nomeRazaoSocial));
+      tr.appendChild(celula(formatarMoeda(linha.proposta.valorCusto)));
+      tr.appendChild(celula(formatarPrazo(linha.proposta.prazoDias)));
+      tr.appendChild(celula(linha.proposta.observacoes ?? '—'));
+      tr.appendChild(celula(ROTULOS_STATUS_REVISAO[linha.proposta.statusRevisao]));
+
+      const tdAcoes = document.createElement('td');
+      const ehResponsavel = obterUsuarioLogado()?.vendedorOmieId !== null && obterUsuarioLogado()?.vendedorOmieId === linha.cotacao.vendedorOmieId;
+
+      if (linha.proposta.statusRevisao === 'LIBERADA') {
+        const botaoNegociar = document.createElement('button');
+        botaoNegociar.type = 'button';
+        botaoNegociar.className = 'botao-secundario';
+        botaoNegociar.textContent = 'Marcar em negociação';
+        botaoNegociar.addEventListener('click', () => {
+          void (async () => {
+            const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/negociar`, { method: 'POST' });
+            if (!resp.ok) {
+              window.alert(await extrairMensagemErro(resp));
+              return;
+            }
+            void carregarCentralVendedor();
+          })();
+        });
+        tdAcoes.appendChild(botaoNegociar);
+      }
+
+      if (linha.proposta.statusRevisao === 'LIBERADA' || linha.proposta.statusRevisao === 'EM_NEGOCIACAO') {
+        const botaoEscolher = document.createElement('button');
+        botaoEscolher.type = 'button';
+        botaoEscolher.className = 'botao-secundario';
+        botaoEscolher.textContent = 'Escolher frete vencedor';
+        botaoEscolher.addEventListener('click', () => {
+          void (async () => {
+            let corpoRequisicao: { substituicao?: { motivo: string } } = {};
+            // Substituição (seção "Substituição"): aviso claro ANTES de confirmar, sempre com motivo.
+            if (!ehResponsavel) {
+              const motivo = window.prompt(
+                'Este frete pertence a outro vendedor. Você está prestes a escolher em SUBSTITUIÇÃO ao vendedor responsável — informe o motivo:',
+              );
+              if (motivo === null || motivo.trim() === '') {
+                if (motivo !== null) window.alert('A aprovação em substituição exige um motivo.');
+                return;
+              }
+              corpoRequisicao = { substituicao: { motivo: motivo.trim() } };
+            }
+            const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/escolher`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(corpoRequisicao),
+            });
+            if (!resp.ok) {
+              window.alert(await extrairMensagemErro(resp));
+              return;
+            }
+            void carregarCentralVendedor();
+          })();
+        });
+        tdAcoes.appendChild(botaoEscolher);
+      }
+      tr.appendChild(tdAcoes);
+      corpo.appendChild(tr);
+    }
   }
 
   // --- Dashboard -----------------------------------------------------------
@@ -1524,11 +1732,20 @@ export function inicializarFretes(): { ativar: () => void } {
     mostrarSubAba('propostas-recebidas');
     void carregarPropostasRecebidas();
   });
+  abaCentralLogistica.addEventListener('click', () => {
+    mostrarSubAba('central-logistica');
+    void carregarCentralLogistica();
+  });
+  abaCentralVendedor.addEventListener('click', () => {
+    mostrarSubAba('central-vendedor');
+    void carregarCentralVendedor();
+  });
 
   return {
     ativar(): void {
       if (ativado) return;
       ativado = true;
+      aplicarVisibilidadeCentrais();
       mostrarSubAba('dashboard');
       void carregarDashboard();
       void carregarTransportadoras();

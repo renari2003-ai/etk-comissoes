@@ -46,6 +46,7 @@ interface LinhaUsuario {
   permissoes: Permissoes;
   senha_provisoria: boolean;
   mestre: boolean;
+  vendedor_omie_id: string | null;
 }
 
 function linhaParaUsuario(linha: LinhaUsuario): Usuario {
@@ -58,6 +59,7 @@ function linhaParaUsuario(linha: LinhaUsuario): Usuario {
     permissoes: linha.permissoes,
     senhaProvisoria: linha.senha_provisoria,
     mestre: linha.mestre,
+    vendedorOmieId: linha.vendedor_omie_id === null ? null : Number(linha.vendedor_omie_id),
   };
 }
 
@@ -87,6 +89,9 @@ async function garantirTabela(): Promise<void> {
       )
     `);
     await executarDdlIdempotente(`CREATE UNIQUE INDEX IF NOT EXISTS ${tabela}_usuario_lower_idx ON ${tabela} (lower(usuario))`);
+    // Fase 4A.6 — vínculo opcional login↔vendedor Omie (ver comentário completo em `auth/tipos.ts`).
+    // Aditivo/nullable: contas já existentes simplesmente começam sem vínculo (`null`).
+    await executarDdlIdempotente(`ALTER TABLE ${tabela} ADD COLUMN IF NOT EXISTS vendedor_omie_id BIGINT`);
 
     const { rows: contagem } = await pool.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM ${tabela}`);
     if (Number(contagem[0]?.total ?? '0') > 0) return;
@@ -118,6 +123,7 @@ async function garantirTabela(): Promise<void> {
       permissoes: { ...PERMISSOES_VAZIAS },
       senhaProvisoria: true,
       mestre: ehAdministradorMasterPorNome(config.adminUsuario),
+      vendedorOmieId: null,
     };
     await inserirUsuario(admin);
     console.log(`Primeiro administrador criado: "${admin.usuario}".`);
@@ -128,8 +134,8 @@ async function garantirTabela(): Promise<void> {
 async function inserirUsuario(usuario: Usuario): Promise<void> {
   const pool = obterPool();
   await pool.query(
-    `INSERT INTO ${nomeTabela()} (id, usuario, nome, papel, senha_hash, permissoes, senha_provisoria, mestre)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO ${nomeTabela()} (id, usuario, nome, papel, senha_hash, permissoes, senha_provisoria, mestre, vendedor_omie_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       usuario.id,
       usuario.usuario,
@@ -139,6 +145,7 @@ async function inserirUsuario(usuario: Usuario): Promise<void> {
       JSON.stringify(usuario.permissoes),
       usuario.senhaProvisoria,
       usuario.mestre,
+      usuario.vendedorOmieId ?? null,
     ],
   );
 }
@@ -172,6 +179,8 @@ export interface DadosNovoUsuario {
   senha: string;
   papel: Papel;
   permissoes: Permissoes;
+  /** Fase 4A.6 — ver comentário completo em `auth/tipos.ts`. */
+  vendedorOmieId?: number | null;
 }
 
 export async function criarUsuario(dadosNovos: DadosNovoUsuario): Promise<UsuarioPublico> {
@@ -194,6 +203,7 @@ export async function criarUsuario(dadosNovos: DadosNovoUsuario): Promise<Usuari
     // O administrador escolheu essa senha, não a própria pessoa — força a troca no primeiro acesso.
     senhaProvisoria: true,
     mestre: dadosNovos.papel === 'administrador' && ehAdministradorMasterPorNome(dadosNovos.usuario),
+    vendedorOmieId: dadosNovos.vendedorOmieId ?? null,
   };
   await inserirUsuario(novo);
   return paraPublico(novo);
@@ -203,6 +213,8 @@ export interface DadosAtualizacaoUsuario {
   nome?: string;
   papel?: Papel;
   permissoes?: Permissoes;
+  /** Fase 4A.6 — ver comentário completo em `auth/tipos.ts`. `null` remove o vínculo. */
+  vendedorOmieId?: number | null;
 }
 
 function garantirNaoUltimoAdministrador(administradoresRestantes: number, acao: string): void {
@@ -236,11 +248,14 @@ export async function atualizarUsuario(id: string, atualizacao: DadosAtualizacao
   if (atualizacao.permissoes !== undefined && usuario.papel === 'convidado') {
     usuario.permissoes = atualizacao.permissoes;
   }
+  if (atualizacao.vendedorOmieId !== undefined) {
+    usuario.vendedorOmieId = atualizacao.vendedorOmieId;
+  }
 
   const pool = obterPool();
   await pool.query(
-    `UPDATE ${nomeTabela()} SET nome = $1, papel = $2, permissoes = $3, mestre = $4 WHERE id = $5`,
-    [usuario.nome, usuario.papel, JSON.stringify(usuario.permissoes), usuario.mestre, usuario.id],
+    `UPDATE ${nomeTabela()} SET nome = $1, papel = $2, permissoes = $3, mestre = $4, vendedor_omie_id = $5 WHERE id = $6`,
+    [usuario.nome, usuario.papel, JSON.stringify(usuario.permissoes), usuario.mestre, usuario.vendedorOmieId, usuario.id],
   );
   return paraPublico(usuario);
 }

@@ -22,11 +22,17 @@ import {
   servicoDashboard,
   servicoDefinirAtivaTransportadora,
   servicoDefinirAtivoVeiculo,
+  servicoDescartarPropostaLogistica,
+  servicoEscolherFreteVencedor,
   servicoFecharCotacao,
+  servicoLiberarPropostaLogistica,
+  servicoListarCentralLogistica,
+  servicoListarCentralVendedor,
   servicoListarCotacoes,
   servicoListarPropostas,
   servicoListarTransportadoras,
   servicoListarVeiculos,
+  servicoMarcarPropostaEmNegociacao,
   servicoPrepararCotacaoDeOmie,
   servicoRejeitarProposta,
   servicoSelecionarProposta,
@@ -467,6 +473,70 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     assincrono(async (req, res) => {
       const id = validarUuid(req.params.id, 'id');
       res.json(await servicoRejeitarProposta(id, req.usuario!.id));
+    }),
+  );
+
+  // --- Fase 4A.6: Central da Logística + Central do Vendedor ----------------
+  // Gate de rota é só a permissão "de porta" (`fretesLogistica`/`fretesComercial`); a
+  // checagem fina (dono da cotação/visão ampliada/substituição) mora inteiramente no
+  // serviço (`fretesServico.ts`), nunca aqui — mesma separação já usada no resto do módulo.
+
+  const protegidaLogistica = [exigirAutenticacao, exigirPermissao('fretesLogistica')] as const;
+  const protegidaComercial = [exigirAutenticacao, exigirPermissao('fretesComercial')] as const;
+
+  rotas.get(
+    '/api/fretes/central-logistica',
+    ...protegidaLogistica,
+    assincrono(async (_req, res) => {
+      res.json({ linhas: await servicoListarCentralLogistica() });
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/propostas/:id/liberar',
+    ...protegidaLogistica,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoLiberarPropostaLogistica(id, req.usuario!));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/propostas/:id/descartar',
+    ...protegidaLogistica,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoDescartarPropostaLogistica(id, req.usuario!));
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/central-vendedor',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      res.json({ linhas: await servicoListarCentralVendedor(req.usuario!) });
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/cotacoes/:id/propostas/:propostaId/negociar',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const propostaId = validarUuid(req.params.propostaId, 'propostaId');
+      res.json(await servicoMarcarPropostaEmNegociacao(cotacaoId, propostaId, req.usuario!));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/cotacoes/:id/propostas/:propostaId/escolher',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const propostaId = validarUuid(req.params.propostaId, 'propostaId');
+      const motivoSubstituicao = validarTextoOpcional(req.body?.substituicao?.motivo, 'substituicao.motivo');
+      const substituicao = motivoSubstituicao !== null ? { motivo: motivoSubstituicao } : undefined;
+      res.json(await servicoEscolherFreteVencedor(cotacaoId, propostaId, req.usuario!, substituicao));
     }),
   );
 

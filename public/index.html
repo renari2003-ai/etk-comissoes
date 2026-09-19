@@ -95,7 +95,15 @@
           <label><input type="checkbox" name="relatorioOrcamentos" /> Relatórios — Orçamentos</label>
           <label><input type="checkbox" name="relatorioComissionamento" /> Relatórios — Comissionamento</label>
           <label><input type="checkbox" name="fretes" /> Fretes</label>
+          <label><input type="checkbox" name="fretesLogistica" /> Fretes — Central da Logística</label>
+          <label><input type="checkbox" name="fretesComercial" /> Fretes — Central do Vendedor</label>
+          <label><input type="checkbox" name="fretesSubstituicao" /> Fretes — Aprovar em substituição</label>
+          <label><input type="checkbox" name="fretesGerencia" /> Fretes — Visão ampliada (gerência)</label>
         </fieldset>
+        <div class="campo-filtro">
+          <label for="novo-usuario-vendedor-omie">Vendedor Omie (código, opcional)</label>
+          <input id="novo-usuario-vendedor-omie" name="vendedorOmieId" type="number" min="1" />
+        </div>
         <button type="submit" class="botao-secundario">Criar usuário</button>
         <p id="novo-usuario-erro" class="painel-login-erro" hidden></p>
       </form>
@@ -130,6 +138,8 @@
       <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
       <button type="button" id="fretes-aba-veiculos" class="aba-tipo-documento" role="tab" aria-selected="false">Veículos</button>
       <button type="button" id="fretes-aba-propostas-recebidas" class="aba-tipo-documento" role="tab" aria-selected="false">Propostas recebidas <span id="fretes-badge-pendentes" class="badge-pendente" hidden>0</span></button>
+      <button type="button" id="fretes-aba-central-logistica" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Central da Logística</button>
+      <button type="button" id="fretes-aba-central-vendedor" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Central do Vendedor</button>
     </nav>
 
     <section id="fretes-secao-dashboard">
@@ -662,6 +672,64 @@
           <tbody id="fretes-tabela-respostas-sem-proposta-corpo"></tbody>
         </table>
       </div>
+    </section>
+
+    <section id="fretes-secao-central-logistica" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Central da Logística</h2>
+      </div>
+      <p class="filtro-data-legenda">
+        Triagem das propostas recebidas — libere as opções viáveis para o vendedor negociar com o cliente, ou descarte as
+        que não servem. A Logística nunca escolhe a proposta vencedora sozinha.
+      </p>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-central-logistica">
+          <thead>
+            <tr>
+              <th scope="col">Cotação</th>
+              <th scope="col">Cliente</th>
+              <th scope="col">Vendedor (Omie)</th>
+              <th scope="col">Transportadora</th>
+              <th scope="col">Custo</th>
+              <th scope="col">Prazo</th>
+              <th scope="col">Canal</th>
+              <th scope="col">Status</th>
+              <th scope="col">Recebida em</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-central-logistica-corpo"></tbody>
+        </table>
+      </div>
+      <p id="fretes-central-logistica-vazio" class="filtro-data-legenda" hidden>Nenhuma proposta para triar no momento.</p>
+    </section>
+
+    <section id="fretes-secao-central-vendedor" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Central do Vendedor</h2>
+      </div>
+      <p class="filtro-data-legenda">
+        Só aparecem aqui as propostas já liberadas pela Logística. Negocie com o cliente e escolha o frete vencedor —
+        nunca há escolha automática.
+      </p>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-central-vendedor">
+          <thead>
+            <tr>
+              <th scope="col">Cotação</th>
+              <th scope="col">Cliente</th>
+              <th scope="col">Transportadora</th>
+              <th scope="col">Custo</th>
+              <th scope="col">Prazo</th>
+              <th scope="col">Observações</th>
+              <th scope="col">Status</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-central-vendedor-corpo"></tbody>
+        </table>
+      </div>
+      <p id="fretes-central-vendedor-vazio" class="filtro-data-legenda" hidden>Nenhuma proposta liberada para você no momento.</p>
     </section>
   </main>
 

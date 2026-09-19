@@ -13,6 +13,14 @@ export interface Permissoes {
   relatorioComissionamento: boolean;
   /** Módulo de Fretes (Fase 1, 2026-09-15) — cotação/transportadoras/propostas/fechamento. Chave nova, aditiva: usuários existentes simplesmente começam com `false` (opt-in). */
   fretes: boolean;
+  /** Fase 4A.6 — "LOGISTICA_APROVA": triagem de propostas na Central da Logística (liberar/descartar). */
+  fretesLogistica: boolean;
+  /** Fase 4A.6 — "COMERCIAL_APROVA": Central do Vendedor (negociar/escolher o frete vencedor). */
+  fretesComercial: boolean;
+  /** Fase 4A.6 — "APROVA_EM_SUBSTITUICAO": permite escolher o frete em nome de outro vendedor, sempre com motivo registrado. */
+  fretesSubstituicao: boolean;
+  /** Fase 4A.6 — "GERENCIA": visão ampliada na Central do Vendedor (vê propostas de todos os vendedores, não só as próprias). */
+  fretesGerencia: boolean;
 }
 
 export const PERMISSOES_VAZIAS: Permissoes = {
@@ -22,6 +30,10 @@ export const PERMISSOES_VAZIAS: Permissoes = {
   relatorioOrcamentos: false,
   relatorioComissionamento: false,
   fretes: false,
+  fretesLogistica: false,
+  fretesComercial: false,
+  fretesSubstituicao: false,
+  fretesGerencia: false,
 };
 
 export interface Usuario {
@@ -50,6 +62,15 @@ export interface Usuario {
    * de alguém que perdeu a senha. Nunca consultado para `papel: 'convidado'`.
    */
   mestre: boolean;
+  /**
+   * Fase 4A.6 — vínculo opcional entre este login e um código de vendedor na Omie (o mesmo
+   * código gravado em `CotacaoFrete.vendedorOmieId` no momento da importação). Só define
+   * quem é "o vendedor responsável" para a Central do Vendedor (seção 4: cada vendedor só vê
+   * fretes das próprias cotações) — nunca sincronizado com a Omie, nunca escreve lá, definido
+   * manualmente pelo administrador ao cadastrar/editar a conta. `null` = sem vínculo (conta
+   * de logística/gerência/administração, ou vendedor ainda não configurado).
+   */
+  vendedorOmieId: number | null;
 }
 
 /** `Usuario` sem `senhaHash` — nunca devolver o hash pela API, mesmo para o próprio admin. */

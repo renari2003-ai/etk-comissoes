@@ -32,6 +32,17 @@ function validarPapel(valor: unknown): Papel {
   return valor;
 }
 
+/** Fase 4A.6 — mesmo padrão de `validarIdOmieOpcional` (`fretes/validacao.ts`): inteiro positivo ou ausente/`null`, nunca inferido. */
+function validarVendedorOmieIdOpcional(valor: unknown): number | null | undefined {
+  if (valor === undefined) return undefined;
+  if (valor === null || valor === '') return null;
+  const numero = Number(valor);
+  if (!Number.isInteger(numero) || numero <= 0) {
+    throw new ErroValidacao('O campo "vendedorOmieId" deve ser um número inteiro positivo.');
+  }
+  return numero;
+}
+
 function validarPermissoes(valor: unknown): Permissoes {
   if (valor === undefined) return { ...PERMISSOES_VAZIAS };
   if (typeof valor !== 'object' || valor === null) {
@@ -76,6 +87,7 @@ export function criarRotaAuth(): Router {
         permissoes: usuario.permissoes,
         senhaProvisoria: usuario.senhaProvisoria,
         mestre: usuario.mestre,
+        vendedorOmieId: usuario.vendedorOmieId,
       });
     }),
   );
@@ -113,8 +125,9 @@ export function criarRotaAuth(): Router {
       const senha = validarTextoNaoVazio(req.body?.senha, 'senha');
       const papel = validarPapel(req.body?.papel);
       const permissoes = validarPermissoes(req.body?.permissoes);
+      const vendedorOmieId = validarVendedorOmieIdOpcional(req.body?.vendedorOmieId);
 
-      const criado = await criarUsuario({ usuario, nome, senha, papel, permissoes });
+      const criado = await criarUsuario({ usuario, nome, senha, papel, permissoes, vendedorOmieId });
       res.status(201).json(criado);
     }),
   );
@@ -125,10 +138,12 @@ export function criarRotaAuth(): Router {
     exigirAdministrador,
     assincrono(async (req, res) => {
       const id = validarTextoNaoVazio(req.params.id, 'id');
+      const vendedorOmieId = validarVendedorOmieIdOpcional(req.body?.vendedorOmieId);
       const atualizado = await atualizarUsuario(id, {
         ...(req.body?.nome !== undefined ? { nome: validarTextoNaoVazio(req.body.nome, 'nome') } : {}),
         ...(req.body?.papel !== undefined ? { papel: validarPapel(req.body.papel) } : {}),
         ...(req.body?.permissoes !== undefined ? { permissoes: validarPermissoes(req.body.permissoes) } : {}),
+        ...(vendedorOmieId !== undefined ? { vendedorOmieId } : {}),
       });
       res.json(atualizado);
     }),
