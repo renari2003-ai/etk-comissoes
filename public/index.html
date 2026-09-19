@@ -140,10 +140,34 @@
       <button type="button" id="fretes-aba-propostas-recebidas" class="aba-tipo-documento" role="tab" aria-selected="false">Propostas recebidas <span id="fretes-badge-pendentes" class="badge-pendente" hidden>0</span></button>
       <button type="button" id="fretes-aba-central-logistica" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Central da Logística</button>
       <button type="button" id="fretes-aba-central-vendedor" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Central do Vendedor</button>
+      <button type="button" id="fretes-aba-aprovacoes-valor-minimo" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Aprovações (Gerência)</button>
     </nav>
 
     <section id="fretes-secao-dashboard">
       <section class="relatorio-indicadores" id="fretes-dashboard-indicadores" aria-live="polite"></section>
+
+      <section id="fretes-secao-parametros-fiscais" class="painel-usuarios" hidden>
+        <h2 class="titulo-secao">Parâmetros fiscais (valor mínimo do frete)</h2>
+        <p class="filtro-data-legenda">
+          Usados internamente para calcular o valor mínimo cobrável — nunca exibidos ao vendedor individualmente.
+        </p>
+        <form id="fretes-form-parametros-fiscais" class="filtros-relatorio" autocomplete="off">
+          <div class="campo-filtro">
+            <label for="fretes-parametro-pis">PIS (%)</label>
+            <input id="fretes-parametro-pis" name="pisPercentual" type="number" min="0" max="100" step="0.01" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-parametro-cofins">COFINS (%)</label>
+            <input id="fretes-parametro-cofins" name="cofinsPercentual" type="number" min="0" max="100" step="0.01" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-parametro-icms">ICMS (%)</label>
+            <input id="fretes-parametro-icms" name="icmsPercentual" type="number" min="0" max="100" step="0.01" />
+          </div>
+          <button type="submit" class="botao-secundario">Salvar parâmetros fiscais</button>
+          <p id="fretes-parametros-fiscais-erro" class="painel-login-erro" hidden></p>
+        </form>
+      </section>
     </section>
 
     <section id="fretes-secao-cotacoes" hidden>
@@ -719,9 +743,11 @@
               <th scope="col">Cotação</th>
               <th scope="col">Cliente</th>
               <th scope="col">Transportadora</th>
-              <th scope="col">Custo</th>
+              <th scope="col">Frete base</th>
+              <th scope="col">Valor mínimo</th>
+              <th scope="col">Acréscimo %</th>
+              <th scope="col">Valor final</th>
               <th scope="col">Prazo</th>
-              <th scope="col">Observações</th>
               <th scope="col">Status</th>
               <th scope="col">Ações</th>
             </tr>
@@ -730,6 +756,33 @@
         </table>
       </div>
       <p id="fretes-central-vendedor-vazio" class="filtro-data-legenda" hidden>Nenhuma proposta liberada para você no momento.</p>
+    </section>
+
+    <section id="fretes-secao-aprovacoes-valor-minimo" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Aprovações — valor abaixo do mínimo</h2>
+      </div>
+      <p class="filtro-data-legenda">
+        Solicitações do vendedor quando o valor final ficou abaixo do valor mínimo calculado. Aprovar aqui escolhe o
+        frete vencedor com o valor proposto; rejeitar mantém a proposta liberada, sem escolha.
+      </p>
+      <div class="tabela-rolagem">
+        <table id="fretes-tabela-aprovacoes-valor-minimo">
+          <thead>
+            <tr>
+              <th scope="col">Cotação</th>
+              <th scope="col">Valor mínimo</th>
+              <th scope="col">Valor proposto</th>
+              <th scope="col">Diferença</th>
+              <th scope="col">Motivo</th>
+              <th scope="col">Solicitada em</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-tabela-aprovacoes-valor-minimo-corpo"></tbody>
+        </table>
+      </div>
+      <p id="fretes-aprovacoes-valor-minimo-vazio" class="filtro-data-legenda" hidden>Nenhuma aprovação pendente no momento.</p>
     </section>
   </main>
 

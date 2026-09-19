@@ -1,17 +1,22 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
-import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
+import { exigirAdministrador, exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { ErroSemPermissao } from '../auth/erros.js';
 import { config } from '../config.js';
 import type { ClienteOmie } from '../omie/cliente.js';
 import { ErroValidacao } from '../validacao.js';
 import {
+  servicoAprovarValorMinimo,
   servicoAtualizarCotacao,
+  servicoAtualizarParametrosFiscais,
   servicoAtualizarTransportadora,
   servicoAtualizarVeiculo,
+  servicoBuscarComposicaoPorProposta,
   servicoBuscarCotacao,
   servicoBuscarFechamento,
+  servicoBuscarParametrosFiscais,
+  servicoCalcularPreviewComposicao,
   servicoCancelarCotacao,
   servicoCompararPropostas,
   servicoCriarCotacao,
@@ -26,6 +31,7 @@ import {
   servicoEscolherFreteVencedor,
   servicoFecharCotacao,
   servicoLiberarPropostaLogistica,
+  servicoListarAprovacoesValorMinimo,
   servicoListarCentralLogistica,
   servicoListarCentralVendedor,
   servicoListarCotacoes,
@@ -34,8 +40,11 @@ import {
   servicoListarVeiculos,
   servicoMarcarPropostaEmNegociacao,
   servicoPrepararCotacaoDeOmie,
+  servicoRegistrarComposicaoComercial,
   servicoRejeitarProposta,
+  servicoRejeitarValorMinimo,
   servicoSelecionarProposta,
+  servicoSolicitarAprovacaoValorMinimo,
 } from '../fretes/fretesServico.js';
 import {
   servicoBuscarOrigemProposta,
@@ -119,6 +128,16 @@ function exigirSegredoWebhookFretes(req: Request, _res: Response, next: NextFunc
 function validarCanalOpcional(valor: unknown): CanalOrigemProposta {
   if (valor === undefined || valor === null || valor === '') return 'EMAIL';
   return validarCanalOrigem(valor, 'canal');
+}
+
+/** Fase 4A.7 — percentual fiscal (PIS/COFINS/ICMS): 0–100 ou `null` explícito ("ainda não configurado"), nunca inferido. */
+function validarPercentualFiscalOpcional(valor: unknown, campo: string): number | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  const numero = Number(valor);
+  if (Number.isNaN(numero) || numero < 0 || numero > 100) {
+    throw new ErroValidacao(`O campo "${campo}" deve ser um percentual entre 0 e 100.`);
+  }
+  return numero;
 }
 
 /**
@@ -537,6 +556,116 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       const motivoSubstituicao = validarTextoOpcional(req.body?.substituicao?.motivo, 'substituicao.motivo');
       const substituicao = motivoSubstituicao !== null ? { motivo: motivoSubstituicao } : undefined;
       res.json(await servicoEscolherFreteVencedor(cotacaoId, propostaId, req.usuario!, substituicao));
+    }),
+  );
+
+  // --- Fase 4A.7: Composição comercial do frete (valor mínimo/acréscimo/aprovação) ---------
+  // Alíquotas fiscais (só administrador — configuração de sistema, não decisão por cotação).
+
+  rotas.get(
+    '/api/fretes/parametros-fiscais',
+    exigirAutenticacao,
+    exigirAdministrador,
+    assincrono(async (_req, res) => {
+      res.json(await servicoBuscarParametrosFiscais());
+    }),
+  );
+
+  rotas.put(
+    '/api/fretes/parametros-fiscais',
+    exigirAutenticacao,
+    exigirAdministrador,
+    assincrono(async (req, res) => {
+      const dados = {
+        pisPercentual: validarPercentualFiscalOpcional(req.body?.pisPercentual, 'pisPercentual'),
+        cofinsPercentual: validarPercentualFiscalOpcional(req.body?.cofinsPercentual, 'cofinsPercentual'),
+        icmsPercentual: validarPercentualFiscalOpcional(req.body?.icmsPercentual, 'icmsPercentual'),
+      };
+      res.json(await servicoAtualizarParametrosFiscais(dados, req.usuario!.id));
+    }),
+  );
+
+  // Preview somente leitura — a tela do vendedor recalcula o valor final localmente a cada
+  // mudança de acréscimo, sem expor PIS/COFINS/ICMS individualmente (nunca retornados aqui).
+  rotas.get(
+    '/api/fretes/propostas/:id/composicao-preview',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoCalcularPreviewComposicao(id));
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/propostas/:id/composicao',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      const composicao = await servicoBuscarComposicaoPorProposta(id);
+      if (composicao === null) {
+        res.status(404).json({ erro: 'Esta proposta ainda não tem composição comercial registrada.' });
+        return;
+      }
+      res.json(composicao);
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/cotacoes/:id/propostas/:propostaId/composicao',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const propostaId = validarUuid(req.params.propostaId, 'propostaId');
+      const acrescimoPercentual = validarNumeroNaoNegativoObrigatorio(req.body?.acrescimoPercentual, 'acrescimoPercentual');
+      const motivoSubstituicao = validarTextoOpcional(req.body?.substituicao?.motivo, 'substituicao.motivo');
+      const substituicao = motivoSubstituicao !== null ? { motivo: motivoSubstituicao } : undefined;
+      const composicao = await servicoRegistrarComposicaoComercial(cotacaoId, propostaId, acrescimoPercentual, req.usuario!, substituicao);
+      res.status(201).json(composicao);
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/cotacoes/:id/propostas/:propostaId/composicao/solicitar-aprovacao',
+    ...protegidaComercial,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const propostaId = validarUuid(req.params.propostaId, 'propostaId');
+      const acrescimoPercentual = validarNumeroNaoNegativoObrigatorio(req.body?.acrescimoPercentual, 'acrescimoPercentual');
+      const motivo = validarTextoObrigatorio(req.body?.motivo, 'motivo');
+      const aprovacao = await servicoSolicitarAprovacaoValorMinimo(cotacaoId, propostaId, acrescimoPercentual, motivo, req.usuario!);
+      res.status(201).json(aprovacao);
+    }),
+  );
+
+  // --- Fase 4A.7: aprovação gerencial (abaixo do mínimo) --------------------
+
+  const protegidaGerencia = [exigirAutenticacao, exigirPermissao('fretesGerencia')] as const;
+
+  rotas.get(
+    '/api/fretes/aprovacoes-valor-minimo',
+    ...protegidaGerencia,
+    assincrono(async (req, res) => {
+      const status = req.query.status;
+      const statusValido = status === 'PENDENTE' || status === 'APROVADA' || status === 'REJEITADA' ? status : undefined;
+      res.json({ aprovacoes: await servicoListarAprovacoesValorMinimo(req.usuario!, statusValido) });
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/aprovacoes-valor-minimo/:id/aprovar',
+    ...protegidaGerencia,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoAprovarValorMinimo(id, req.usuario!));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/aprovacoes-valor-minimo/:id/rejeitar',
+    ...protegidaGerencia,
+    assincrono(async (req, res) => {
+      const id = validarUuid(req.params.id, 'id');
+      res.json(await servicoRejeitarValorMinimo(id, req.usuario!));
     }),
   );
 

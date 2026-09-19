@@ -367,6 +367,66 @@ export interface FechamentoFrete {
   criadoEm: string;
 }
 
+/**
+ * Fase 4A.7 — configuração explícita das alíquotas usadas em `calculoFiscal.ts`. Linha
+ * única (singleton), editável só por administrador. Todos os campos nascem `null`
+ * (não configurado) — `calcularValorMinimo` recusa calcular enquanto algum estiver `null`,
+ * nunca assume um percentual inventado.
+ */
+export interface ParametrosFiscaisFrete {
+  pisPercentual: number | null;
+  cofinsPercentual: number | null;
+  icmsPercentual: number | null;
+  atualizadoPor: string | null;
+  atualizadoEm: string | null;
+}
+
+/**
+ * Snapshot comercial (Fase 4A.7) registrado no momento da escolha do frete vencedor —
+ * preserva o cálculo original mesmo que as alíquotas fiscais mudem depois (seção
+ * "Persistência"). `aprovacaoId` só é preenchido quando o valor final ficou abaixo do
+ * mínimo e precisou de aprovação gerencial (ver `AprovacaoValorMinimoFrete`).
+ */
+export interface ComposicaoComercialFrete {
+  id: string;
+  cotacaoId: string;
+  propostaId: string;
+  freteBase: number;
+  valorMinimo: number;
+  acrescimoPercentual: number;
+  valorFinalCliente: number;
+  pisPercentualUtilizado: number;
+  cofinsPercentualUtilizado: number;
+  icmsPercentualUtilizado: number;
+  aprovacaoId: string | null;
+  usuarioId: string;
+  criadoEm: string;
+}
+
+export type StatusAprovacaoValorMinimo = 'PENDENTE' | 'APROVADA' | 'REJEITADA';
+
+/**
+ * Solicitação de aprovação gerencial quando o valor final proposto pelo vendedor fica
+ * abaixo do valor mínimo (Fase 4A.7). `vendedorUsuarioId` é sempre quem SOLICITOU (o
+ * vendedor dono, ou o substituto autorizado que agiu em nome dele — ver Fase 4A.6) — a
+ * auditoria de quem decidiu fica em `aprovadorUsuarioId` + no registro de auditoria.
+ */
+export interface AprovacaoValorMinimoFrete {
+  id: string;
+  cotacaoId: string;
+  propostaId: string;
+  vendedorUsuarioId: string;
+  valorMinimo: number;
+  valorProposto: number;
+  diferenca: number;
+  acrescimoPercentual: number;
+  motivo: string;
+  status: StatusAprovacaoValorMinimo;
+  aprovadorUsuarioId: string | null;
+  decididoEm: string | null;
+  criadoEm: string;
+}
+
 export type AcaoAuditoriaFrete =
   | 'COTACAO_CRIADA'
   | 'COTACAO_EDITADA'
@@ -398,7 +458,12 @@ export type AcaoAuditoriaFrete =
   | 'SOLICITACAO_ERRO_N8N'
   | 'PROPOSTA_LIBERADA_LOGISTICA'
   | 'PROPOSTA_DESCARTADA_LOGISTICA'
-  | 'PROPOSTA_EM_NEGOCIACAO';
+  | 'PROPOSTA_EM_NEGOCIACAO'
+  | 'PARAMETROS_FISCAIS_ATUALIZADOS'
+  | 'COMPOSICAO_COMERCIAL_REGISTRADA'
+  | 'APROVACAO_VALOR_MINIMO_SOLICITADA'
+  | 'APROVACAO_VALOR_MINIMO_APROVADA'
+  | 'APROVACAO_VALOR_MINIMO_REJEITADA';
 
 export interface RegistroAuditoriaFrete {
   id: string;

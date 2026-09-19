@@ -120,6 +120,44 @@ interface LinhaCentralFrete {
   transportadora: Transportadora;
 }
 
+/** Fase 4A.7 — configuração das alíquotas (só administrador vê/edita; nunca exibido ao vendedor). */
+interface ParametrosFiscaisFrete {
+  pisPercentual: number | null;
+  cofinsPercentual: number | null;
+  icmsPercentual: number | null;
+}
+
+/** Fase 4A.7 — o vendedor só vê estes 4 números, nunca PIS/COFINS/ICMS individualmente. */
+interface PreviewComposicaoComercial {
+  freteBase: number;
+  valorMinimo: number;
+}
+
+interface ComposicaoComercialFrete {
+  id: string;
+  propostaId: string;
+  freteBase: number;
+  valorMinimo: number;
+  acrescimoPercentual: number;
+  valorFinalCliente: number;
+  aprovacaoId: string | null;
+}
+
+type StatusAprovacaoValorMinimo = 'PENDENTE' | 'APROVADA' | 'REJEITADA';
+
+interface AprovacaoValorMinimoFrete {
+  id: string;
+  cotacaoId: string;
+  propostaId: string;
+  valorMinimo: number;
+  valorProposto: number;
+  diferenca: number;
+  acrescimoPercentual: number;
+  motivo: string;
+  status: StatusAprovacaoValorMinimo;
+  criadoEm: string;
+}
+
 /** Fase 4A.1 (seção 12) — uma solicitação enviada a UMA transportadora para UMA cotação. */
 interface SolicitacaoCotacao {
   id: string;
@@ -258,6 +296,7 @@ export function inicializarFretes(): { ativar: () => void } {
   const abaPropostasRecebidas = el<HTMLButtonElement>('fretes-aba-propostas-recebidas');
   const abaCentralLogistica = el<HTMLButtonElement>('fretes-aba-central-logistica');
   const abaCentralVendedor = el<HTMLButtonElement>('fretes-aba-central-vendedor');
+  const abaAprovacoesValorMinimo = el<HTMLButtonElement>('fretes-aba-aprovacoes-valor-minimo');
   const secaoDashboard = el<HTMLElement>('fretes-secao-dashboard');
   const secaoCotacoes = el<HTMLElement>('fretes-secao-cotacoes');
   const secaoImportarOmie = el<HTMLElement>('fretes-secao-importar-omie');
@@ -267,6 +306,8 @@ export function inicializarFretes(): { ativar: () => void } {
   const secaoPropostasRecebidas = el<HTMLElement>('fretes-secao-propostas-recebidas');
   const secaoCentralLogistica = el<HTMLElement>('fretes-secao-central-logistica');
   const secaoCentralVendedor = el<HTMLElement>('fretes-secao-central-vendedor');
+  const secaoAprovacoesValorMinimo = el<HTMLElement>('fretes-secao-aprovacoes-valor-minimo');
+  const secaoParametrosFiscais = el<HTMLElement>('fretes-secao-parametros-fiscais');
   const badgePendentes = el<HTMLElement>('fretes-badge-pendentes');
 
   let ativado = false;
@@ -287,7 +328,8 @@ export function inicializarFretes(): { ativar: () => void } {
     | 'veiculos'
     | 'propostas-recebidas'
     | 'central-logistica'
-    | 'central-vendedor';
+    | 'central-vendedor'
+    | 'aprovacoes-valor-minimo';
   function mostrarSubAba(sub: SubAba): void {
     secaoDashboard.hidden = sub !== 'dashboard';
     secaoCotacoes.hidden = sub !== 'cotacoes';
@@ -298,6 +340,7 @@ export function inicializarFretes(): { ativar: () => void } {
     secaoPropostasRecebidas.hidden = sub !== 'propostas-recebidas';
     secaoCentralLogistica.hidden = sub !== 'central-logistica';
     secaoCentralVendedor.hidden = sub !== 'central-vendedor';
+    secaoAprovacoesValorMinimo.hidden = sub !== 'aprovacoes-valor-minimo';
     abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
     abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
     abaImportarOmie.classList.toggle('aba-ativa', sub === 'importar-omie');
@@ -306,16 +349,20 @@ export function inicializarFretes(): { ativar: () => void } {
     abaPropostasRecebidas.classList.toggle('aba-ativa', sub === 'propostas-recebidas');
     abaCentralLogistica.classList.toggle('aba-ativa', sub === 'central-logistica');
     abaCentralVendedor.classList.toggle('aba-ativa', sub === 'central-vendedor');
+    abaAprovacoesValorMinimo.classList.toggle('aba-ativa', sub === 'aprovacoes-valor-minimo');
   }
 
   // --- Fase 4A.6 — Central da Logística + Central do Vendedor ---------------
 
-  /** Abas visíveis só pra quem tem a permissão de "porta" — administrador sempre vê ambas. */
+  /** Abas visíveis só pra quem tem a permissão de "porta" — administrador sempre vê tudo. */
   function aplicarVisibilidadeCentrais(): void {
     const usuarioLogado = obterUsuarioLogado();
     const admin = usuarioLogado?.papel === 'administrador';
     abaCentralLogistica.hidden = !(admin || usuarioLogado?.permissoes.fretesLogistica);
     abaCentralVendedor.hidden = !(admin || usuarioLogado?.permissoes.fretesComercial);
+    // Fase 4A.7 — aprovações e parâmetros fiscais.
+    abaAprovacoesValorMinimo.hidden = !(admin || usuarioLogado?.permissoes.fretesGerencia);
+    secaoParametrosFiscais.hidden = !admin;
   }
 
   function formatarPrazo(prazoDias: number | null): string {
@@ -389,6 +436,93 @@ export function inicializarFretes(): { ativar: () => void } {
     }
   }
 
+  /** Fase 4A.7 — só usado para montar o corpo de `substituicao` já existente da Fase 4A.6 (reaproveitado aqui). */
+  function perguntarMotivoSubstituicao(ehResponsavel: boolean): { motivo: string } | undefined | 'cancelado' {
+    if (ehResponsavel) return undefined;
+    const motivo = window.prompt(
+      'Este frete pertence a outro vendedor. Você está prestes a agir em SUBSTITUIÇÃO ao vendedor responsável — informe o motivo:',
+    );
+    if (motivo === null) return 'cancelado';
+    if (motivo.trim() === '') {
+      window.alert('A ação em substituição exige um motivo.');
+      return 'cancelado';
+    }
+    return { motivo: motivo.trim() };
+  }
+
+  /**
+   * Fase 4A.7 — fluxo "Compor e escolher frete": busca frete base/valor mínimo (nunca
+   * PIS/COFINS/ICMS individualmente), pede o acréscimo comercial (pode ser 0%), mostra só os
+   * 4 números pedidos e recalcula o valor final localmente a cada tentativa. Se o valor final
+   * ficar abaixo do mínimo, bloqueia a confirmação normal e oferece solicitar aprovação
+   * gerencial (nunca aprova/escolhe sozinho).
+   */
+  async function iniciarComposicaoEEscolha(linha: LinhaCentralFrete, ehResponsavel: boolean): Promise<void> {
+    const respostaPreview = await fetch(`/api/fretes/propostas/${linha.proposta.id}/composicao-preview`);
+    if (!respostaPreview.ok) {
+      window.alert(await extrairMensagemErro(respostaPreview));
+      return;
+    }
+    const preview = (await respostaPreview.json()) as PreviewComposicaoComercial;
+
+    const acrescimoDigitado = window.prompt(
+      `Frete base: ${formatarMoeda(preview.freteBase)}\nValor mínimo para o cliente: ${formatarMoeda(preview.valorMinimo)}\n\nAcréscimo comercial (%) — pode ser 0:`,
+      '0',
+    );
+    if (acrescimoDigitado === null) return;
+    const acrescimoPercentual = Number(acrescimoDigitado.replace(',', '.'));
+    if (Number.isNaN(acrescimoPercentual) || acrescimoPercentual < 0) {
+      window.alert('Informe um percentual de acréscimo válido (0 ou maior).');
+      return;
+    }
+    const valorFinalCliente = Math.round(preview.freteBase * (1 + acrescimoPercentual / 100) * 100) / 100;
+
+    const substituicaoOuCancelado = perguntarMotivoSubstituicao(ehResponsavel);
+    if (substituicaoOuCancelado === 'cancelado') return;
+    const substituicao = substituicaoOuCancelado === undefined ? undefined : { substituicao: substituicaoOuCancelado };
+
+    if (
+      !window.confirm(
+        `Frete base: ${formatarMoeda(preview.freteBase)}\nValor mínimo para o cliente: ${formatarMoeda(preview.valorMinimo)}\nAcréscimo comercial: ${acrescimoPercentual}%\nValor final ao cliente: ${formatarMoeda(valorFinalCliente)}\n\nConfirmar?`,
+      )
+    ) {
+      return;
+    }
+
+    const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/composicao`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acrescimoPercentual, ...substituicao }),
+    });
+    if (resp.ok) {
+      void carregarCentralVendedor();
+      return;
+    }
+    const mensagem = await extrairMensagemErro(resp);
+    if (!mensagem.includes('abaixo do mínimo')) {
+      window.alert(mensagem);
+      return;
+    }
+    // Bloqueado — oferece solicitar aprovação gerencial (nunca aprova/escolhe sozinho).
+    if (!window.confirm(`${mensagem}\n\nSolicitar aprovação da gerência para este valor?`)) return;
+    const motivoAprovacao = window.prompt('Motivo da solicitação de aprovação (valor abaixo do mínimo):');
+    if (motivoAprovacao === null || motivoAprovacao.trim() === '') {
+      if (motivoAprovacao !== null) window.alert('A solicitação de aprovação exige um motivo.');
+      return;
+    }
+    const respAprovacao = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/composicao/solicitar-aprovacao`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ acrescimoPercentual, motivo: motivoAprovacao.trim() }),
+    });
+    if (!respAprovacao.ok) {
+      window.alert(await extrairMensagemErro(respAprovacao));
+      return;
+    }
+    window.alert('Solicitação de aprovação enviada à gerência.');
+    void carregarCentralVendedor();
+  }
+
   async function carregarCentralVendedor(): Promise<void> {
     const corpo = el<HTMLTableSectionElement>('fretes-tabela-central-vendedor-corpo');
     const vazio = el<HTMLElement>('fretes-central-vendedor-vazio');
@@ -412,8 +546,27 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(linha.cotacao.clienteNomeSnapshot ?? '—'));
       tr.appendChild(celula(linha.transportadora.nomeRazaoSocial));
       tr.appendChild(celula(formatarMoeda(linha.proposta.valorCusto)));
+
+      // Fase 4A.7 — valor mínimo/acréscimo/final só aparecem depois de compostos (ESCOLHIDA);
+      // nunca calculados/exibidos aqui antes da composição confirmada, pra não sugerir um
+      // valor que ainda não foi registrado.
+      const tdValorMinimo = celula('—');
+      const tdAcrescimo = celula('—');
+      const tdValorFinal = celula('—');
+      if (linha.proposta.statusRevisao === 'ESCOLHIDA') {
+        void fetch(`/api/fretes/propostas/${linha.proposta.id}/composicao`)
+          .then((r) => (r.ok ? (r.json() as Promise<ComposicaoComercialFrete>) : null))
+          .then((composicao) => {
+            if (composicao === null) return;
+            tdValorMinimo.textContent = formatarMoeda(composicao.valorMinimo);
+            tdAcrescimo.textContent = `${composicao.acrescimoPercentual}%`;
+            tdValorFinal.textContent = formatarMoeda(composicao.valorFinalCliente);
+          });
+      }
+      tr.appendChild(tdValorMinimo);
+      tr.appendChild(tdAcrescimo);
+      tr.appendChild(tdValorFinal);
       tr.appendChild(celula(formatarPrazo(linha.proposta.prazoDias)));
-      tr.appendChild(celula(linha.proposta.observacoes ?? '—'));
       tr.appendChild(celula(ROTULOS_STATUS_REVISAO[linha.proposta.statusRevisao]));
 
       const tdAcoes = document.createElement('td');
@@ -438,38 +591,81 @@ export function inicializarFretes(): { ativar: () => void } {
       }
 
       if (linha.proposta.statusRevisao === 'LIBERADA' || linha.proposta.statusRevisao === 'EM_NEGOCIACAO') {
-        const botaoEscolher = document.createElement('button');
-        botaoEscolher.type = 'button';
-        botaoEscolher.className = 'botao-secundario';
-        botaoEscolher.textContent = 'Escolher frete vencedor';
-        botaoEscolher.addEventListener('click', () => {
-          void (async () => {
-            let corpoRequisicao: { substituicao?: { motivo: string } } = {};
-            // Substituição (seção "Substituição"): aviso claro ANTES de confirmar, sempre com motivo.
-            if (!ehResponsavel) {
-              const motivo = window.prompt(
-                'Este frete pertence a outro vendedor. Você está prestes a escolher em SUBSTITUIÇÃO ao vendedor responsável — informe o motivo:',
-              );
-              if (motivo === null || motivo.trim() === '') {
-                if (motivo !== null) window.alert('A aprovação em substituição exige um motivo.');
-                return;
-              }
-              corpoRequisicao = { substituicao: { motivo: motivo.trim() } };
-            }
-            const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/escolher`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(corpoRequisicao),
-            });
-            if (!resp.ok) {
-              window.alert(await extrairMensagemErro(resp));
-              return;
-            }
-            void carregarCentralVendedor();
-          })();
+        const botaoComporEscolher = document.createElement('button');
+        botaoComporEscolher.type = 'button';
+        botaoComporEscolher.className = 'botao-secundario';
+        botaoComporEscolher.textContent = 'Compor e escolher frete';
+        botaoComporEscolher.addEventListener('click', () => {
+          void iniciarComposicaoEEscolha(linha, ehResponsavel);
         });
-        tdAcoes.appendChild(botaoEscolher);
+        tdAcoes.appendChild(botaoComporEscolher);
       }
+      tr.appendChild(tdAcoes);
+      corpo.appendChild(tr);
+    }
+  }
+
+  // --- Fase 4A.7 — Aprovações de valor abaixo do mínimo (gerência) ----------
+
+  async function carregarAprovacoesValorMinimo(): Promise<void> {
+    const corpo = el<HTMLTableSectionElement>('fretes-tabela-aprovacoes-valor-minimo-corpo');
+    const vazio = el<HTMLElement>('fretes-aprovacoes-valor-minimo-vazio');
+    corpo.textContent = '';
+    const resposta = await fetch('/api/fretes/aprovacoes-valor-minimo');
+    if (!resposta.ok) {
+      vazio.textContent = await extrairMensagemErro(resposta);
+      vazio.hidden = false;
+      return;
+    }
+    const dados = (await resposta.json()) as { aprovacoes: AprovacaoValorMinimoFrete[] };
+    vazio.hidden = dados.aprovacoes.length > 0;
+    const celula = (texto: string) => {
+      const td = document.createElement('td');
+      td.textContent = texto;
+      return td;
+    };
+    for (const aprovacao of dados.aprovacoes) {
+      const tr = document.createElement('tr');
+      tr.appendChild(celula(aprovacao.cotacaoId));
+      tr.appendChild(celula(formatarMoeda(aprovacao.valorMinimo)));
+      tr.appendChild(celula(formatarMoeda(aprovacao.valorProposto)));
+      tr.appendChild(celula(formatarMoeda(aprovacao.diferenca)));
+      tr.appendChild(celula(aprovacao.motivo));
+      tr.appendChild(celula(new Date(aprovacao.criadoEm).toLocaleString('pt-BR')));
+
+      const tdAcoes = document.createElement('td');
+      const botaoAprovar = document.createElement('button');
+      botaoAprovar.type = 'button';
+      botaoAprovar.className = 'botao-secundario';
+      botaoAprovar.textContent = 'Aprovar';
+      botaoAprovar.addEventListener('click', () => {
+        void (async () => {
+          if (!window.confirm(`Aprovar o valor de ${formatarMoeda(aprovacao.valorProposto)} (abaixo do mínimo de ${formatarMoeda(aprovacao.valorMinimo)})?`)) return;
+          const resp = await fetch(`/api/fretes/aprovacoes-valor-minimo/${aprovacao.id}/aprovar`, { method: 'POST' });
+          if (!resp.ok) {
+            window.alert(await extrairMensagemErro(resp));
+            return;
+          }
+          void carregarAprovacoesValorMinimo();
+        })();
+      });
+      const botaoRejeitar = document.createElement('button');
+      botaoRejeitar.type = 'button';
+      botaoRejeitar.className = 'botao-secundario';
+      botaoRejeitar.textContent = 'Rejeitar';
+      botaoRejeitar.addEventListener('click', () => {
+        void (async () => {
+          if (!window.confirm('Rejeitar esta solicitação? A proposta continua liberada, sem escolha.')) return;
+          const resp = await fetch(`/api/fretes/aprovacoes-valor-minimo/${aprovacao.id}/rejeitar`, { method: 'POST' });
+          if (!resp.ok) {
+            window.alert(await extrairMensagemErro(resp));
+            return;
+          }
+          void carregarAprovacoesValorMinimo();
+        })();
+      });
+      tdAcoes.appendChild(botaoAprovar);
+      tdAcoes.appendChild(botaoRejeitar);
       tr.appendChild(tdAcoes);
       corpo.appendChild(tr);
     }
@@ -521,6 +717,46 @@ export function inicializarFretes(): { ativar: () => void } {
       container.appendChild(div);
     }
   }
+
+  // --- Fase 4A.7 — parâmetros fiscais (só administrador) --------------------
+
+  const formParametrosFiscais = document.getElementById('fretes-form-parametros-fiscais') as HTMLFormElement | null;
+  const erroParametrosFiscais = document.getElementById('fretes-parametros-fiscais-erro');
+
+  async function carregarParametrosFiscais(): Promise<void> {
+    if (formParametrosFiscais === null || obterUsuarioLogado()?.papel !== 'administrador') return;
+    const resposta = await fetch('/api/fretes/parametros-fiscais');
+    if (!resposta.ok) return;
+    const dados = (await resposta.json()) as ParametrosFiscaisFrete;
+    (formParametrosFiscais.elements.namedItem('pisPercentual') as HTMLInputElement).value = dados.pisPercentual !== null ? String(dados.pisPercentual) : '';
+    (formParametrosFiscais.elements.namedItem('cofinsPercentual') as HTMLInputElement).value =
+      dados.cofinsPercentual !== null ? String(dados.cofinsPercentual) : '';
+    (formParametrosFiscais.elements.namedItem('icmsPercentual') as HTMLInputElement).value = dados.icmsPercentual !== null ? String(dados.icmsPercentual) : '';
+  }
+
+  formParametrosFiscais?.addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    void (async () => {
+      if (erroParametrosFiscais === null || formParametrosFiscais === null) return;
+      erroParametrosFiscais.hidden = true;
+      const dadosForm = new FormData(formParametrosFiscais);
+      const resposta = await fetch('/api/fretes/parametros-fiscais', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pisPercentual: numeroOuNulo(dadosForm.get('pisPercentual')),
+          cofinsPercentual: numeroOuNulo(dadosForm.get('cofinsPercentual')),
+          icmsPercentual: numeroOuNulo(dadosForm.get('icmsPercentual')),
+        }),
+      });
+      if (!resposta.ok) {
+        erroParametrosFiscais.textContent = await extrairMensagemErro(resposta);
+        erroParametrosFiscais.hidden = false;
+        return;
+      }
+      window.alert('Parâmetros fiscais salvos.');
+    })();
+  });
 
   // --- Transportadoras -------------------------------------------------
 
@@ -1740,6 +1976,10 @@ export function inicializarFretes(): { ativar: () => void } {
     mostrarSubAba('central-vendedor');
     void carregarCentralVendedor();
   });
+  abaAprovacoesValorMinimo.addEventListener('click', () => {
+    mostrarSubAba('aprovacoes-valor-minimo');
+    void carregarAprovacoesValorMinimo();
+  });
 
   return {
     ativar(): void {
@@ -1748,6 +1988,7 @@ export function inicializarFretes(): { ativar: () => void } {
       aplicarVisibilidadeCentrais();
       mostrarSubAba('dashboard');
       void carregarDashboard();
+      void carregarParametrosFiscais();
       void carregarTransportadoras();
       void carregarVeiculos();
       void atualizarBadgePendentes();

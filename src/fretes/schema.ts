@@ -89,6 +89,16 @@ export function nomeTabelaRespostas(): string {
 export function nomeTabelaExtracoes(): string {
   return nomeValidado(process.env.EXTRACOES_PROPOSTA_TABELA ?? 'extracoes_proposta_frete');
 }
+// Fase 4A.7 — composição comercial (valor mínimo/acréscimo/aprovação gerencial).
+export function nomeTabelaParametrosFiscais(): string {
+  return nomeValidado(process.env.PARAMETROS_FISCAIS_FRETE_TABELA ?? 'parametros_fiscais_frete');
+}
+export function nomeTabelaComposicoesComerciais(): string {
+  return nomeValidado(process.env.COMPOSICOES_COMERCIAIS_FRETE_TABELA ?? 'composicoes_comerciais_frete');
+}
+export function nomeTabelaAprovacoesValorMinimo(): string {
+  return nomeValidado(process.env.APROVACOES_VALOR_MINIMO_FRETE_TABELA ?? 'aprovacoes_valor_minimo_frete');
+}
 
 /**
  * Cria (se ainda não existirem) todas as tabelas novas do módulo de Fretes — nunca toca
@@ -438,6 +448,71 @@ export function garantirEsquemaFretes(): Promise<void> {
           CHECK (status IN (''RECEBIDA'',''EM_ANALISE'',''SELECIONADA'',''REJEITADA'',''PENDENTE_VALIDACAO''))';
       END $$;
     `);
+
+    // ========================================================================================
+    // Fase 4A.7 — composição comercial do frete (valor mínimo/acréscimo/aprovação gerencial).
+    // Tabelas 100% novas; nenhuma tabela já existente perde coluna/constraint/dado.
+    // ========================================================================================
+    const parametrosFiscais = nomeTabelaParametrosFiscais();
+    const composicoes = nomeTabelaComposicoesComerciais();
+    const aprovacoesValorMinimo = nomeTabelaAprovacoesValorMinimo();
+
+    // Linha única (singleton) — todas as alíquotas nascem NULL (não configurado);
+    // `calculoFiscal.calcularValorMinimo` recusa calcular enquanto alguma estiver NULL, nunca
+    // assume um percentual inventado (ver comentário completo em `calculoFiscal.ts`).
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${parametrosFiscais} (
+        id UUID PRIMARY KEY,
+        pis_percentual NUMERIC,
+        cofins_percentual NUMERIC,
+        icms_percentual NUMERIC,
+        atualizado_por UUID,
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+
+    // Snapshot registrado na escolha do frete vencedor — preserva o cálculo original mesmo
+    // que as alíquotas mudem depois (seção "Persistência"). `aprovacao_id` só preenchido
+    // quando veio do fluxo de aprovação gerencial (abaixo do mínimo).
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${composicoes} (
+        id UUID PRIMARY KEY,
+        cotacao_id UUID NOT NULL REFERENCES ${cotacoes}(id),
+        proposta_id UUID NOT NULL REFERENCES ${propostas}(id),
+        frete_base NUMERIC NOT NULL,
+        valor_minimo NUMERIC NOT NULL,
+        acrescimo_percentual NUMERIC NOT NULL,
+        valor_final_cliente NUMERIC NOT NULL,
+        pis_percentual_utilizado NUMERIC NOT NULL,
+        cofins_percentual_utilizado NUMERIC NOT NULL,
+        icms_percentual_utilizado NUMERIC NOT NULL,
+        aprovacao_id UUID,
+        usuario_id UUID NOT NULL,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${composicoes}_proposta ON ${composicoes} (proposta_id)`);
+
+    // Solicitação de aprovação gerencial quando o valor final fica abaixo do mínimo.
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${aprovacoesValorMinimo} (
+        id UUID PRIMARY KEY,
+        cotacao_id UUID NOT NULL REFERENCES ${cotacoes}(id),
+        proposta_id UUID NOT NULL REFERENCES ${propostas}(id),
+        vendedor_usuario_id UUID NOT NULL,
+        valor_minimo NUMERIC NOT NULL,
+        valor_proposto NUMERIC NOT NULL,
+        diferenca NUMERIC NOT NULL,
+        acrescimo_percentual NUMERIC NOT NULL,
+        motivo TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDENTE' CHECK (status IN ('PENDENTE','APROVADA','REJEITADA')),
+        aprovador_usuario_id UUID,
+        decidido_em TIMESTAMPTZ,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${aprovacoesValorMinimo}_status ON ${aprovacoesValorMinimo} (status)`);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${aprovacoesValorMinimo}_proposta ON ${aprovacoesValorMinimo} (proposta_id)`);
   })();
   return esquemaGarantido;
 }

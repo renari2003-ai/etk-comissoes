@@ -12,6 +12,7 @@ import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
 import { calcularFreteFinal, calcularPercentualAcrescimo, calcularValorAcrescimo } from './calculo.js';
+import { arredondarDinheiro } from '../calculo/arredondamento.js';
 import {
   atualizarCotacao,
   buscarCotacaoPorId,
@@ -29,6 +30,7 @@ import { buscarFechamentoPorCotacao, inserirFechamento, resumirFechamentos, resu
 import {
   atualizarStatusProposta,
   atualizarStatusRevisaoProposta,
+  buscarPropostaPorId,
   criarProposta,
   listarPropostasPorCotacao,
   listarPropostasPorStatusRevisao,
@@ -36,6 +38,16 @@ import {
   type DadosNovaProposta,
 } from './propostasRepositorio.js';
 import { garantirEsquemaFretes, nomeTabelaCotacoes } from './schema.js';
+import { buscarParametrosFiscais, atualizarParametrosFiscais, type DadosParametrosFiscais } from './parametrosFiscaisRepositorio.js';
+import { calcularValorMinimo } from './calculoFiscal.js';
+import {
+  buscarAprovacaoPorId,
+  buscarComposicaoPorProposta,
+  criarAprovacaoValorMinimo,
+  criarComposicaoComercial,
+  decidirAprovacaoValorMinimo,
+  listarAprovacoesValorMinimo,
+} from './composicaoComercialRepositorio.js';
 import {
   atualizarTransportadora,
   criarTransportadora,
@@ -51,7 +63,20 @@ import {
   listarVeiculos,
   type DadosVeiculo,
 } from './veiculosRepositorio.js';
-import type { CotacaoFrete, EnderecoDestino, FechamentoFrete, Modalidade, ModalidadeExecucao, ModoCalculoFechamento, PropostaFrete, Transportadora, Veiculo } from './tipos.js';
+import type {
+  AprovacaoValorMinimoFrete,
+  ComposicaoComercialFrete,
+  CotacaoFrete,
+  EnderecoDestino,
+  FechamentoFrete,
+  Modalidade,
+  ModalidadeExecucao,
+  ModoCalculoFechamento,
+  ParametrosFiscaisFrete,
+  PropostaFrete,
+  Transportadora,
+  Veiculo,
+} from './tipos.js';
 
 // --- Transportadoras -------------------------------------------------------
 
@@ -464,8 +489,14 @@ export async function servicoDescartarPropostaLogistica(propostaId: string, usua
  * não pode ver/agir em fretes de outros vendedores).
  */
 function exigirAcessoComercial(usuario: UsuarioPublico, cotacao: CotacaoFrete): { substituicao: boolean } {
-  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesComercial) {
-    throw new ErroValidacao('Você não tem permissão para negociar/escolher fretes (permissão "fretesComercial" necessária).');
+  // Bug corrigido na Fase 4A.7 (exposto pela aprovação gerencial abaixo do mínimo, que chama
+  // esta mesma checagem com o usuário da GERÊNCIA, não necessariamente dono de `fretesComercial`):
+  // o comentário acima sempre documentou "visão ampliada (admin/fretesGerencia)" como um dos
+  // três caminhos válidos, mas o gate inicial exigia `fretesComercial` mesmo de quem só tinha
+  // `fretesGerencia` — nunca chegava a checar `temVisaoAmpliadaFrete`. Corrigido pra bater com
+  // o que sempre esteve documentado.
+  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesComercial && !usuario.permissoes.fretesGerencia) {
+    throw new ErroValidacao('Você não tem permissão para negociar/escolher fretes (permissão "fretesComercial" ou "fretesGerencia" necessária).');
   }
   if (ehVendedorResponsavel(usuario, cotacao) || temVisaoAmpliadaFrete(usuario)) {
     return { substituicao: false };
@@ -546,6 +577,221 @@ export async function servicoEscolherFreteVencedor(
     });
   }
   return propostaFinal;
+}
+
+// --- Fase 4A.7 — Composição comercial do frete (valor mínimo/acréscimo/aprovação) --------
+//
+// Frete base = custo da proposta escolhida (`proposta.valorCusto`, já existente, Fase 1).
+// Valor mínimo = `calculoFiscal.calcularValorMinimo` (fórmula "por dentro", alíquotas SEMPRE
+// vindas de `parametrosFiscaisRepositorio`, nunca hardcoded). O vendedor nunca vê PIS/COFINS/
+// ICMS individualmente — só os 4 números finais (frete base/mínimo/acréscimo/final), tanto
+// aqui quanto no que a rota devolve. Valor final = `calcularFreteFinal` (Fase 1, `calculo.ts`,
+// reaproveitado sem alteração) sobre o frete base. Se o valor final ficar abaixo do mínimo, a
+// confirmação normal é bloqueada e só resta "solicitar aprovação gerencial" — nunca uma
+// aprovação ou seleção automática.
+
+export async function servicoBuscarParametrosFiscais(): Promise<ParametrosFiscaisFrete> {
+  return buscarParametrosFiscais();
+}
+
+/** Só administrador (gate na rota) — configuração do sistema, não uma decisão por cotação. */
+export async function servicoAtualizarParametrosFiscais(dados: DadosParametrosFiscais, usuarioId: string): Promise<ParametrosFiscaisFrete> {
+  for (const [campo, valor] of Object.entries(dados)) {
+    if (valor !== null && (valor < 0 || valor > 100)) {
+      throw new ErroValidacao(`O campo "${campo}" deve estar entre 0 e 100 (percentual).`);
+    }
+  }
+  const parametros = await atualizarParametrosFiscais(dados, usuarioId);
+  await registrarAuditoria({ usuarioId, acao: 'PARAMETROS_FISCAIS_ATUALIZADOS', entidade: 'parametros_fiscais_frete', entidadeId: null, valorNovo: parametros });
+  return parametros;
+}
+
+export interface PreviewComposicaoComercial {
+  freteBase: number;
+  valorMinimo: number;
+}
+
+/** Preview somente leitura pra tela do vendedor calcular localmente o valor final a cada mudança de acréscimo, sem expor PIS/COFINS/ICMS. */
+export async function servicoCalcularPreviewComposicao(propostaId: string): Promise<PreviewComposicaoComercial> {
+  const proposta = await buscarPropostaPorId(propostaId);
+  if (proposta === null) throw new ErroValidacao('Proposta não encontrada.');
+  const freteBase = proposta.valorCusto;
+  const parametros = await buscarParametrosFiscais();
+  const valorMinimo = calcularValorMinimo(freteBase, parametros);
+  return { freteBase, valorMinimo };
+}
+
+async function calcularComposicao(propostaId: string, acrescimoPercentual: number) {
+  if (acrescimoPercentual < 0) throw new ErroValidacao('O acréscimo comercial não pode ser negativo.');
+  const proposta = await buscarPropostaPorId(propostaId);
+  if (proposta === null) throw new ErroValidacao('Proposta não encontrada.');
+  const freteBase = proposta.valorCusto;
+  const parametros = await buscarParametrosFiscais();
+  const valorMinimo = calcularValorMinimo(freteBase, parametros);
+  const valorFinalCliente = calcularFreteFinal(freteBase, acrescimoPercentual);
+  return { proposta, freteBase, valorMinimo, valorFinalCliente, parametros };
+}
+
+const MENSAGEM_ABAIXO_DO_MINIMO = 'Valor abaixo do mínimo permitido. É necessária aprovação da gerência para continuar.';
+
+/**
+ * Confirmação normal (seção "Registrar"): se o valor final atinge o mínimo, escolhe o frete
+ * vencedor (delegando a `servicoEscolherFreteVencedor`, Fase 4A.6 inalterada) e persiste o
+ * snapshot da composição. Se ficar abaixo do mínimo, NUNCA prossegue — lança o erro exato
+ * pedido pela tela pra acionar o fluxo de aprovação gerencial (`servicoSolicitarAprovacaoValorMinimo`).
+ */
+export async function servicoRegistrarComposicaoComercial(
+  cotacaoId: string,
+  propostaId: string,
+  acrescimoPercentual: number,
+  usuario: UsuarioPublico,
+  substituicao?: SubstituicaoEscolhaFrete,
+): Promise<ComposicaoComercialFrete> {
+  const { proposta, freteBase, valorMinimo, valorFinalCliente, parametros } = await calcularComposicao(propostaId, acrescimoPercentual);
+  if (valorFinalCliente < valorMinimo) {
+    throw new ErroValidacao(MENSAGEM_ABAIXO_DO_MINIMO);
+  }
+
+  const escolhida = await servicoEscolherFreteVencedor(cotacaoId, propostaId, usuario, substituicao);
+  const composicao = await criarComposicaoComercial({
+    cotacaoId,
+    propostaId: escolhida.id,
+    freteBase,
+    valorMinimo,
+    acrescimoPercentual,
+    valorFinalCliente,
+    // Percentuais nunca nulos aqui — `calcularValorMinimo` já teria lançado erro antes.
+    pisPercentualUtilizado: parametros.pisPercentual as number,
+    cofinsPercentualUtilizado: parametros.cofinsPercentual as number,
+    icmsPercentualUtilizado: parametros.icmsPercentual as number,
+    aprovacaoId: null,
+    usuarioId: usuario.id,
+  });
+  await registrarAuditoria({
+    usuarioId: usuario.id,
+    acao: 'COMPOSICAO_COMERCIAL_REGISTRADA',
+    entidade: 'proposta_frete',
+    entidadeId: proposta.id,
+    valorNovo: composicao,
+  });
+  return composicao;
+}
+
+/**
+ * Solicita aprovação gerencial quando o valor final fica abaixo do mínimo (seção
+ * "Aprovação abaixo do mínimo"). Recalcula tudo no servidor (nunca confia em valores vindos
+ * do cliente) e registra vendedor/valor mínimo/valor proposto/diferença/motivo/data — a
+ * mesma checagem de acesso (dono/gerência/substituição) da Fase 4A.6 se aplica aqui também.
+ */
+export async function servicoSolicitarAprovacaoValorMinimo(
+  cotacaoId: string,
+  propostaId: string,
+  acrescimoPercentual: number,
+  motivo: string,
+  usuario: UsuarioPublico,
+): Promise<AprovacaoValorMinimoFrete> {
+  const cotacao = await servicoBuscarCotacao(cotacaoId);
+  exigirAcessoComercial(usuario, cotacao);
+
+  const motivoTratado = motivo.trim();
+  if (motivoTratado === '') throw new ErroValidacao('Informe o motivo da solicitação de aprovação.');
+
+  const { proposta, valorMinimo, valorFinalCliente } = await calcularComposicao(propostaId, acrescimoPercentual);
+  if (proposta.cotacaoId !== cotacaoId) throw new ErroValidacao('Proposta não encontrada nesta cotação.');
+  if (proposta.statusRevisao !== 'LIBERADA' && proposta.statusRevisao !== 'EM_NEGOCIACAO') {
+    throw new ErroValidacao('Esta proposta ainda não foi liberada pela Logística.');
+  }
+  if (valorFinalCliente >= valorMinimo) {
+    throw new ErroValidacao('O valor final já atinge o valor mínimo — não é necessária aprovação gerencial.');
+  }
+
+  const aprovacao = await criarAprovacaoValorMinimo({
+    cotacaoId,
+    propostaId,
+    vendedorUsuarioId: usuario.id,
+    valorMinimo,
+    valorProposto: valorFinalCliente,
+    diferenca: arredondarDinheiro(valorMinimo - valorFinalCliente),
+    acrescimoPercentual,
+    motivo: motivoTratado,
+  });
+  await registrarAuditoria({
+    usuarioId: usuario.id,
+    acao: 'APROVACAO_VALOR_MINIMO_SOLICITADA',
+    entidade: 'proposta_frete',
+    entidadeId: propostaId,
+    valorNovo: aprovacao,
+  });
+  return aprovacao;
+}
+
+/** Gerência (seção "GERÊNCIA"): lista pendentes por padrão; `status` explícito pra ver histórico. */
+export async function servicoListarAprovacoesValorMinimo(usuario: UsuarioPublico, status?: AprovacaoValorMinimoFrete['status']): Promise<AprovacaoValorMinimoFrete[]> {
+  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesGerencia) {
+    throw new ErroValidacao('Você não tem permissão para ver aprovações de valor mínimo (permissão "fretesGerencia" necessária).');
+  }
+  return listarAprovacoesValorMinimo(status ?? 'PENDENTE');
+}
+
+/**
+ * Gerência aprova: executa a escolha do frete vencedor EM NOME do vendedor solicitante
+ * (gerência sempre tem visão ampliada — `exigirAcessoComercial` deixa passar sem exigir
+ * `fretesSubstituicao`/motivo adicional aqui, já registrado na solicitação original) e
+ * persiste a composição com `aprovacaoId` preenchido — o valor abaixo do mínimo só é
+ * gravado com essa referência de aprovação, nunca silenciosamente.
+ */
+export async function servicoAprovarValorMinimo(aprovacaoId: string, usuario: UsuarioPublico): Promise<ComposicaoComercialFrete> {
+  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesGerencia) {
+    throw new ErroValidacao('Você não tem permissão para aprovar valores abaixo do mínimo (permissão "fretesGerencia" necessária).');
+  }
+  const aprovacao = await decidirAprovacaoValorMinimo(aprovacaoId, 'APROVADA', usuario.id);
+
+  const escolhida = await servicoEscolherFreteVencedor(aprovacao.cotacaoId, aprovacao.propostaId, usuario);
+  const parametros = await buscarParametrosFiscais();
+  const composicao = await criarComposicaoComercial({
+    cotacaoId: aprovacao.cotacaoId,
+    propostaId: escolhida.id,
+    freteBase: escolhida.valorCusto,
+    valorMinimo: aprovacao.valorMinimo,
+    acrescimoPercentual: aprovacao.acrescimoPercentual,
+    valorFinalCliente: aprovacao.valorProposto,
+    pisPercentualUtilizado: parametros.pisPercentual as number,
+    cofinsPercentualUtilizado: parametros.cofinsPercentual as number,
+    icmsPercentualUtilizado: parametros.icmsPercentual as number,
+    aprovacaoId: aprovacao.id,
+    usuarioId: aprovacao.vendedorUsuarioId,
+  });
+  await registrarAuditoria({
+    usuarioId: usuario.id,
+    acao: 'APROVACAO_VALOR_MINIMO_APROVADA',
+    entidade: 'proposta_frete',
+    entidadeId: aprovacao.propostaId,
+    valorNovo: { aprovacao, composicao },
+  });
+  return composicao;
+}
+
+export async function servicoRejeitarValorMinimo(aprovacaoId: string, usuario: UsuarioPublico): Promise<AprovacaoValorMinimoFrete> {
+  if (usuario.papel !== 'administrador' && !usuario.permissoes.fretesGerencia) {
+    throw new ErroValidacao('Você não tem permissão para rejeitar valores abaixo do mínimo (permissão "fretesGerencia" necessária).');
+  }
+  const aprovacao = await decidirAprovacaoValorMinimo(aprovacaoId, 'REJEITADA', usuario.id);
+  await registrarAuditoria({
+    usuarioId: usuario.id,
+    acao: 'APROVACAO_VALOR_MINIMO_REJEITADA',
+    entidade: 'proposta_frete',
+    entidadeId: aprovacao.propostaId,
+    valorNovo: aprovacao,
+  });
+  return aprovacao;
+}
+
+export async function servicoBuscarComposicaoPorProposta(propostaId: string): Promise<ComposicaoComercialFrete | null> {
+  return buscarComposicaoPorProposta(propostaId);
+}
+
+export async function servicoBuscarAprovacaoPorId(id: string): Promise<AprovacaoValorMinimoFrete | null> {
+  return buscarAprovacaoPorId(id);
 }
 
 // --- Comparação (seção 25 — só informativa, nunca decide sozinha) ---------
