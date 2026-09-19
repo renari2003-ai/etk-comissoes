@@ -84,6 +84,7 @@ export function inicializarFretes() {
     let modalidadeExecucaoAtual = 'TRANSPORTADORA';
     let preparacaoOmieAtual = null;
     let numeroPedidoOmieAtual = null;
+    let tipoDocumentoOmieAtual = 'PEDIDO';
     function mostrarSubAba(sub) {
         secaoDashboard.hidden = sub !== 'dashboard';
         secaoCotacoes.hidden = sub !== 'cotacoes';
@@ -1038,6 +1039,25 @@ export function inicializarFretes() {
         void carregarCotacoes();
     });
     // --- Importar do Pedido Omie (Fase 3.2) -----------------------------------
+    /** Fase 4A.5 — "Pedido" (padrão, preserva o fluxo já existente) ou "Orçamento"; mesmo formulário, endpoint diferente. */
+    function tipoDocumentoOmieSelecionado() {
+        const marcado = document.querySelector('input[name="tipoDocumentoOmie"]:checked');
+        return marcado?.value === 'ORCAMENTO' ? 'ORCAMENTO' : 'PEDIDO';
+    }
+    function segmentoRotaOmie(tipo) {
+        return tipo === 'ORCAMENTO' ? 'orcamentos' : 'pedidos';
+    }
+    function rotuloDocumentoOmie(tipo) {
+        return tipo === 'ORCAMENTO' ? 'orçamento' : 'pedido';
+    }
+    Array.from(document.querySelectorAll('input[name="tipoDocumentoOmie"]')).forEach((radio) => {
+        radio.addEventListener('change', () => {
+            const tipo = tipoDocumentoOmieSelecionado();
+            el('fretes-importar-titulo').textContent = `Importar cotação de um ${tipo === 'ORCAMENTO' ? 'Orçamento' : 'Pedido'} Omie`;
+            el('fretes-importar-numero-label').textContent = `Número do ${tipo === 'ORCAMENTO' ? 'Orçamento' : 'Pedido'} Omie`;
+            el('fretes-importar-botao-buscar').textContent = `Buscar ${rotuloDocumentoOmie(tipo)}`;
+        });
+    });
     const formBuscarPedidoOmie = el('fretes-form-buscar-pedido-omie');
     const carregandoImportarOmie = el('fretes-importar-omie-carregando');
     const erroImportarOmie = el('fretes-importar-omie-erro');
@@ -1097,7 +1117,8 @@ export function inicializarFretes() {
     function renderizarPreviewImportacao(preparacao) {
         const infoPedido = el('fretes-importar-pedido-info');
         infoPedido.textContent = '';
-        linhaInfo(infoPedido, 'Número do pedido', preparacao.pedidoOmieNumero);
+        linhaInfo(infoPedido, 'Tipo de documento', preparacao.documentoOmieTipo === 'ORCAMENTO' ? `Orçamento (etapa: ${preparacao.rotuloEtapaOmie})` : `Pedido (etapa: ${preparacao.rotuloEtapaOmie})`);
+        linhaInfo(infoPedido, 'Número do documento', preparacao.pedidoOmieNumero);
         linhaInfo(infoPedido, 'Cliente', textoOuTraco(preparacao.clienteNome));
         linhaInfo(infoPedido, 'Vendedor (código Omie)', preparacao.vendedorOmieId !== null ? String(preparacao.vendedorOmieId) : '—');
         linhaInfo(infoPedido, 'Valor total do pedido', formatarMoeda(preparacao.valorTotalPedido));
@@ -1161,10 +1182,11 @@ export function inicializarFretes() {
             const numero = textoOuNulo(new FormData(formBuscarPedidoOmie).get('numeroPedido'));
             if (numero === null)
                 return;
+            const segmento = segmentoRotaOmie(tipoDocumentoOmieSelecionado());
             carregandoImportarOmie.hidden = false;
             el('fretes-importar-botao-buscar').disabled = true;
             try {
-                const resposta = await fetch(`/api/fretes/omie/pedidos/${encodeURIComponent(numero)}/preparar`);
+                const resposta = await fetch(`/api/fretes/omie/${segmento}/${encodeURIComponent(numero)}/preparar`);
                 if (!resposta.ok) {
                     erroImportarOmie.textContent = await extrairMensagemErro(resposta);
                     erroImportarOmie.hidden = false;
@@ -1175,6 +1197,7 @@ export function inicializarFretes() {
                 const preparacao = (await resposta.json());
                 preparacaoOmieAtual = preparacao;
                 numeroPedidoOmieAtual = numero;
+                tipoDocumentoOmieAtual = tipoDocumentoOmieSelecionado();
                 renderizarPreviewImportacao(preparacao);
             }
             finally {
@@ -1203,7 +1226,7 @@ export function inicializarFretes() {
                     uf: textoOuNulo(dadosDestino.get('uf')),
                 };
             }
-            const resposta = await fetch(`/api/fretes/omie/pedidos/${encodeURIComponent(numeroPedidoOmieAtual)}/confirmar`, {
+            const resposta = await fetch(`/api/fretes/omie/${segmentoRotaOmie(tipoDocumentoOmieAtual)}/${encodeURIComponent(numeroPedidoOmieAtual)}/confirmar`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

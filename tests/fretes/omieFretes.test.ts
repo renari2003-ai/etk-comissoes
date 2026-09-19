@@ -124,11 +124,16 @@ describe('formatarDestinoTexto (compatibilidade com o campo destino já existent
   });
 });
 
-/** Fake mínimo de `ClienteOmie` — só os dois métodos usados por `prepararCotacaoDeOmie`. */
+/**
+ * Fake mínimo de `ClienteOmie` — métodos usados por `prepararCotacaoDeOmie`. Fase 4A.5:
+ * `classificarPedido` sempre classifica como PEDIDO (etapa "10", ver `pedidoBruto()`) —
+ * estes testes são sobre a montagem da preparação em si, não sobre a classificação.
+ */
 function clienteOmieFake(pedido: PedidoOmie, cliente: Cliente | null): ClienteOmie {
   return {
     consultarPedido: async () => pedido,
     consultarCliente: async () => cliente,
+    classificarPedido: async () => ({ tipo: 'PEDIDO', ambiguo: false, rotulo: '10 - Em andamento' }),
   } as unknown as ClienteOmie;
 }
 
@@ -154,7 +159,7 @@ function clienteComEndereco(): Cliente {
 describe('prepararCotacaoDeOmie (Fase 3.2, seção 38 — preparação, nunca persiste)', () => {
   it('monta a preparação combinando pedido + cliente, resolvendo o destino pela prioridade', async () => {
     const cliente = clienteOmieFake(pedidoBruto(), clienteComEndereco());
-    const preparacao = await prepararCotacaoDeOmie(cliente, '999001');
+    const preparacao = await prepararCotacaoDeOmie(cliente, '999001', 'PEDIDO');
 
     expect(preparacao.pedidoOmieId).toBe(999001);
     expect(preparacao.pedidoOmieNumero).toBe('999001');
@@ -177,12 +182,89 @@ describe('prepararCotacaoDeOmie (Fase 3.2, seção 38 — preparação, nunca pe
       enderecoEntrega: null,
     };
     const cliente = clienteOmieFake(pedidoBruto(), clienteSemEndereco);
-    const preparacao = await prepararCotacaoDeOmie(cliente, '999001');
+    const preparacao = await prepararCotacaoDeOmie(cliente, '999001', 'PEDIDO');
     expect(preparacao.destino).toBeNull();
   });
 
   it('rejeita número de pedido vazio sem consultar a Omie', async () => {
     const cliente = clienteOmieFake(pedidoBruto(), clienteComEndereco());
-    await expect(prepararCotacaoDeOmie(cliente, '   ')).rejects.toThrow();
+    await expect(prepararCotacaoDeOmie(cliente, '   ', 'PEDIDO')).rejects.toThrow();
+  });
+});
+
+/**
+ * Fase 4A.5 — Orçamento Omie como origem de cotação. Pedido e Orçamento são o MESMO
+ * documento na Omie (`pedido_venda_produto`), diferenciados só pela `etapa` — por isso os
+ * testes abaixo variam apenas o retorno de `classificarPedido`, nunca o formato do pedido.
+ */
+function clienteOmieFakeComClassificacao(
+  pedido: PedidoOmie,
+  cliente: Cliente | null,
+  classificacao: { tipo: 'PEDIDO' | 'ORCAMENTO'; ambiguo: false; rotulo: string } | { tipo: null; ambiguo: true; motivo: string },
+): ClienteOmie {
+  return {
+    consultarPedido: async () => pedido,
+    consultarCliente: async () => cliente,
+    classificarPedido: async () => classificacao,
+  } as unknown as ClienteOmie;
+}
+
+describe('prepararCotacaoDeOmie — Orçamento Omie (Fase 4A.5)', () => {
+  it('Orçamento válido: monta a preparação com cliente, vendedor, destino e snapshot do tipo/etapa', async () => {
+    const cliente = clienteOmieFakeComClassificacao(pedidoBruto(), clienteComEndereco(), {
+      tipo: 'ORCAMENTO',
+      ambiguo: false,
+      rotulo: 'Orçamento',
+    });
+    const preparacao = await prepararCotacaoDeOmie(cliente, '999001', 'ORCAMENTO');
+
+    expect(preparacao.documentoOmieTipo).toBe('ORCAMENTO');
+    expect(preparacao.rotuloEtapaOmie).toBe('Orçamento');
+    expect(preparacao.pedidoOmieId).toBe(999001);
+    expect(preparacao.pedidoOmieNumero).toBe('999001');
+    expect(preparacao.clienteOmieId).toBe(555);
+    expect(preparacao.clienteNome).toBe('Cliente Teste LTDA');
+    expect(preparacao.vendedorOmieId).toBe(42);
+    expect(preparacao.destino?.origem).toBe('CLIENTE_CADASTRAL');
+    expect(preparacao.destino?.cidade).toBe('Cidade Cadastral');
+  });
+
+  it('Orçamento != Pedido: rejeita importar um Pedido real pela origem Orçamento', async () => {
+    const cliente = clienteOmieFakeComClassificacao(pedidoBruto(), clienteComEndereco(), {
+      tipo: 'PEDIDO',
+      ambiguo: false,
+      rotulo: '10 - Em andamento',
+    });
+    await expect(prepararCotacaoDeOmie(cliente, '999001', 'ORCAMENTO')).rejects.toThrow(/é um Pedido/);
+  });
+
+  it('Orçamento != Pedido: rejeita importar um Orçamento real pela origem Pedido (regra bidirecional)', async () => {
+    const cliente = clienteOmieFakeComClassificacao(pedidoBruto(), clienteComEndereco(), {
+      tipo: 'ORCAMENTO',
+      ambiguo: false,
+      rotulo: 'Orçamento',
+    });
+    await expect(prepararCotacaoDeOmie(cliente, '999001', 'PEDIDO')).rejects.toThrow(/é um Orçamento/);
+  });
+
+  it('etapa ambígua (fora da configuração da conta): rejeita sem assumir Pedido nem Orçamento', async () => {
+    const cliente = clienteOmieFakeComClassificacao(pedidoBruto(), clienteComEndereco(), {
+      tipo: null,
+      ambiguo: true,
+      motivo: 'etapa não encontrada em ListarEtapasFaturamento',
+    });
+    await expect(prepararCotacaoDeOmie(cliente, '999001', 'ORCAMENTO')).rejects.toThrow(/Não foi possível confirmar/);
+    await expect(prepararCotacaoDeOmie(cliente, '999001', 'PEDIDO')).rejects.toThrow(/Não foi possível confirmar/);
+  });
+
+  it('Omie sem escrita: o fake de ClienteOmie usado na preparação de Orçamento não expõe nenhum método de escrita', async () => {
+    const cliente = clienteOmieFakeComClassificacao(pedidoBruto(), clienteComEndereco(), {
+      tipo: 'ORCAMENTO',
+      ambiguo: false,
+      rotulo: 'Orçamento',
+    });
+    await prepararCotacaoDeOmie(cliente, '999001', 'ORCAMENTO');
+    const metodosChamados = Object.keys(cliente as unknown as Record<string, unknown>);
+    expect(metodosChamados).toEqual(['consultarPedido', 'consultarCliente', 'classificarPedido']);
   });
 });

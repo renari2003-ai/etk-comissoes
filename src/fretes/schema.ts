@@ -217,6 +217,12 @@ export function garantirEsquemaFretes(): Promise<void> {
     await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS cif_fob_omie TEXT`);
     await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS transportadora_omie_codigo BIGINT`);
     await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS pedido_omie_numero TEXT`);
+    // Fase 4A.5 (seção 5) — PEDIDO ou ORÇAMENTO (mesmo documento na Omie, distinguido só pela
+    // etapa — ver `omie/classificacaoDocumento.ts`). Nullable: `NULL` em cotações manuais e em
+    // cotações importadas antes desta fase (histórico nunca reescrito).
+    await executarDdlIdempotente(
+      `ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS documento_omie_tipo TEXT CHECK (documento_omie_tipo IN ('PEDIDO','ORCAMENTO'))`,
+    );
     await executarDdlIdempotente(`ALTER TABLE ${cotacoes} ADD COLUMN IF NOT EXISTS cliente_nome_snapshot TEXT`);
 
     // Seção 34: usado para localizar rapidamente se um pedido Omie já tem cotação (seção 25 —

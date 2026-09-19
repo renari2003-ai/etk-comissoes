@@ -126,7 +126,7 @@
     <nav class="abas-tipo-documento" role="tablist" aria-label="Seção de Fretes">
       <button type="button" id="fretes-aba-dashboard" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">Dashboard</button>
       <button type="button" id="fretes-aba-cotacoes" class="aba-tipo-documento" role="tab" aria-selected="false">Cotações</button>
-      <button type="button" id="fretes-aba-importar-omie" class="aba-tipo-documento" role="tab" aria-selected="false">Importar do Pedido Omie</button>
+      <button type="button" id="fretes-aba-importar-omie" class="aba-tipo-documento" role="tab" aria-selected="false">Importar da Omie</button>
       <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
       <button type="button" id="fretes-aba-veiculos" class="aba-tipo-documento" role="tab" aria-selected="false">Veículos</button>
       <button type="button" id="fretes-aba-propostas-recebidas" class="aba-tipo-documento" role="tab" aria-selected="false">Propostas recebidas <span id="fretes-badge-pendentes" class="badge-pendente" hidden>0</span></button>
@@ -249,12 +249,17 @@
 
     <section id="fretes-secao-importar-omie" hidden>
       <div class="area-tabela-cabecalho">
-        <h2 class="titulo-secao">Importar cotação de um Pedido Omie</h2>
+        <h2 class="titulo-secao" id="fretes-importar-titulo">Importar cotação de um Pedido Omie</h2>
       </div>
-      <p class="filtro-data-legenda">A Omie permanece somente leitura — nada aqui altera o pedido, o cliente ou qualquer cadastro na Omie.</p>
+      <p class="filtro-data-legenda">A Omie permanece somente leitura — nada aqui altera o pedido, o orçamento, o cliente ou qualquer cadastro na Omie.</p>
+      <fieldset class="campo-filtro">
+        <legend>Origem do documento</legend>
+        <label><input type="radio" name="tipoDocumentoOmie" value="PEDIDO" checked /> Pedido Omie</label>
+        <label><input type="radio" name="tipoDocumentoOmie" value="ORCAMENTO" /> Orçamento Omie</label>
+      </fieldset>
       <form id="fretes-form-buscar-pedido-omie" class="filtros-relatorio" autocomplete="off">
         <div class="campo-filtro">
-          <label for="fretes-importar-numero-pedido">Número do Pedido Omie</label>
+          <label for="fretes-importar-numero-pedido" id="fretes-importar-numero-label">Número do Pedido Omie</label>
           <input id="fretes-importar-numero-pedido" name="numeroPedido" type="text" required />
         </div>
         <button type="submit" class="botao-secundario botao-aplicar-filtro" id="fretes-importar-botao-buscar">Buscar pedido</button>

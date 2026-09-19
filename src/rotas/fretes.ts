@@ -128,12 +128,17 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
 
   // --- Importação de pedido Omie (Fase 3.2) ---------------------------------
 
+  // Fase 4A.5 (seção 1/6): Pedido e Orçamento são o MESMO documento na Omie — as duas rotas
+  // abaixo chamam exatamente o mesmo serviço, só variando o `tipoDocumento` esperado. A
+  // checagem de tipo acontece em `prepararCotacaoDeOmie` (nunca aqui) — se o número informado
+  // na rota de Pedido resolver para um documento classificado como Orçamento (ou vice-versa),
+  // o serviço rejeita explicitamente (nunca importa com o rótulo errado).
   rotas.get(
     '/api/fretes/omie/pedidos/:numero/preparar',
     ...protegida,
     assincrono(async (req, res) => {
       const numero = validarTextoObrigatorio(req.params.numero, 'numero');
-      res.json(await servicoPrepararCotacaoDeOmie(cliente, numero));
+      res.json(await servicoPrepararCotacaoDeOmie(cliente, numero, 'PEDIDO'));
     }),
   );
 
@@ -152,7 +157,36 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
         observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
       };
-      const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, destinoOverride, dadosComplementares, req.usuario!.id);
+      const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, 'PEDIDO', destinoOverride, dadosComplementares, req.usuario!.id);
+      res.status(201).json(cotacao);
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/omie/orcamentos/:numero/preparar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const numero = validarTextoObrigatorio(req.params.numero, 'numero');
+      res.json(await servicoPrepararCotacaoDeOmie(cliente, numero, 'ORCAMENTO'));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/omie/orcamentos/:numero/confirmar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const numero = validarTextoObrigatorio(req.params.numero, 'numero');
+      const destinoOverride = validarDestinoManualOpcional(req.body?.destinoOverride);
+      const dadosComplementares = {
+        modalidade: validarModalidade(req.body?.modalidade),
+        modalidadeExecucao: validarModalidadeExecucao(req.body?.modalidadeExecucao ?? 'TRANSPORTADORA'),
+        veiculoId: validarUuidOpcional(req.body?.veiculoId, 'veiculoId'),
+        motoristaNome: validarTextoOpcional(req.body?.motoristaNome, 'motoristaNome'),
+        custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
+        valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
+        observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+      };
+      const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, 'ORCAMENTO', destinoOverride, dadosComplementares, req.usuario!.id);
       res.status(201).json(cotacao);
     }),
   );

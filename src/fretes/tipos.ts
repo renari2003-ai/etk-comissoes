@@ -1,5 +1,8 @@
 /** Tipos compartilhados do módulo de Fretes (Fase 1 — cotação → proposta → fechamento). */
 
+import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
+export type { TipoDocumento } from '../omie/classificacaoDocumento.js';
+
 export type StatusCotacao =
   | 'RASCUNHO'
   | 'AGUARDANDO_PROPOSTAS'
@@ -247,6 +250,13 @@ export interface CotacaoFrete {
   pedidoOmieId: number | null;
   /** Número de exibição do pedido (`numero_pedido`), distinto do id estável `pedidoOmieId` (`codigo_pedido`) — só preenchido em cotações importadas da Omie. */
   pedidoOmieNumero: string | null;
+  /**
+   * Fase 4A.5 — PEDIDO ou ORÇAMENTO (mesmo documento na Omie, ver `omieFretes.ts`).
+   * `null` em cotações manuais e em cotações importadas antes desta fase (histórico nunca
+   * reescrito) — nesse caso, o dado real fica em `pedidoOmieId`/`pedidoOmieNumero` sem uma
+   * classificação de tipo registrada.
+   */
+  documentoOmieTipo: TipoDocumento | null;
   vendedorOmieId: number | null;
   /** Snapshot do nome do cliente no momento da importação — nunca recarregado do cadastro atual da Omie. */
   clienteNomeSnapshot: string | null;

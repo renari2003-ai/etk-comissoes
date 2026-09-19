@@ -6,6 +6,7 @@
  */
 
 import type { ClienteOmie } from '../omie/cliente.js';
+import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
@@ -211,8 +212,14 @@ export interface PreparacaoCotacaoComAviso extends PreparacaoCotacaoOmie {
  * PREPARAR (seção 38): consulta a Omie e monta a preview da cotação — nunca persiste nada.
  * A Omie permanece somente leitura; nenhuma escrita acontece aqui nem em `prepararCotacaoDeOmie`.
  */
-export async function servicoPrepararCotacaoDeOmie(cliente: ClienteOmie, numeroPedido: string): Promise<PreparacaoCotacaoComAviso> {
-  const preparacao = await prepararCotacaoDeOmie(cliente, numeroPedido);
+export async function servicoPrepararCotacaoDeOmie(
+  cliente: ClienteOmie,
+  numeroDocumento: string,
+  tipoDocumento: TipoDocumento,
+): Promise<PreparacaoCotacaoComAviso> {
+  const preparacao = await prepararCotacaoDeOmie(cliente, numeroDocumento, tipoDocumento);
+  // Detecção de duplicidade (Fase 3.6, inalterada) — chave por identificador Omie, a mesma
+  // para Pedido e Orçamento (é o mesmo documento na Omie). O aviso continua só informativo.
   const cotacoesExistentes = await buscarCotacoesRelacionadasAoPedidoOmie(preparacao.pedidoOmieId, preparacao.pedidoOmieNumero);
   return { ...preparacao, cotacoesExistentes };
 }
@@ -235,12 +242,13 @@ export interface DadosComplementaresCotacaoOmie {
  */
 export async function servicoCriarCotacaoDeOmie(
   cliente: ClienteOmie,
-  numeroPedido: string,
+  numeroDocumento: string,
+  tipoDocumento: TipoDocumento,
   destinoOverride: DestinoManualInformado | null,
   dadosComplementares: DadosComplementaresCotacaoOmie,
   usuarioId: string,
 ): Promise<CotacaoFrete> {
-  const preparacao = await prepararCotacaoDeOmie(cliente, numeroPedido);
+  const preparacao = await prepararCotacaoDeOmie(cliente, numeroDocumento, tipoDocumento);
 
   let destinoFinal: EnderecoDestino;
   if (destinoOverride !== null) {
@@ -257,6 +265,7 @@ export async function servicoCriarCotacaoDeOmie(
     clienteOmieId: preparacao.clienteOmieId,
     pedidoOmieId: preparacao.pedidoOmieId,
     pedidoOmieNumero: preparacao.pedidoOmieNumero,
+    documentoOmieTipo: preparacao.documentoOmieTipo,
     vendedorOmieId: preparacao.vendedorOmieId,
     clienteNomeSnapshot: preparacao.clienteNome,
     origem: null,

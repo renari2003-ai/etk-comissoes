@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeSequenciaCodigoCotacao, nomeTabelaCotacoes } from './schema.js';
-import type { CotacaoFrete, Modalidade, ModalidadeExecucao, OrigemEndereco, StatusCotacao } from './tipos.js';
+import type { CotacaoFrete, Modalidade, ModalidadeExecucao, OrigemEndereco, StatusCotacao, TipoDocumento } from './tipos.js';
 
 interface LinhaCotacao {
   id: string;
@@ -13,6 +13,7 @@ interface LinhaCotacao {
   cliente_omie_id: string | null;
   pedido_omie_id: string | null;
   pedido_omie_numero: string | null;
+  documento_omie_tipo: TipoDocumento | null;
   vendedor_omie_id: string | null;
   cliente_nome_snapshot: string | null;
   origem: string | null;
@@ -59,6 +60,7 @@ function linhaParaCotacao(l: LinhaCotacao): CotacaoFrete {
     clienteOmieId: numeroOuNull(l.cliente_omie_id),
     pedidoOmieId: numeroOuNull(l.pedido_omie_id),
     pedidoOmieNumero: l.pedido_omie_numero,
+    documentoOmieTipo: l.documento_omie_tipo,
     vendedorOmieId: numeroOuNull(l.vendedor_omie_id),
     clienteNomeSnapshot: l.cliente_nome_snapshot,
     origem: l.origem,
@@ -100,6 +102,8 @@ export interface DadosNovaCotacao {
   pedidoOmieId: number | null;
   /** Fase 3.2 — só preenchido em cotações importadas da Omie (`null` no fluxo manual da Fase 1). */
   pedidoOmieNumero?: string | null;
+  /** Fase 4A.5 — PEDIDO ou ORÇAMENTO (`null` no fluxo manual). */
+  documentoOmieTipo?: TipoDocumento | null;
   vendedorOmieId: number | null;
   clienteNomeSnapshot?: string | null;
   origem: string | null;
@@ -173,7 +177,7 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
   const codigo = await gerarCodigoCotacao();
   const { rows } = await pool.query<LinhaCotacao>(
     `INSERT INTO ${nomeTabelaCotacoes()}
-       (id, codigo, cliente_omie_id, pedido_omie_id, pedido_omie_numero, vendedor_omie_id, cliente_nome_snapshot,
+       (id, codigo, cliente_omie_id, pedido_omie_id, pedido_omie_numero, documento_omie_tipo, vendedor_omie_id, cliente_nome_snapshot,
         origem, cep_origem, destino, cep_destino,
         origem_destino, logradouro_destino, numero_destino, complemento_destino, bairro_destino, cidade_destino,
         uf_destino, codigo_municipio_destino,
@@ -181,7 +185,7 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
         valor_mercadoria, modalidade, modalidade_execucao, veiculo_id, motorista_nome, custo_manual,
         status, observacoes, criado_por)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-             $24, $25, $26, $27, $28, $29, $30, $31, $32, 'RASCUNHO', $33, $34)
+             $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, 'RASCUNHO', $34, $35)
      RETURNING *`,
     [
       id,
@@ -189,6 +193,7 @@ export async function criarCotacao(dados: DadosNovaCotacao, criadoPor: string): 
       dados.clienteOmieId,
       dados.pedidoOmieId,
       dados.pedidoOmieNumero ?? null,
+      dados.documentoOmieTipo ?? null,
       dados.vendedorOmieId,
       dados.clienteNomeSnapshot ?? null,
       dados.origem,

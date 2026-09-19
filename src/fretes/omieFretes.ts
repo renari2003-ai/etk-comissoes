@@ -9,6 +9,7 @@
 
 import type { ClienteOmie } from '../omie/cliente.js';
 import type { PedidoOmie } from '../calculo/tipos.js';
+import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
 import { ErroValidacao } from '../validacao.js';
 import { resolverDestinoFrete, type CandidatoEndereco } from './resolucaoDestino.js';
 import type { EnderecoDestino } from './tipos.js';
@@ -102,6 +103,17 @@ export interface ItemPreparacao {
 export interface PreparacaoCotacaoOmie {
   pedidoOmieId: number;
   pedidoOmieNumero: string;
+  /**
+   * Fase 4A.5 (seção 5) — PEDIDO ou ORÇAMENTO são o MESMO documento na Omie
+   * (`pedido_venda_produto`), diferenciados só pela `etapa` (ver
+   * `omie/classificacaoDocumento.ts`). `pedidoOmieId`/`pedidoOmieNumero` continuam com os
+   * mesmos nomes por compatibilidade com cotações já existentes (Fase 3.2) e com a
+   * detecção de duplicidade (Fase 3.6, inalterada) — `documentoOmieTipo` é o campo que
+   * efetivamente distingue os dois para exibição/auditoria/regra de negócio.
+   */
+  documentoOmieTipo: TipoDocumento;
+  /** Rótulo real da etapa configurada na conta Omie (ex.: "Orçamento", "10 - Em andamento") — só informativo/contexto. */
+  rotuloEtapaOmie: string;
   clienteOmieId: number | null;
   clienteNome: string | null;
   vendedorOmieId: number | null;
@@ -116,12 +128,32 @@ export interface PreparacaoCotacaoOmie {
  * monta o objeto de PREPARAÇÃO — nunca persiste nada (seção 38: preparar ≠ confirmar).
  * Reaproveita 100% a infraestrutura existente (`ClienteOmie`: mesmo cliente HTTP, cache,
  * limitador, tratamento de erro) — nenhuma chamada Omie nova é criada fora dela.
+ *
+ * Fase 4A.5 (seção 6) — `tipoEsperado` garante que um Orçamento nunca seja confirmado como
+ * Pedido nem vice-versa: a Omie modela os dois como o mesmo documento (`pedido_venda_produto`),
+ * então sem essa checagem explícita nada impediria digitar um número de Pedido na tela de
+ * Orçamento (ou o contrário) e importar o documento errado com o rótulo errado.
  */
-export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroPedido: string): Promise<PreparacaoCotacaoOmie> {
-  const numero = numeroPedido.trim();
-  if (numero === '') throw new ErroValidacao('Informe o número do pedido Omie.');
+export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroDocumento: string, tipoEsperado: TipoDocumento): Promise<PreparacaoCotacaoOmie> {
+  const numero = numeroDocumento.trim();
+  if (numero === '') {
+    throw new ErroValidacao(`Informe o número do ${tipoEsperado === 'ORCAMENTO' ? 'orçamento' : 'pedido'} Omie.`);
+  }
 
   const pedido = await cliente.consultarPedido({ numeroPedido: numero });
+
+  const classificacao = await cliente.classificarPedido(pedido.cabecalho.etapa);
+  if (classificacao.ambiguo) {
+    throw new ErroValidacao(
+      `Não foi possível confirmar se o documento ${numero} é um Pedido ou um Orçamento (${classificacao.motivo}).`,
+    );
+  }
+  if (classificacao.tipo !== tipoEsperado) {
+    const rotulo = (tipo: TipoDocumento) => (tipo === 'ORCAMENTO' ? 'Orçamento' : 'Pedido');
+    throw new ErroValidacao(
+      `O documento ${numero} é um ${rotulo(classificacao.tipo)} (etapa "${classificacao.rotulo}"), não um ${rotulo(tipoEsperado)}. Use a origem correta para importar.`,
+    );
+  }
 
   const codigoCliente = pedido.cabecalho.codigo_cliente || null;
   const registroCliente = codigoCliente !== null ? await cliente.consultarCliente(codigoCliente) : null;
@@ -147,6 +179,8 @@ export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroPedido: 
   return {
     pedidoOmieId: pedido.cabecalho.codigo_pedido,
     pedidoOmieNumero: pedido.cabecalho.numero_pedido,
+    documentoOmieTipo: classificacao.tipo,
+    rotuloEtapaOmie: classificacao.rotulo,
     clienteOmieId: codigoCliente,
     clienteNome: registroCliente !== null ? textoOuNull(registroCliente.razaoSocial) ?? textoOuNull(registroCliente.nomeFantasia) : null,
     vendedorOmieId: extrairCodigoVendedor(pedido),

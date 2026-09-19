@@ -596,7 +596,11 @@ function pedidoOmieDeTeste(extra: Record<string, unknown> = {}): PedidoOmie {
 }
 
 function clienteOmieFakeComEndereco(pedido: PedidoOmie, cliente: Cliente | null): ClienteOmie {
-  return { consultarPedido: async () => pedido, consultarCliente: async () => cliente } as unknown as ClienteOmie;
+  return {
+    consultarPedido: async () => pedido,
+    consultarCliente: async () => cliente,
+    classificarPedido: async () => ({ tipo: 'PEDIDO', ambiguo: false, rotulo: '10 - Em andamento' }),
+  } as unknown as ClienteOmie;
 }
 
 const CLIENTE_TESTE_COM_ENTREGA: Cliente = {
@@ -620,7 +624,7 @@ describe('servicoPrepararCotacaoDeOmie (Fase 3.2 — preparação, nunca persist
   it('retorna a preparação com o destino resolvido e sem cotações existentes', async () => {
     const servico = await importarServico();
     const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
-    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001', 'PEDIDO');
     expect(preparacao.destino?.origem).toBe('CLIENTE_ENTREGA');
     expect(preparacao.cotacoesExistentes).toEqual([]);
   });
@@ -631,11 +635,12 @@ describe('servicoPrepararCotacaoDeOmie (Fase 3.2 — preparação, nunca persist
     await servico.servicoCriarCotacaoDeOmie(
       cliente,
       '888001',
+      'PEDIDO',
       null,
       { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
       USUARIO_TESTE,
     );
-    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001', 'PEDIDO');
     expect(preparacao.cotacoesExistentes).toHaveLength(1);
   });
 });
@@ -647,6 +652,7 @@ describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
     const cotacao = await servico.servicoCriarCotacaoDeOmie(
       cliente,
       '888001',
+      'PEDIDO',
       null,
       { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
       USUARIO_TESTE,
@@ -669,6 +675,7 @@ describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
     const cotacao = await servico.servicoCriarCotacaoDeOmie(
       cliente,
       '888001',
+      'PEDIDO',
       { cep: '09999-000', logradouro: 'Rua Manual', numero: '9', complemento: null, bairro: 'Bairro Manual', cidade: 'Cidade Manual', uf: 'MG' },
       { modalidade: 'FOB', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
       USUARIO_TESTE,
@@ -692,6 +699,7 @@ describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
       servico.servicoCriarCotacaoDeOmie(
         cliente,
         '888001',
+        'PEDIDO',
         null,
         { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
         USUARIO_TESTE,
@@ -711,6 +719,7 @@ describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
     const cotacao = await servico.servicoCriarCotacaoDeOmie(
       cliente,
       '888001',
+      'PEDIDO',
       null,
       { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
       USUARIO_TESTE,
@@ -879,11 +888,12 @@ describe('buscarCotacoesRelacionadasAoPedidoOmie (Fase 3.6 — correção de dup
     const primeira = await servico.servicoCriarCotacaoDeOmie(
       cliente,
       '888001',
+      'PEDIDO',
       null,
       { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
       USUARIO_TESTE,
     );
-    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    const preparacao = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001', 'PEDIDO');
     expect(preparacao.cotacoesExistentes).toHaveLength(1);
     expect(preparacao.cotacoesExistentes[0]?.id).toBe(primeira.id);
 
@@ -891,13 +901,14 @@ describe('buscarCotacoesRelacionadasAoPedidoOmie (Fase 3.6 — correção de dup
     const segunda = await servico.servicoCriarCotacaoDeOmie(
       cliente,
       '888001',
+      'PEDIDO',
       null,
       { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: null, observacoes: null },
       USUARIO_TESTE,
     );
     expect(segunda.id).not.toBe(primeira.id);
 
-    const preparacaoFinal = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001');
+    const preparacaoFinal = await servico.servicoPrepararCotacaoDeOmie(cliente, '888001', 'PEDIDO');
     expect(preparacaoFinal.cotacoesExistentes).toHaveLength(2);
   });
 });
