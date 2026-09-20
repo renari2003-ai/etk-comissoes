@@ -148,6 +148,69 @@ interface AprovacaoValorMinimoFrete {
   criadoEm: string;
 }
 
+/** Fase 4A.8 — uma linha do histórico (uma proposta + sua cotação/transportadora/composição mais recente). */
+interface LinhaHistoricoFrete {
+  cotacaoId: string;
+  codigo: string;
+  clienteOmieId: number | null;
+  clienteNomeSnapshot: string | null;
+  pedidoOmieNumero: string | null;
+  documentoOmieTipo: 'PEDIDO' | 'ORCAMENTO' | null;
+  vendedorOmieId: number | null;
+  origem: string | null;
+  destino: string | null;
+  modalidade: Modalidade;
+  modalidadeExecucao: ModalidadeExecucao;
+  cotacaoStatus: StatusCotacao;
+  peso: number | null;
+  volumes: number | null;
+  cotacaoCriadoEm: string;
+  propostaId: string;
+  transportadoraId: string;
+  transportadoraNome: string;
+  freteBase: number;
+  prazoDias: number | null;
+  statusRevisao: StatusRevisaoProposta;
+  propostaCriadoEm: string;
+  propostaAtualizadoEm: string;
+  valorMinimo: number | null;
+  composicaoCriadoEm: string | null;
+  composicaoUsuarioId: string | null;
+}
+
+interface ClienteHistoricoResultado {
+  clienteOmieId: number;
+  clienteNomeSnapshot: string | null;
+}
+
+interface ResumoClienteFrete {
+  clienteOmieId: number;
+  clienteNomeSnapshot: string | null;
+  totalFretes: number;
+  totalEscolhidos: number;
+  mediaFreteBase: number | null;
+  mediaValorMinimo: number | null;
+  prazoMedioDias: number | null;
+  transportadoraMaisUtilizada: string | null;
+  rotasMaisFrequentes: { origem: string | null; destino: string | null; quantidade: number }[];
+  ultimaCotacaoEm: string | null;
+  ultimoFreteEscolhidoEm: string | null;
+}
+
+interface DetalheHistoricoFreteComAuditoria extends LinhaHistoricoFrete {
+  canal: CanalOrigemProposta | null;
+  origemDestino: {
+    logradouroDestino: string | null;
+    numeroDestino: string | null;
+    bairroDestino: string | null;
+    cidadeDestino: string | null;
+    ufDestino: string | null;
+  };
+  usuarioResponsavelId: string | null;
+  dataEscolha: string | null;
+  auditoria: Array<{ acao: string; usuarioId: string | null; criadoEm: string; origem: string }>;
+}
+
 /** Fase 4A.1 (seção 12) — uma solicitação enviada a UMA transportadora para UMA cotação. */
 interface SolicitacaoCotacao {
   id: string;
@@ -287,6 +350,7 @@ export function inicializarFretes(): { ativar: () => void } {
   const abaCentralLogistica = el<HTMLButtonElement>('fretes-aba-central-logistica');
   const abaCentralVendedor = el<HTMLButtonElement>('fretes-aba-central-vendedor');
   const abaAprovacoesValorMinimo = el<HTMLButtonElement>('fretes-aba-aprovacoes-valor-minimo');
+  const abaHistoricoCliente = el<HTMLButtonElement>('fretes-aba-historico-cliente');
   const secaoDashboard = el<HTMLElement>('fretes-secao-dashboard');
   const secaoCotacoes = el<HTMLElement>('fretes-secao-cotacoes');
   const secaoImportarOmie = el<HTMLElement>('fretes-secao-importar-omie');
@@ -297,6 +361,7 @@ export function inicializarFretes(): { ativar: () => void } {
   const secaoCentralLogistica = el<HTMLElement>('fretes-secao-central-logistica');
   const secaoCentralVendedor = el<HTMLElement>('fretes-secao-central-vendedor');
   const secaoAprovacoesValorMinimo = el<HTMLElement>('fretes-secao-aprovacoes-valor-minimo');
+  const secaoHistoricoCliente = el<HTMLElement>('fretes-secao-historico-cliente');
   const secaoParametrosFiscais = el<HTMLElement>('fretes-secao-parametros-fiscais');
   const badgePendentes = el<HTMLElement>('fretes-badge-pendentes');
 
@@ -308,6 +373,11 @@ export function inicializarFretes(): { ativar: () => void } {
   let preparacaoOmieAtual: PreparacaoCotacaoOmie | null = null;
   let numeroPedidoOmieAtual: string | null = null;
   let tipoDocumentoOmieAtual: TipoDocumentoOmie = 'PEDIDO';
+  // Fase 4A.8 — histórico por cliente.
+  let clienteHistoricoSelecionado: ClienteHistoricoResultado | null = null;
+  let paginaHistoricoAtual = 1;
+  let totalPaginasHistorico = 1;
+  const TAMANHO_PAGINA_HISTORICO = 25;
 
   type SubAba =
     | 'dashboard'
@@ -319,7 +389,8 @@ export function inicializarFretes(): { ativar: () => void } {
     | 'propostas-recebidas'
     | 'central-logistica'
     | 'central-vendedor'
-    | 'aprovacoes-valor-minimo';
+    | 'aprovacoes-valor-minimo'
+    | 'historico-cliente';
   function mostrarSubAba(sub: SubAba): void {
     secaoDashboard.hidden = sub !== 'dashboard';
     secaoCotacoes.hidden = sub !== 'cotacoes';
@@ -331,6 +402,7 @@ export function inicializarFretes(): { ativar: () => void } {
     secaoCentralLogistica.hidden = sub !== 'central-logistica';
     secaoCentralVendedor.hidden = sub !== 'central-vendedor';
     secaoAprovacoesValorMinimo.hidden = sub !== 'aprovacoes-valor-minimo';
+    secaoHistoricoCliente.hidden = sub !== 'historico-cliente';
     abaDashboard.classList.toggle('aba-ativa', sub === 'dashboard');
     abaCotacoes.classList.toggle('aba-ativa', sub === 'cotacoes' || sub === 'detalhe');
     abaImportarOmie.classList.toggle('aba-ativa', sub === 'importar-omie');
@@ -340,6 +412,7 @@ export function inicializarFretes(): { ativar: () => void } {
     abaCentralLogistica.classList.toggle('aba-ativa', sub === 'central-logistica');
     abaCentralVendedor.classList.toggle('aba-ativa', sub === 'central-vendedor');
     abaAprovacoesValorMinimo.classList.toggle('aba-ativa', sub === 'aprovacoes-valor-minimo');
+    abaHistoricoCliente.classList.toggle('aba-ativa', sub === 'historico-cliente');
   }
 
   // --- Fase 4A.6 — Central da Logística + Central do Vendedor ---------------
@@ -353,6 +426,12 @@ export function inicializarFretes(): { ativar: () => void } {
     // Fase 4A.7 — aprovações e parâmetros fiscais.
     abaAprovacoesValorMinimo.hidden = !(admin || usuarioLogado?.permissoes.fretesGerencia);
     secaoParametrosFiscais.hidden = !admin;
+    // Fase 4A.8 — histórico por cliente: mesma "porta" de acesso do backend (fretesComercial
+    // OU fretesGerencia); o filtro de vendedor só aparece pra quem tem visão ampliada.
+    const visaoAmpliadaHistorico = admin || usuarioLogado?.permissoes.fretesGerencia === true;
+    abaHistoricoCliente.hidden = !(visaoAmpliadaHistorico || usuarioLogado?.permissoes.fretesComercial);
+    const campoFiltroVendedor = document.getElementById('fretes-historico-filtro-vendedor-campo');
+    if (campoFiltroVendedor !== null) campoFiltroVendedor.hidden = !visaoAmpliadaHistorico;
   }
 
   function formatarPrazo(prazoDias: number | null): string {
@@ -648,6 +727,279 @@ export function inicializarFretes(): { ativar: () => void } {
       corpo.appendChild(tr);
     }
   }
+
+  // --- Fase 4A.8 — Histórico de fretes por cliente (só leitura) -------------
+
+  const ROTULOS_TIPO_DOCUMENTO: Record<'PEDIDO' | 'ORCAMENTO' | 'MANUAL', string> = {
+    PEDIDO: 'Pedido',
+    ORCAMENTO: 'Orçamento',
+    MANUAL: 'Manual',
+  };
+
+  function tipoDocumentoRotulo(tipo: 'PEDIDO' | 'ORCAMENTO' | null): string {
+    return ROTULOS_TIPO_DOCUMENTO[tipo ?? 'MANUAL'];
+  }
+
+  /** "Resultado" (seção 4): deriva de `statusRevisao` (Fase 4A.6) + `cotacaoStatus` — nunca inventa um status novo. */
+  function calcularResultado(linha: { cotacaoStatus: StatusCotacao; statusRevisao: StatusRevisaoProposta }): string {
+    if (linha.cotacaoStatus === 'CANCELADA') return 'Cancelado';
+    if (linha.statusRevisao === 'ESCOLHIDA') return 'Escolhido';
+    if (linha.statusRevisao === 'DESCARTADA') return 'Descartado';
+    if (linha.statusRevisao === 'EM_NEGOCIACAO') return 'Em negociação';
+    return 'Não escolhido';
+  }
+
+  function formatarDataHora(iso: string | null): string {
+    return iso === null ? '—' : new Date(iso).toLocaleString('pt-BR');
+  }
+  function formatarDataCurta(iso: string): string {
+    return new Date(iso).toLocaleDateString('pt-BR');
+  }
+
+  function preencherSelectTransportadorasHistorico(): void {
+    const select = document.getElementById('fretes-historico-filtro-transportadora') as HTMLSelectElement | null;
+    if (select === null) return;
+    const valorAtual = select.value;
+    select.textContent = '';
+    const optTodas = document.createElement('option');
+    optTodas.value = '';
+    optTodas.textContent = 'Todas';
+    select.appendChild(optTodas);
+    for (const t of transportadorasCache) {
+      const option = document.createElement('option');
+      option.value = t.id;
+      option.textContent = t.nomeRazaoSocial;
+      select.appendChild(option);
+    }
+    select.value = valorAtual;
+  }
+
+  async function buscarClientesHistoricoTela(termo: string): Promise<void> {
+    const lista = el<HTMLElement>('fretes-historico-resultados-busca');
+    lista.textContent = '';
+    if (termo.trim() === '') {
+      lista.hidden = true;
+      return;
+    }
+    const resposta = await fetch(`/api/fretes/historico/clientes?termo=${encodeURIComponent(termo.trim())}`);
+    if (!resposta.ok) {
+      lista.hidden = true;
+      window.alert(await extrairMensagemErro(resposta));
+      return;
+    }
+    const dados = (await resposta.json()) as { clientes: ClienteHistoricoResultado[] };
+    lista.hidden = dados.clientes.length === 0;
+    for (const cliente of dados.clientes) {
+      const li = document.createElement('li');
+      const botao = document.createElement('button');
+      botao.type = 'button';
+      botao.className = 'botao-secundario';
+      botao.textContent = cliente.clienteNomeSnapshot !== null ? `${cliente.clienteNomeSnapshot} (Omie #${cliente.clienteOmieId})` : `Omie #${cliente.clienteOmieId}`;
+      botao.addEventListener('click', () => {
+        void selecionarClienteHistorico(cliente);
+      });
+      li.appendChild(botao);
+      lista.appendChild(li);
+    }
+  }
+
+  async function selecionarClienteHistorico(cliente: ClienteHistoricoResultado): Promise<void> {
+    clienteHistoricoSelecionado = cliente;
+    paginaHistoricoAtual = 1;
+    el<HTMLElement>('fretes-historico-resultados-busca').hidden = true;
+    el<HTMLElement>('fretes-historico-cliente-selecionado').hidden = false;
+    el<HTMLElement>('fretes-historico-cliente-nome').textContent =
+      cliente.clienteNomeSnapshot !== null ? `${cliente.clienteNomeSnapshot} — Omie #${cliente.clienteOmieId}` : `Omie #${cliente.clienteOmieId}`;
+    el<HTMLElement>('fretes-historico-detalhe').hidden = true;
+    preencherSelectTransportadorasHistorico();
+    await Promise.all([carregarResumoHistorico(), carregarTabelaHistorico()]);
+  }
+
+  function celulaMetrica(rotulo: string, valor: string): HTMLElement {
+    const div = document.createElement('div');
+    div.className = 'metrica';
+    const spanRotulo = document.createElement('span');
+    spanRotulo.className = 'metrica-rotulo';
+    spanRotulo.textContent = rotulo;
+    const spanValor = document.createElement('span');
+    spanValor.className = 'metrica-valor';
+    spanValor.textContent = valor;
+    div.appendChild(spanRotulo);
+    div.appendChild(spanValor);
+    return div;
+  }
+
+  const SEM_DADOS = 'Sem dados';
+
+  async function carregarResumoHistorico(): Promise<void> {
+    if (clienteHistoricoSelecionado === null) return;
+    const container = el<HTMLElement>('fretes-historico-cards');
+    container.textContent = '';
+    const resposta = await fetch(`/api/fretes/historico/resumo?clienteOmieId=${clienteHistoricoSelecionado.clienteOmieId}`);
+    if (!resposta.ok) {
+      container.textContent = await extrairMensagemErro(resposta);
+      return;
+    }
+    const resumo = (await resposta.json()) as ResumoClienteFrete;
+    const cards: Array<{ rotulo: string; valor: string }> = [
+      { rotulo: 'Fretes registrados', valor: String(resumo.totalFretes) },
+      { rotulo: 'Fretes escolhidos/fechados', valor: String(resumo.totalEscolhidos) },
+      { rotulo: 'Valor médio do frete base', valor: resumo.mediaFreteBase !== null ? formatarMoeda(resumo.mediaFreteBase) : SEM_DADOS },
+      { rotulo: 'Valor médio do valor mínimo', valor: resumo.mediaValorMinimo !== null ? formatarMoeda(resumo.mediaValorMinimo) : SEM_DADOS },
+      { rotulo: 'Prazo médio', valor: resumo.prazoMedioDias !== null ? `${resumo.prazoMedioDias.toFixed(1)} dia(s)` : SEM_DADOS },
+      { rotulo: 'Transportadora mais utilizada', valor: resumo.transportadoraMaisUtilizada ?? SEM_DADOS },
+      { rotulo: 'Última cotação', valor: resumo.ultimaCotacaoEm !== null ? formatarDataCurta(resumo.ultimaCotacaoEm) : SEM_DADOS },
+      { rotulo: 'Último frete escolhido', valor: resumo.ultimoFreteEscolhidoEm !== null ? formatarDataCurta(resumo.ultimoFreteEscolhidoEm) : SEM_DADOS },
+    ];
+    for (const card of cards) container.appendChild(celulaMetrica(card.rotulo, card.valor));
+  }
+
+  async function carregarTabelaHistorico(): Promise<void> {
+    if (clienteHistoricoSelecionado === null) return;
+    const corpo = el<HTMLTableSectionElement>('fretes-tabela-historico-corpo');
+    const vazio = el<HTMLElement>('fretes-historico-vazio');
+    corpo.textContent = '';
+
+    const formFiltros = el<HTMLFormElement>('fretes-form-filtros-historico');
+    const dadosFiltros = new FormData(formFiltros);
+    const params = new URLSearchParams();
+    params.set('clienteOmieId', String(clienteHistoricoSelecionado.clienteOmieId));
+    params.set('pagina', String(paginaHistoricoAtual));
+    params.set('tamanhoPagina', String(TAMANHO_PAGINA_HISTORICO));
+    const dataInicio = textoOuNulo(dadosFiltros.get('dataInicio'));
+    const dataFim = textoOuNulo(dadosFiltros.get('dataFim'));
+    const transportadoraId = textoOuNulo(dadosFiltros.get('transportadoraId'));
+    const tipo = textoOuNulo(dadosFiltros.get('tipo'));
+    const status = textoOuNulo(dadosFiltros.get('status'));
+    const vendedorOmieId = textoOuNulo(dadosFiltros.get('vendedorOmieId'));
+    if (dataInicio !== null) params.set('dataInicio', dataInicio);
+    if (dataFim !== null) params.set('dataFim', dataFim);
+    if (transportadoraId !== null) params.set('transportadoraId', transportadoraId);
+    if (tipo !== null) params.set('tipo', tipo);
+    if (status !== null) params.set('status', status);
+    if (vendedorOmieId !== null) params.set('vendedorOmieId', vendedorOmieId);
+
+    const resposta = await fetch(`/api/fretes/historico?${params.toString()}`);
+    if (!resposta.ok) {
+      vazio.textContent = await extrairMensagemErro(resposta);
+      vazio.hidden = false;
+      return;
+    }
+    const dados = (await resposta.json()) as { linhas: LinhaHistoricoFrete[]; total: number; pagina: number; tamanhoPagina: number };
+    vazio.hidden = dados.linhas.length > 0;
+    totalPaginasHistorico = Math.max(1, Math.ceil(dados.total / dados.tamanhoPagina));
+    el<HTMLElement>('fretes-historico-pagina-info').textContent = `Página ${dados.pagina} de ${totalPaginasHistorico} (${dados.total} registro(s))`;
+    (el<HTMLButtonElement>('fretes-historico-pagina-anterior')).disabled = dados.pagina <= 1;
+    (el<HTMLButtonElement>('fretes-historico-pagina-proxima')).disabled = dados.pagina >= totalPaginasHistorico;
+
+    const celula = (texto: string) => {
+      const td = document.createElement('td');
+      td.textContent = texto;
+      return td;
+    };
+    for (const linha of dados.linhas) {
+      const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.appendChild(celula(formatarDataCurta(linha.propostaCriadoEm)));
+      tr.appendChild(celula(linha.pedidoOmieNumero ?? '—'));
+      tr.appendChild(celula(tipoDocumentoRotulo(linha.documentoOmieTipo)));
+      tr.appendChild(celula(linha.vendedorOmieId !== null ? String(linha.vendedorOmieId) : '—'));
+      tr.appendChild(celula(linha.origem ?? '—'));
+      tr.appendChild(celula(linha.destino ?? '—'));
+      tr.appendChild(celula(linha.transportadoraNome));
+      tr.appendChild(celula(linha.modalidadeExecucao === 'TRANSPORTADORA' ? linha.modalidade : linha.modalidadeExecucao));
+      tr.appendChild(celula(formatarMoeda(linha.freteBase)));
+      tr.appendChild(celula(linha.valorMinimo !== null ? formatarMoeda(linha.valorMinimo) : SEM_DADOS));
+      tr.appendChild(celula(formatarPrazo(linha.prazoDias)));
+      tr.appendChild(celula(calcularResultado(linha)));
+      tr.addEventListener('click', () => {
+        void abrirDetalheHistorico(linha.propostaId);
+      });
+      corpo.appendChild(tr);
+    }
+  }
+
+  async function abrirDetalheHistorico(propostaId: string): Promise<void> {
+    const resposta = await fetch(`/api/fretes/historico/${propostaId}`);
+    if (!resposta.ok) {
+      window.alert(await extrairMensagemErro(resposta));
+      return;
+    }
+    const detalhe = (await resposta.json()) as DetalheHistoricoFreteComAuditoria;
+    const container = el<HTMLElement>('fretes-historico-detalhe-conteudo');
+    container.textContent = '';
+    const linhaInfoDetalhe = (rotulo: string, valor: string) => {
+      const p = document.createElement('p');
+      const forte = document.createElement('strong');
+      forte.textContent = `${rotulo}: `;
+      p.appendChild(forte);
+      p.append(valor);
+      container.appendChild(p);
+    };
+    linhaInfoDetalhe('Cotação', detalhe.codigo);
+    linhaInfoDetalhe('Documento', `${tipoDocumentoRotulo(detalhe.documentoOmieTipo)}${detalhe.pedidoOmieNumero !== null ? ` — ${detalhe.pedidoOmieNumero}` : ''}`);
+    linhaInfoDetalhe('Cliente', detalhe.clienteNomeSnapshot ?? '—');
+    linhaInfoDetalhe('Vendedor (Omie)', detalhe.vendedorOmieId !== null ? String(detalhe.vendedorOmieId) : '—');
+    linhaInfoDetalhe('Origem', detalhe.origem ?? '—');
+    linhaInfoDetalhe(
+      'Destino',
+      [detalhe.destino, detalhe.origemDestino.cidadeDestino, detalhe.origemDestino.ufDestino].filter((v) => v !== null && v !== '').join(' — ') || '—',
+    );
+    linhaInfoDetalhe('Peso', detalhe.peso !== null ? `${detalhe.peso} kg` : '—');
+    linhaInfoDetalhe('Volumes', detalhe.volumes !== null ? String(detalhe.volumes) : '—');
+    linhaInfoDetalhe('Transportadora', detalhe.transportadoraNome);
+    linhaInfoDetalhe('Modalidade', `${detalhe.modalidade} / ${detalhe.modalidadeExecucao}`);
+    linhaInfoDetalhe('Frete base', formatarMoeda(detalhe.freteBase));
+    linhaInfoDetalhe('Valor mínimo', detalhe.valorMinimo !== null ? formatarMoeda(detalhe.valorMinimo) : SEM_DADOS);
+    linhaInfoDetalhe('Prazo', formatarPrazo(detalhe.prazoDias));
+    linhaInfoDetalhe('Canal da cotação', detalhe.canal !== null ? ROTULOS_CANAL[detalhe.canal] : '—');
+    linhaInfoDetalhe('Data da proposta', formatarDataHora(detalhe.propostaCriadoEm));
+    linhaInfoDetalhe('Data da escolha', formatarDataHora(detalhe.dataEscolha));
+    linhaInfoDetalhe('Usuário responsável', detalhe.usuarioResponsavelId ?? '—');
+    linhaInfoDetalhe('Status', ROTULOS_STATUS_REVISAO[detalhe.statusRevisao]);
+    linhaInfoDetalhe('Resultado', calcularResultado(detalhe));
+
+    if (detalhe.auditoria.length > 0) {
+      const tituloAuditoria = document.createElement('h4');
+      tituloAuditoria.textContent = 'Auditoria relacionada';
+      container.appendChild(tituloAuditoria);
+      const listaAuditoria = document.createElement('ul');
+      for (const registro of detalhe.auditoria) {
+        const li = document.createElement('li');
+        li.textContent = `${formatarDataHora(registro.criadoEm)} — ${registro.acao} (${registro.origem})`;
+        listaAuditoria.appendChild(li);
+      }
+      container.appendChild(listaAuditoria);
+    }
+
+    el<HTMLElement>('fretes-historico-detalhe').hidden = false;
+  }
+
+  el<HTMLFormElement>('fretes-form-buscar-cliente-historico').addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    const termo = textoOuNulo(new FormData(evento.target as HTMLFormElement).get('termo')) ?? '';
+    void buscarClientesHistoricoTela(termo);
+  });
+
+  el<HTMLFormElement>('fretes-form-filtros-historico').addEventListener('submit', (evento) => {
+    evento.preventDefault();
+    paginaHistoricoAtual = 1;
+    void carregarTabelaHistorico();
+  });
+
+  el<HTMLButtonElement>('fretes-historico-pagina-anterior').addEventListener('click', () => {
+    if (paginaHistoricoAtual <= 1) return;
+    paginaHistoricoAtual -= 1;
+    void carregarTabelaHistorico();
+  });
+  el<HTMLButtonElement>('fretes-historico-pagina-proxima').addEventListener('click', () => {
+    if (paginaHistoricoAtual >= totalPaginasHistorico) return;
+    paginaHistoricoAtual += 1;
+    void carregarTabelaHistorico();
+  });
+  el<HTMLButtonElement>('fretes-historico-detalhe-fechar').addEventListener('click', () => {
+    el<HTMLElement>('fretes-historico-detalhe').hidden = true;
+  });
 
   // --- Dashboard -----------------------------------------------------------
 
@@ -1957,6 +2309,9 @@ export function inicializarFretes(): { ativar: () => void } {
   abaAprovacoesValorMinimo.addEventListener('click', () => {
     mostrarSubAba('aprovacoes-valor-minimo');
     void carregarAprovacoesValorMinimo();
+  });
+  abaHistoricoCliente.addEventListener('click', () => {
+    mostrarSubAba('historico-cliente');
   });
 
   return {

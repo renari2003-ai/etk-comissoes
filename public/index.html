@@ -141,6 +141,7 @@
       <button type="button" id="fretes-aba-central-logistica" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Central da Logística</button>
       <button type="button" id="fretes-aba-central-vendedor" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Central do Vendedor</button>
       <button type="button" id="fretes-aba-aprovacoes-valor-minimo" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Aprovações (Gerência)</button>
+      <button type="button" id="fretes-aba-historico-cliente" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Histórico por Cliente</button>
     </nav>
 
     <section id="fretes-secao-dashboard">
@@ -781,6 +782,102 @@
         </table>
       </div>
       <p id="fretes-aprovacoes-valor-minimo-vazio" class="filtro-data-legenda" hidden>Nenhuma aprovação pendente no momento.</p>
+    </section>
+
+    <section id="fretes-secao-historico-cliente" hidden>
+      <div class="area-tabela-cabecalho">
+        <h2 class="titulo-secao">Histórico de Fretes por Cliente</h2>
+      </div>
+      <p class="filtro-data-legenda">
+        Consolidação só de leitura sobre cotações/propostas já existentes — busque um cliente para ver o histórico.
+      </p>
+      <form id="fretes-form-buscar-cliente-historico" class="form-busca" autocomplete="off">
+        <label for="fretes-historico-termo-busca" class="rotulo-oculto">Nome ou código Omie do cliente</label>
+        <input id="fretes-historico-termo-busca" name="termo" type="text" placeholder="Nome ou código Omie do cliente…" />
+        <button type="submit">Buscar cliente</button>
+      </form>
+      <ul id="fretes-historico-resultados-busca" class="permissoes-linha" hidden></ul>
+
+      <div id="fretes-historico-cliente-selecionado" hidden>
+        <h3 id="fretes-historico-cliente-nome"></h3>
+        <section class="relatorio-indicadores" id="fretes-historico-cards" aria-live="polite"></section>
+
+        <form id="fretes-form-filtros-historico" class="filtros-relatorio" autocomplete="off">
+          <div class="campo-filtro">
+            <label for="fretes-historico-filtro-data-inicio">De</label>
+            <input id="fretes-historico-filtro-data-inicio" name="dataInicio" type="date" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-historico-filtro-data-fim">Até</label>
+            <input id="fretes-historico-filtro-data-fim" name="dataFim" type="date" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-historico-filtro-transportadora">Transportadora</label>
+            <select id="fretes-historico-filtro-transportadora" name="transportadoraId">
+              <option value="">Todas</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-historico-filtro-tipo">Tipo de documento</label>
+            <select id="fretes-historico-filtro-tipo" name="tipo">
+              <option value="">Todos</option>
+              <option value="ORCAMENTO">Orçamento</option>
+              <option value="PEDIDO">Pedido</option>
+              <option value="MANUAL">Manual</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-historico-filtro-status">Status</label>
+            <select id="fretes-historico-filtro-status" name="status">
+              <option value="">Todos</option>
+              <option value="AGUARDANDO_LOGISTICA">Aguardando triagem</option>
+              <option value="LIBERADA">Liberada para o vendedor</option>
+              <option value="EM_NEGOCIACAO">Em negociação</option>
+              <option value="ESCOLHIDA">Escolhido</option>
+              <option value="DESCARTADA">Descartado</option>
+            </select>
+          </div>
+          <div class="campo-filtro" id="fretes-historico-filtro-vendedor-campo" hidden>
+            <label for="fretes-historico-filtro-vendedor">Vendedor (código Omie)</label>
+            <input id="fretes-historico-filtro-vendedor" name="vendedorOmieId" type="number" min="1" />
+          </div>
+          <button type="submit" class="botao-secundario botao-aplicar-filtro">Aplicar filtros</button>
+        </form>
+
+        <div class="tabela-rolagem">
+          <table id="fretes-tabela-historico">
+            <thead>
+              <tr>
+                <th scope="col">Data</th>
+                <th scope="col">Documento</th>
+                <th scope="col">Tipo</th>
+                <th scope="col">Vendedor</th>
+                <th scope="col">Origem</th>
+                <th scope="col">Destino</th>
+                <th scope="col">Transportadora</th>
+                <th scope="col">Modalidade</th>
+                <th scope="col">Frete base</th>
+                <th scope="col">Valor mínimo</th>
+                <th scope="col">Prazo</th>
+                <th scope="col">Resultado</th>
+              </tr>
+            </thead>
+            <tbody id="fretes-tabela-historico-corpo"></tbody>
+          </table>
+        </div>
+        <p id="fretes-historico-vazio" class="filtro-data-legenda" hidden>Nenhum registro encontrado para este cliente/filtros.</p>
+        <div class="area-tabela-cabecalho">
+          <button type="button" id="fretes-historico-pagina-anterior" class="botao-secundario">« Anterior</button>
+          <span id="fretes-historico-pagina-info"></span>
+          <button type="button" id="fretes-historico-pagina-proxima" class="botao-secundario">Próxima »</button>
+        </div>
+
+        <section id="fretes-historico-detalhe" class="painel-usuarios" hidden>
+          <h3>Detalhe do frete</h3>
+          <div id="fretes-historico-detalhe-conteudo"></div>
+          <button type="button" id="fretes-historico-detalhe-fechar" class="botao-secundario">Fechar</button>
+        </section>
+      </div>
     </section>
   </main>
 

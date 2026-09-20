@@ -28,6 +28,7 @@ import {
   servicoDefinirAtivaTransportadora,
   servicoDefinirAtivoVeiculo,
   servicoDescartarPropostaLogistica,
+  servicoDetalheHistoricoFrete,
   servicoEscolherFreteVencedor,
   servicoFecharCotacao,
   servicoLiberarPropostaLogistica,
@@ -43,8 +44,11 @@ import {
   servicoRegistrarComposicaoComercial,
   servicoRejeitarProposta,
   servicoRejeitarValorMinimo,
+  servicoResumoClienteHistorico,
   servicoSelecionarProposta,
   servicoSolicitarAprovacaoValorMinimo,
+  servicoBuscarClientesHistorico,
+  servicoListarHistoricoCliente,
 } from '../fretes/fretesServico.js';
 import {
   servicoBuscarOrigemProposta,
@@ -128,6 +132,25 @@ function exigirSegredoWebhookFretes(req: Request, _res: Response, next: NextFunc
 function validarCanalOpcional(valor: unknown): CanalOrigemProposta {
   if (valor === undefined || valor === null || valor === '') return 'EMAIL';
   return validarCanalOrigem(valor, 'canal');
+}
+
+/**
+ * Fase 4A.8 — gate de "porta" do Histórico por Cliente: `fretesComercial` OU `fretesGerencia`
+ * (administrador sempre passa). Um `exigirPermissao('fretesComercial')` sozinho bloquearia um
+ * usuário só-gerência antes mesmo de chegar no serviço — mesmo bug já corrigido em
+ * `exigirAcessoComercial` (Fase 4A.7) para o fluxo de aprovação; aqui a rota já nasce certa.
+ * A restrição fina por vendedor continua só no serviço (`resolverRestricaoVendedorHistorico`).
+ */
+function exigirAcessoHistorico(req: Request, _res: Response, next: NextFunction): void {
+  if (req.usuario === undefined) {
+    next(new ErroSemPermissao('Não autenticado.'));
+    return;
+  }
+  if (req.usuario.papel === 'administrador' || req.usuario.permissoes.fretesComercial || req.usuario.permissoes.fretesGerencia) {
+    next();
+    return;
+  }
+  next(new ErroSemPermissao('Você não tem permissão para ver o histórico de fretes (permissão "fretesComercial" ou "fretesGerencia" necessária).'));
 }
 
 /** Fase 4A.7 — percentual fiscal (PIS/COFINS/ICMS): 0–100 ou `null` explícito ("ainda não configurado"), nunca inferido. */
@@ -666,6 +689,80 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     assincrono(async (req, res) => {
       const id = validarUuid(req.params.id, 'id');
       res.json(await servicoRejeitarValorMinimo(id, req.usuario!));
+    }),
+  );
+
+  // --- Fase 4A.8: Histórico de fretes por cliente (só leitura) --------------
+  // A restrição fina por vendedor (Fase 4A.6) mora inteiramente no serviço, nunca aqui.
+
+  const protegidaHistorico = [exigirAutenticacao, exigirAcessoHistorico] as const;
+
+  rotas.get(
+    '/api/fretes/historico/clientes',
+    ...protegidaHistorico,
+    assincrono(async (req, res) => {
+      const termo = validarTextoOpcional(req.query.termo, 'termo') ?? '';
+      res.json({ clientes: await servicoBuscarClientesHistorico(termo, req.usuario!) });
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/historico/resumo',
+    ...protegidaHistorico,
+    assincrono(async (req, res) => {
+      const clienteOmieId = validarIdOmieOpcional(req.query.clienteOmieId, 'clienteOmieId');
+      if (clienteOmieId === null) throw new ErroValidacao('Informe "clienteOmieId".');
+      const resumo = await servicoResumoClienteHistorico(clienteOmieId, req.usuario!);
+      if (resumo === null) {
+        res.status(404).json({ erro: 'Nenhum histórico encontrado para este cliente (ou sem permissão para vê-lo).' });
+        return;
+      }
+      res.json(resumo);
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/historico/:propostaId',
+    ...protegidaHistorico,
+    assincrono(async (req, res) => {
+      const propostaId = validarUuid(req.params.propostaId, 'propostaId');
+      const detalhe = await servicoDetalheHistoricoFrete(propostaId, req.usuario!);
+      if (detalhe === null) {
+        res.status(404).json({ erro: 'Registro de histórico não encontrado (ou sem permissão para vê-lo).' });
+        return;
+      }
+      res.json(detalhe);
+    }),
+  );
+
+  rotas.get(
+    '/api/fretes/historico',
+    ...protegidaHistorico,
+    assincrono(async (req, res) => {
+      const clienteOmieId = validarIdOmieOpcional(req.query.clienteOmieId, 'clienteOmieId');
+      if (clienteOmieId === null) throw new ErroValidacao('Informe "clienteOmieId".');
+      const vendedorOmieId = validarIdOmieOpcional(req.query.vendedorOmieId, 'vendedorOmieId') ?? undefined;
+      const transportadoraId = validarUuidOpcional(req.query.transportadoraId, 'transportadoraId') ?? undefined;
+      const tipoBruto = req.query.tipo;
+      const documentoOmieTipo = tipoBruto === 'PEDIDO' || tipoBruto === 'ORCAMENTO' || tipoBruto === 'MANUAL' ? tipoBruto : undefined;
+      const statusBruto = req.query.status;
+      const statusRevisao =
+        statusBruto === 'AGUARDANDO_LOGISTICA' ||
+        statusBruto === 'LIBERADA' ||
+        statusBruto === 'DESCARTADA' ||
+        statusBruto === 'EM_NEGOCIACAO' ||
+        statusBruto === 'ESCOLHIDA'
+          ? statusBruto
+          : undefined;
+      const dataInicio = validarTextoOpcional(req.query.dataInicio, 'dataInicio') ?? undefined;
+      const dataFim = validarTextoOpcional(req.query.dataFim, 'dataFim') ?? undefined;
+      const pagina = validarInteiroNaoNegativoOpcional(req.query.pagina, 'pagina') ?? 1;
+      const tamanhoPagina = validarInteiroNaoNegativoOpcional(req.query.tamanhoPagina, 'tamanhoPagina') ?? 25;
+      const resultado = await servicoListarHistoricoCliente(
+        { clienteOmieId, vendedorOmieId, transportadoraId, documentoOmieTipo, statusRevisao, dataInicio, dataFim, pagina: pagina || 1, tamanhoPagina: tamanhoPagina || 25 },
+        req.usuario!,
+      );
+      res.json(resultado);
     }),
   );
 

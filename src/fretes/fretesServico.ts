@@ -10,7 +10,7 @@ import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
 import type { UsuarioPublico } from '../auth/tipos.js';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
-import { registrarAuditoria } from './auditoriaRepositorio.js';
+import { listarAuditoriaPorEntidade, registrarAuditoria } from './auditoriaRepositorio.js';
 import { calcularFreteFinal, calcularPercentualAcrescimo, calcularValorAcrescimo } from './calculo.js';
 import { arredondarDinheiro } from '../calculo/arredondamento.js';
 import {
@@ -55,6 +55,17 @@ import {
   listarTransportadoras,
   type DadosTransportadora,
 } from './transportadorasRepositorio.js';
+import {
+  buscarClientesHistorico,
+  buscarDetalheHistorico,
+  buscarResumoClienteFrete,
+  listarHistoricoFretes,
+  type ClienteHistoricoResultado,
+  type FiltrosHistoricoFrete,
+  type LinhaHistoricoDetalhe,
+  type LinhaHistoricoFrete,
+  type ResumoClienteFrete,
+} from './historicoFretesRepositorio.js';
 import {
   atualizarVeiculo,
   buscarVeiculoPorId,
@@ -792,6 +803,100 @@ export async function servicoBuscarComposicaoPorProposta(propostaId: string): Pr
 
 export async function servicoBuscarAprovacaoPorId(id: string): Promise<AprovacaoValorMinimoFrete | null> {
   return buscarAprovacaoPorId(id);
+}
+
+// --- Fase 4A.8 — Histórico de fretes por cliente (só leitura, 100% dados já existentes) ---
+//
+// Mesma regra de visibilidade da Fase 4A.6 (Central do Vendedor): administrador/`fretesGerencia`
+// têm visão ampliada (qualquer cliente, com filtro de vendedor opcional); um vendedor comum só
+// vê o próprio histórico (`cotacao.vendedorOmieId === usuario.vendedorOmieId`) — nunca escolhe
+// isso via parâmetro do cliente, sempre imposto pelo servidor. Vendedor sem `vendedorOmieId`
+// vinculado nunca vê nada (mesmo comportamento de `ehVendedorResponsavel`), em vez de vazar
+// tudo por engano.
+
+/** `undefined` = sem restrição (visão ampliada); `número` = força esse vendedor; `'nenhum'` = usuário nunca pode ver nada (sem vínculo). */
+function resolverRestricaoVendedorHistorico(usuario: UsuarioPublico, filtroVendedorOmieId?: number): number | undefined | 'nenhum' {
+  if (temVisaoAmpliadaFrete(usuario)) return filtroVendedorOmieId;
+  if (usuario.vendedorOmieId === null) return 'nenhum';
+  return usuario.vendedorOmieId;
+}
+
+export async function servicoBuscarClientesHistorico(termo: string, usuario: UsuarioPublico): Promise<ClienteHistoricoResultado[]> {
+  const restricao = resolverRestricaoVendedorHistorico(usuario);
+  if (restricao === 'nenhum') return [];
+  const termoTratado = termo.trim();
+  if (termoTratado === '') return [];
+  return buscarClientesHistorico(termoTratado, restricao);
+}
+
+export interface FiltrosHistoricoClienteEntrada {
+  clienteOmieId: number;
+  vendedorOmieId?: number;
+  transportadoraId?: string;
+  documentoOmieTipo?: TipoDocumento | 'MANUAL';
+  statusRevisao?: FiltrosHistoricoFrete['statusRevisao'];
+  dataInicio?: string;
+  dataFim?: string;
+  pagina?: number;
+  tamanhoPagina?: number;
+}
+
+export async function servicoListarHistoricoCliente(
+  filtros: FiltrosHistoricoClienteEntrada,
+  usuario: UsuarioPublico,
+): Promise<{ linhas: LinhaHistoricoFrete[]; total: number; pagina: number; tamanhoPagina: number }> {
+  const restricao = resolverRestricaoVendedorHistorico(usuario, filtros.vendedorOmieId);
+  const pagina = filtros.pagina ?? 1;
+  const tamanhoPagina = filtros.tamanhoPagina ?? 25;
+  if (restricao === 'nenhum') return { linhas: [], total: 0, pagina, tamanhoPagina };
+  const resultado = await listarHistoricoFretes({
+    clienteOmieId: filtros.clienteOmieId,
+    vendedorOmieId: restricao,
+    transportadoraId: filtros.transportadoraId,
+    documentoOmieTipo: filtros.documentoOmieTipo,
+    statusRevisao: filtros.statusRevisao,
+    dataInicio: filtros.dataInicio,
+    dataFim: filtros.dataFim,
+    pagina,
+    tamanhoPagina,
+  });
+  return { ...resultado, pagina, tamanhoPagina };
+}
+
+export async function servicoResumoClienteHistorico(clienteOmieId: number, usuario: UsuarioPublico): Promise<ResumoClienteFrete | null> {
+  const restricao = resolverRestricaoVendedorHistorico(usuario);
+  if (restricao === 'nenhum') return null;
+  return buscarResumoClienteFrete(clienteOmieId, restricao);
+}
+
+export interface DetalheHistoricoFreteComAuditoria extends LinhaHistoricoDetalhe {
+  usuarioResponsavelId: string | null;
+  dataEscolha: string | null;
+  auditoria: Array<{ acao: string; usuarioId: string | null; criadoEm: string; origem: string }>;
+}
+
+export async function servicoDetalheHistoricoFrete(propostaId: string, usuario: UsuarioPublico): Promise<DetalheHistoricoFreteComAuditoria | null> {
+  const restricao = resolverRestricaoVendedorHistorico(usuario);
+  if (restricao === 'nenhum') return null;
+  const detalhe = await buscarDetalheHistorico(propostaId, restricao === undefined ? undefined : restricao);
+  if (detalhe === null) return null;
+
+  const [auditoriaProposta, auditoriaCotacao] = await Promise.all([
+    listarAuditoriaPorEntidade('proposta_frete', detalhe.propostaId),
+    listarAuditoriaPorEntidade('cotacao_frete', detalhe.cotacaoId),
+  ]);
+  const auditoria = [...auditoriaProposta, ...auditoriaCotacao]
+    .sort((a, b) => new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime())
+    .map((registro) => ({ acao: registro.acao, usuarioId: registro.usuarioId, criadoEm: registro.criadoEm, origem: registro.origem }));
+
+  // "Usuário responsável"/"data da escolha" (seção 5): o snapshot da composição (Fase 4A.7) é
+  // a fonte mais precisa quando existe; senão, cai para o registro de auditoria da seleção
+  // (`PROPOSTA_SELECIONADA`, Fase 4A.6) — nunca inventa um valor quando nenhum dos dois existe.
+  const registroSelecao = auditoriaProposta.find((r) => r.acao === 'PROPOSTA_SELECIONADA');
+  const usuarioResponsavelId = detalhe.composicaoUsuarioId ?? registroSelecao?.usuarioId ?? null;
+  const dataEscolha = detalhe.composicaoCriadoEm ?? (detalhe.statusRevisao === 'ESCOLHIDA' ? (registroSelecao?.criadoEm ?? detalhe.propostaAtualizadoEm) : null);
+
+  return { ...detalhe, usuarioResponsavelId, dataEscolha, auditoria };
 }
 
 // --- Comparação (seção 25 — só informativa, nunca decide sozinha) ---------
