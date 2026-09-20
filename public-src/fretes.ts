@@ -133,16 +133,6 @@ interface PreviewComposicaoComercial {
   valorMinimo: number;
 }
 
-interface ComposicaoComercialFrete {
-  id: string;
-  propostaId: string;
-  freteBase: number;
-  valorMinimo: number;
-  acrescimoPercentual: number;
-  valorFinalCliente: number;
-  aprovacaoId: string | null;
-}
-
 type StatusAprovacaoValorMinimo = 'PENDENTE' | 'APROVADA' | 'REJEITADA';
 
 interface AprovacaoValorMinimoFrete {
@@ -451,48 +441,27 @@ export function inicializarFretes(): { ativar: () => void } {
   }
 
   /**
-   * Fase 4A.7 — fluxo "Compor e escolher frete": busca frete base/valor mínimo (nunca
-   * PIS/COFINS/ICMS individualmente), pede o acréscimo comercial (pode ser 0%), mostra só os
-   * 4 números pedidos e recalcula o valor final localmente a cada tentativa. Se o valor final
-   * ficar abaixo do mínimo, bloqueia a confirmação normal e oferece solicitar aprovação
-   * gerencial (nunca aprova/escolhe sozinho).
+   * Fase 4A.7 (ajuste — simplificação): "Escolher frete" — sem pedir acréscimo comercial
+   * nesta tela (sempre 0% aqui; o valor final ao cliente permanece um conceito do backend,
+   * só não é pedido/exibido neste fluxo). Se o valor ficar abaixo do mínimo, bloqueia a
+   * confirmação normal e oferece solicitar aprovação gerencial — nunca aprova sozinho.
    */
-  async function iniciarComposicaoEEscolha(linha: LinhaCentralFrete, ehResponsavel: boolean): Promise<void> {
-    const respostaPreview = await fetch(`/api/fretes/propostas/${linha.proposta.id}/composicao-preview`);
-    if (!respostaPreview.ok) {
-      window.alert(await extrairMensagemErro(respostaPreview));
-      return;
-    }
-    const preview = (await respostaPreview.json()) as PreviewComposicaoComercial;
-
-    const acrescimoDigitado = window.prompt(
-      `Frete base: ${formatarMoeda(preview.freteBase)}\nValor mínimo para o cliente: ${formatarMoeda(preview.valorMinimo)}\n\nAcréscimo comercial (%) — pode ser 0:`,
-      '0',
-    );
-    if (acrescimoDigitado === null) return;
-    const acrescimoPercentual = Number(acrescimoDigitado.replace(',', '.'));
-    if (Number.isNaN(acrescimoPercentual) || acrescimoPercentual < 0) {
-      window.alert('Informe um percentual de acréscimo válido (0 ou maior).');
-      return;
-    }
-    const valorFinalCliente = Math.round(preview.freteBase * (1 + acrescimoPercentual / 100) * 100) / 100;
+  async function escolherFrete(linha: LinhaCentralFrete, preview: PreviewComposicaoComercial | null, ehResponsavel: boolean): Promise<void> {
+    const resumoValores =
+      preview !== null
+        ? `Frete base: ${formatarMoeda(preview.freteBase)}\nValor mínimo: ${formatarMoeda(preview.valorMinimo)}\n\n`
+        : '';
 
     const substituicaoOuCancelado = perguntarMotivoSubstituicao(ehResponsavel);
     if (substituicaoOuCancelado === 'cancelado') return;
     const substituicao = substituicaoOuCancelado === undefined ? undefined : { substituicao: substituicaoOuCancelado };
 
-    if (
-      !window.confirm(
-        `Frete base: ${formatarMoeda(preview.freteBase)}\nValor mínimo para o cliente: ${formatarMoeda(preview.valorMinimo)}\nAcréscimo comercial: ${acrescimoPercentual}%\nValor final ao cliente: ${formatarMoeda(valorFinalCliente)}\n\nConfirmar?`,
-      )
-    ) {
-      return;
-    }
+    if (!window.confirm(`${resumoValores}Confirmar a escolha deste frete?`)) return;
 
     const resp = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/composicao`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ acrescimoPercentual, ...substituicao }),
+      body: JSON.stringify({ acrescimoPercentual: 0, ...substituicao }),
     });
     if (resp.ok) {
       void carregarCentralVendedor();
@@ -513,7 +482,7 @@ export function inicializarFretes(): { ativar: () => void } {
     const respAprovacao = await fetch(`/api/fretes/cotacoes/${linha.cotacao.id}/propostas/${linha.proposta.id}/composicao/solicitar-aprovacao`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ acrescimoPercentual, motivo: motivoAprovacao.trim() }),
+      body: JSON.stringify({ acrescimoPercentual: 0, motivo: motivoAprovacao.trim() }),
     });
     if (!respAprovacao.ok) {
       window.alert(await extrairMensagemErro(respAprovacao));
@@ -547,25 +516,31 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(linha.transportadora.nomeRazaoSocial));
       tr.appendChild(celula(formatarMoeda(linha.proposta.valorCusto)));
 
-      // Fase 4A.7 — valor mínimo/acréscimo/final só aparecem depois de compostos (ESCOLHIDA);
-      // nunca calculados/exibidos aqui antes da composição confirmada, pra não sugerir um
-      // valor que ainda não foi registrado.
-      const tdValorMinimo = celula('—');
-      const tdAcrescimo = celula('—');
-      const tdValorFinal = celula('—');
-      if (linha.proposta.statusRevisao === 'ESCOLHIDA') {
-        void fetch(`/api/fretes/propostas/${linha.proposta.id}/composicao`)
-          .then((r) => (r.ok ? (r.json() as Promise<ComposicaoComercialFrete>) : null))
-          .then((composicao) => {
-            if (composicao === null) return;
-            tdValorMinimo.textContent = formatarMoeda(composicao.valorMinimo);
-            tdAcrescimo.textContent = `${composicao.acrescimoPercentual}%`;
-            tdValorFinal.textContent = formatarMoeda(composicao.valorFinalCliente);
-          });
-      }
+      // Fase 4A.7 (ajuste — "valor mínimo automático"): busca o preview assim que a linha é
+      // renderizada, sem exigir nenhuma ação do vendedor. Se os parâmetros fiscais ainda não
+      // estiverem configurados, mostra o erro exato devolvido pelo backend nesta célula —
+      // nunca assume 0%.
+      const tdValorMinimo = celula('Calculando…');
+      let previewCarregado: PreviewComposicaoComercial | null = null;
+      const promessaPreview = fetch(`/api/fretes/propostas/${linha.proposta.id}/composicao-preview`)
+        .then(async (r) => {
+          if (!r.ok) {
+            tdValorMinimo.textContent = await extrairMensagemErro(r);
+            return null;
+          }
+          const preview = (await r.json()) as PreviewComposicaoComercial;
+          tdValorMinimo.textContent = formatarMoeda(preview.valorMinimo);
+          return preview;
+        })
+        .catch(() => {
+          tdValorMinimo.textContent = 'Erro ao calcular o valor mínimo.';
+          return null;
+        })
+        .then((preview) => {
+          previewCarregado = preview;
+          return preview;
+        });
       tr.appendChild(tdValorMinimo);
-      tr.appendChild(tdAcrescimo);
-      tr.appendChild(tdValorFinal);
       tr.appendChild(celula(formatarPrazo(linha.proposta.prazoDias)));
       tr.appendChild(celula(ROTULOS_STATUS_REVISAO[linha.proposta.statusRevisao]));
 
@@ -591,14 +566,17 @@ export function inicializarFretes(): { ativar: () => void } {
       }
 
       if (linha.proposta.statusRevisao === 'LIBERADA' || linha.proposta.statusRevisao === 'EM_NEGOCIACAO') {
-        const botaoComporEscolher = document.createElement('button');
-        botaoComporEscolher.type = 'button';
-        botaoComporEscolher.className = 'botao-secundario';
-        botaoComporEscolher.textContent = 'Compor e escolher frete';
-        botaoComporEscolher.addEventListener('click', () => {
-          void iniciarComposicaoEEscolha(linha, ehResponsavel);
+        const botaoEscolher = document.createElement('button');
+        botaoEscolher.type = 'button';
+        botaoEscolher.className = 'botao-secundario';
+        botaoEscolher.textContent = 'Escolher frete';
+        botaoEscolher.addEventListener('click', () => {
+          void (async () => {
+            await promessaPreview;
+            void escolherFrete(linha, previewCarregado, ehResponsavel);
+          })();
         });
-        tdAcoes.appendChild(botaoComporEscolher);
+        tdAcoes.appendChild(botaoEscolher);
       }
       tr.appendChild(tdAcoes);
       corpo.appendChild(tr);
