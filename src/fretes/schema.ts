@@ -378,6 +378,15 @@ export function garantirEsquemaFretes(): Promise<void> {
       `ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS email_origem TEXT CHECK (email_origem IN ('OMIE','MANUAL'))`,
     );
 
+    // Fase WhatsApp — Etapa 3: persistência definitiva do WAMID outbound (antes só em memória
+    // no workflow do n8n). `wamid_outbound` é UNIQUE — chave de idempotência/correlação com o
+    // `context.id` recebido no reply (nunca duas solicitações com o mesmo WAMID). Aditivo/
+    // nullable, mesmo padrão de `email_destino`/`email_origem` (Fase 4A.4.1) — só preenchido
+    // para canal WHATSAPP, e só depois que a YCloud confirma o envio.
+    await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS wamid_outbound TEXT UNIQUE`);
+    await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS ycloud_message_id TEXT`);
+    await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS telefone_destino TEXT`);
+
     // Material bruto — NUNCA alterado depois de criado (seção 18); correções humanas
     // alteram só a proposta estruturada. UNIQUE (canal, identificador_mensagem) é a
     // idempotência em nível de banco (seção 19): a mesma mensagem chegando duas vezes

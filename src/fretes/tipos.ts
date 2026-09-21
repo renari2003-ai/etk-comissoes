@@ -86,6 +86,18 @@ export interface SolicitacaoCotacao {
    */
   emailDestino: string | null;
   emailOrigem: EmailOrigem | null;
+  /**
+   * Fase WhatsApp — Etapa 3: persistência definitiva do WAMID outbound (antes mantida só em
+   * memória no workflow do n8n via `$getWorkflowStaticData`). `wamidOutbound` é a chave de
+   * correlação com o `context.id` de uma resposta recebida por reply — sempre único (nunca
+   * duas solicitações compartilham o mesmo WAMID). `ycloudMessageId` é o id interno da
+   * YCloud (diferente do WAMID); `telefoneDestino` é o snapshot do número usado nesta
+   * solicitação (mesmo espírito de `emailDestino` — nunca recalculado depois). Todos `null`
+   * para canais diferentes de WHATSAPP, e `null` até a YCloud confirmar o envio.
+   */
+  wamidOutbound: string | null;
+  ycloudMessageId: string | null;
+  telefoneDestino: string | null;
   criadoPor: string;
   criadoEm: string;
   atualizadoEm: string;
@@ -463,7 +475,9 @@ export type AcaoAuditoriaFrete =
   | 'COMPOSICAO_COMERCIAL_REGISTRADA'
   | 'APROVACAO_VALOR_MINIMO_SOLICITADA'
   | 'APROVACAO_VALOR_MINIMO_APROVADA'
-  | 'APROVACAO_VALOR_MINIMO_REJEITADA';
+  | 'APROVACAO_VALOR_MINIMO_REJEITADA'
+  | 'SOLICITACAO_WHATSAPP_OUTBOUND_REGISTRADA'
+  | 'CORRELACAO_WHATSAPP_CONSULTADA';
 
 export interface RegistroAuditoriaFrete {
   id: string;

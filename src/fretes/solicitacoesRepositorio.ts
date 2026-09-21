@@ -18,6 +18,9 @@ interface LinhaSolicitacao {
   erro_ultima_tentativa: string | null;
   email_destino: string | null;
   email_origem: EmailOrigem | null;
+  wamid_outbound: string | null;
+  ycloud_message_id: string | null;
+  telefone_destino: string | null;
   criado_por: string;
   criado_em: Date;
   atualizado_em: Date;
@@ -38,6 +41,9 @@ function linhaParaSolicitacao(l: LinhaSolicitacao): SolicitacaoCotacao {
     erroUltimaTentativa: l.erro_ultima_tentativa,
     emailDestino: l.email_destino,
     emailOrigem: l.email_origem,
+    wamidOutbound: l.wamid_outbound,
+    ycloudMessageId: l.ycloud_message_id,
+    telefoneDestino: l.telefone_destino,
     criadoPor: l.criado_por,
     criadoEm: l.criado_em.toISOString(),
     atualizadoEm: l.atualizado_em.toISOString(),
@@ -160,4 +166,81 @@ export async function marcarSolicitacaoErro(id: string, erroResumido: string): P
   const linha = rows[0];
   if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
   return linhaParaSolicitacao(linha);
+}
+
+// --- Fase WhatsApp — Etapa 3: persistência definitiva do WAMID outbound ----------------
+
+export interface DadosRegistroWamidOutbound {
+  /** Pelo menos um dos dois deve ser informado — resolvido nessa ordem quando ambos vierem. */
+  solicitacaoId?: string;
+  codigoReferencia?: string;
+  wamidOutbound: string;
+  ycloudMessageId: string | null;
+  telefoneDestino: string | null;
+  statusEnvio?: StatusSolicitacaoCotacao;
+  enviadoEm?: string | null;
+}
+
+export interface ResultadoRegistroWamidOutbound {
+  solicitacao: SolicitacaoCotacao;
+  /** `true` quando este WAMID já tinha sido registrado antes — reprocessamento idempotente, nenhuma escrita nova. */
+  duplicado: boolean;
+}
+
+/**
+ * Idempotência (Etapa 3, seção 2): se o WAMID já está gravado em alguma solicitação, devolve
+ * essa solicitação sem tentar gravar de novo — nunca duplica, nunca lança erro num
+ * reenvio/reprocessamento do mesmo evento outbound. Fora desse caso, a constraint UNIQUE em
+ * `wamid_outbound` (schema.ts) é a segunda camada de proteção contra corrida entre duas
+ * chamadas concorrentes tentando o mesmo WAMID em solicitações diferentes.
+ */
+export async function registrarWamidOutbound(dados: DadosRegistroWamidOutbound): Promise<ResultadoRegistroWamidOutbound> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+
+  const existente = await buscarSolicitacaoPorWamidOutbound(dados.wamidOutbound);
+  if (existente !== null) {
+    return { solicitacao: existente, duplicado: true };
+  }
+
+  const alvo =
+    dados.solicitacaoId !== undefined
+      ? await buscarSolicitacaoPorId(dados.solicitacaoId)
+      : dados.codigoReferencia !== undefined
+        ? await buscarSolicitacaoPorCodigoReferencia(dados.codigoReferencia)
+        : null;
+  if (alvo === null) throw new ErroValidacao('Solicitação de cotação não encontrada (referencia/solicitacaoId inválidos).');
+
+  try {
+    const { rows } = await pool.query<LinhaSolicitacao>(
+      `UPDATE ${nomeTabelaSolicitacoes()}
+          SET wamid_outbound = $1, ycloud_message_id = $2, telefone_destino = $3,
+              status = COALESCE($4, status), data_envio = COALESCE($5::timestamptz, data_envio), atualizado_em = now()
+        WHERE id = $6
+        RETURNING *`,
+      [dados.wamidOutbound, dados.ycloudMessageId, dados.telefoneDestino, dados.statusEnvio ?? null, dados.enviadoEm ?? null, alvo.id],
+    );
+    const linha = rows[0];
+    if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
+    return { solicitacao: linhaParaSolicitacao(linha), duplicado: false };
+  } catch (erro) {
+    // 23505 = unique_violation (Postgres) — corrida rara entre duas chamadas concorrentes com
+    // o mesmo WAMID para solicitações diferentes; nunca deixa vazar o erro genérico do driver.
+    if (typeof erro === 'object' && erro !== null && 'code' in erro && (erro as { code?: string }).code === '23505') {
+      throw new ErroValidacao('Este WAMID outbound já está registrado para outra solicitação.');
+    }
+    throw erro;
+  }
+}
+
+/** Resolução por `context.id` (Etapa 3, seção 3) — nunca adivinha: `null` quando o WAMID não foi registrado por nenhuma solicitação. */
+export async function buscarSolicitacaoPorWamidOutbound(wamidOutbound: string): Promise<SolicitacaoCotacao | null> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `SELECT * FROM ${nomeTabelaSolicitacoes()} WHERE wamid_outbound = $1`,
+    [wamidOutbound],
+  );
+  const linha = rows[0];
+  return linha === undefined ? null : linhaParaSolicitacao(linha);
 }

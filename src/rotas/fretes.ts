@@ -56,6 +56,8 @@ import {
   servicoListarSolicitacoes,
   servicoProcessarRespostaWebhook,
   servicoReenviarSolicitacao,
+  servicoRegistrarOutboundWhatsapp,
+  servicoResolverReferenciaPorWamidOutbound,
   servicoSolicitarCotacoes,
   servicoValidarProposta,
 } from '../fretes/integracaoCotacoesServico.js';
@@ -76,7 +78,11 @@ import {
   validarUuid,
   validarUuidOpcional,
 } from '../fretes/validacao.js';
-import { validarPayloadWebhookResposta } from '../fretes/webhookCotacoes.js';
+import {
+  validarPayloadCorrelacionarWhatsapp,
+  validarPayloadOutboundWhatsapp,
+  validarPayloadWebhookResposta,
+} from '../fretes/webhookCotacoes.js';
 import { assincrono } from './erroHttp.js';
 
 const MODALIDADES_EXECUCAO_VALIDAS: readonly ModalidadeExecucao[] = ['TRANSPORTADORA', 'VEICULO_PROPRIO', 'RETIRA'];
@@ -878,6 +884,35 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         extracaoStatus: resultado.extracao.status,
         propostaId: resultado.proposta?.id ?? null,
       });
+    }),
+  );
+
+  // --- Fase WhatsApp — Etapa 3: persistência WAMID outbound + correlação (n8n → ETK) -----
+  // Mesma autenticação máquina-a-máquina já existente (`exigirSegredoWebhookFretes`, seção 4/5
+  // da fase — "seguir o padrão já existente", nenhum segredo novo). NUNCA dispara o webhook de
+  // resposta (`/integracoes/cotacoes/resposta`) automaticamente (seção 8, explícito).
+
+  rotas.post(
+    '/api/fretes/integracoes/whatsapp/outbound',
+    exigirSegredoWebhookFretes,
+    assincrono(async (req, res) => {
+      const payload = validarPayloadOutboundWhatsapp(req.body);
+      const resultado = await servicoRegistrarOutboundWhatsapp(payload);
+      res.status(200).json({
+        registrado: true,
+        duplicado: resultado.duplicado,
+        solicitacaoId: resultado.solicitacao.id,
+        referencia: resultado.solicitacao.codigoReferencia,
+      });
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/integracoes/whatsapp/correlacionar',
+    exigirSegredoWebhookFretes,
+    assincrono(async (req, res) => {
+      const payload = validarPayloadCorrelacionarWhatsapp(req.body);
+      res.status(200).json(await servicoResolverReferenciaPorWamidOutbound(payload));
     }),
   );
 

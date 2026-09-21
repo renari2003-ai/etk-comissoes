@@ -6,7 +6,7 @@
  * solto do payload (evita associação frágil por nome/texto).
  */
 import { ErroValidacao } from '../validacao.js';
-import type { CanalOrigemProposta, DadosExtracaoProposta } from './tipos.js';
+import type { CanalOrigemProposta, DadosExtracaoProposta, StatusSolicitacaoCotacao } from './tipos.js';
 import {
   validarCanalOrigem,
   validarConfiancaOpcional,
@@ -14,6 +14,7 @@ import {
   validarInteiroNaoNegativoOpcional,
   validarTextoComTamanhoMaximo,
   validarTextoObrigatorio,
+  validarUuidOpcional,
 } from './validacao.js';
 
 /** Versão suportada do contrato (seção 44) — payloads com outra versão são rejeitados explicitamente, nunca interpretados "no melhor esforço". */
@@ -99,4 +100,83 @@ export function validarPayloadWebhookResposta(body: unknown): PayloadRespostaWeb
   const extracao = validarExtracao(bruto.extracao);
 
   return { referencia, canal, mensagemId, conteudoBruto, versaoExtrator, extracao };
+}
+
+// --- Fase WhatsApp — Etapa 3: contratos outbound/correlação (n8n → ETK) ----------------
+
+const WAMID_MAX = 300;
+const TELEFONE_MAX = 40;
+const DATA_ENVIO_MAX = 40;
+const CONTEXTO_REPLY_ID_MAX = 300;
+
+const STATUS_SOLICITACAO_VALIDOS: readonly StatusSolicitacaoCotacao[] = [
+  'PENDENTE_ENVIO',
+  'ENVIADA',
+  'ENTREGUE',
+  'RESPONDIDA',
+  'ERRO',
+  'CANCELADA',
+];
+
+function validarStatusSolicitacaoOpcional(valor: unknown): StatusSolicitacaoCotacao | undefined {
+  if (valor === undefined || valor === null || valor === '') return undefined;
+  if (typeof valor !== 'string' || !STATUS_SOLICITACAO_VALIDOS.includes(valor as StatusSolicitacaoCotacao)) {
+    throw new ErroValidacao(`O campo "statusEnvio" deve ser um dos: ${STATUS_SOLICITACAO_VALIDOS.join(', ')}.`);
+  }
+  return valor as StatusSolicitacaoCotacao;
+}
+
+export interface PayloadOutboundWhatsapp {
+  referencia: string | undefined;
+  solicitacaoId: string | undefined;
+  wamidOutbound: string;
+  ycloudMessageId: string | null;
+  telefoneDestino: string | null;
+  statusEnvio: StatusSolicitacaoCotacao | undefined;
+  enviadoEm: string | null;
+}
+
+/**
+ * Contrato do endpoint que o n8n chama depois que a YCloud confirma o envio outbound (Etapa
+ * 3, seção 4) — sempre precisa de `referencia` OU `solicitacaoId` pra saber qual solicitação
+ * atualizar (nunca adivinha por outro campo). `wamidOutbound` nunca pode ficar vazio — é a
+ * chave de correlação com o reply recebido depois.
+ */
+export function validarPayloadOutboundWhatsapp(body: unknown): PayloadOutboundWhatsapp {
+  if (typeof body !== 'object' || body === null) throw new ErroValidacao('Corpo da requisição inválido.');
+  const bruto = body as Record<string, unknown>;
+
+  const referencia = validarTextoComTamanhoMaximo(bruto.referencia, 'referencia', REFERENCIA_MAX) ?? undefined;
+  const solicitacaoId = validarUuidOpcional(bruto.solicitacaoId, 'solicitacaoId') ?? undefined;
+  if (referencia === undefined && solicitacaoId === undefined) {
+    throw new ErroValidacao('Informe "referencia" ou "solicitacaoId".');
+  }
+
+  const wamidOutbound = validarTextoObrigatorio(bruto.wamidOutbound, 'wamidOutbound');
+  if (wamidOutbound.length > WAMID_MAX) throw new ErroValidacao(`O campo "wamidOutbound" excede o tamanho máximo de ${WAMID_MAX} caracteres.`);
+
+  const ycloudMessageId = validarTextoComTamanhoMaximo(bruto.ycloudMessageId, 'ycloudMessageId', WAMID_MAX);
+  const telefoneDestino = validarTextoComTamanhoMaximo(bruto.telefoneDestino, 'telefoneDestino', TELEFONE_MAX);
+  const statusEnvio = validarStatusSolicitacaoOpcional(bruto.statusEnvio);
+  const enviadoEm = validarTextoComTamanhoMaximo(bruto.enviadoEm, 'enviadoEm', DATA_ENVIO_MAX);
+  if (enviadoEm !== null && Number.isNaN(Date.parse(enviadoEm))) {
+    throw new ErroValidacao('O campo "enviadoEm" deve ser uma data/hora válida (ISO 8601).');
+  }
+
+  return { referencia, solicitacaoId, wamidOutbound, ycloudMessageId, telefoneDestino, statusEnvio, enviadoEm };
+}
+
+export interface PayloadCorrelacionarWhatsapp {
+  contextoReplyId: string;
+}
+
+/** Contrato do endpoint de correlação (Etapa 3, seção 5) — `contextoReplyId` é o `context.id` recebido no reply do WhatsApp, nunca vazio. */
+export function validarPayloadCorrelacionarWhatsapp(body: unknown): PayloadCorrelacionarWhatsapp {
+  if (typeof body !== 'object' || body === null) throw new ErroValidacao('Corpo da requisição inválido.');
+  const bruto = body as Record<string, unknown>;
+  const contextoReplyId = validarTextoObrigatorio(bruto.contextoReplyId, 'contextoReplyId');
+  if (contextoReplyId.length > CONTEXTO_REPLY_ID_MAX) {
+    throw new ErroValidacao(`O campo "contextoReplyId" excede o tamanho máximo de ${CONTEXTO_REPLY_ID_MAX} caracteres.`);
+  }
+  return { contextoReplyId };
 }

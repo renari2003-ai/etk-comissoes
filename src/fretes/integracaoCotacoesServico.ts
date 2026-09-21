@@ -32,16 +32,18 @@ import {
 import {
   buscarSolicitacaoPorCodigoReferencia,
   buscarSolicitacaoPorId,
+  buscarSolicitacaoPorWamidOutbound,
   criarSolicitacao,
   listarSolicitacoesPorCotacao,
   marcarSolicitacaoEnviada,
   marcarSolicitacaoErro,
   marcarSolicitacaoRespondida,
+  registrarWamidOutbound,
 } from './solicitacoesRepositorio.js';
 import { buscarTransportadoraPorId } from './transportadorasRepositorio.js';
 import { enviarSolicitacaoAoN8n, type PayloadSolicitacaoN8n } from './integracoes/n8nCliente.js';
 import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
-import type { PayloadRespostaWebhook } from './webhookCotacoes.js';
+import type { PayloadCorrelacionarWhatsapp, PayloadOutboundWhatsapp, PayloadRespostaWebhook } from './webhookCotacoes.js';
 
 // --- Solicitação de cotação (seção 12/25/27) -------------------------------------------
 
@@ -385,4 +387,68 @@ export async function servicoValidarProposta(propostaId: string, correcao: Corre
     valorNovo: proposta,
   });
   return proposta;
+}
+
+// --- Fase WhatsApp — Etapa 3: persistência definitiva WAMID → referência (n8n → ETK) ---
+//
+// Callback automático pra `/api/fretes/integracoes/cotacoes/resposta` NUNCA é disparado
+// daqui (seção 8 da fase) — esta etapa só registra o WAMID outbound e resolve a referência a
+// partir do `context.id`; o n8n continua responsável por chamar o webhook de resposta
+// separadamente, como já fazia.
+
+export interface ResultadoOutboundWhatsapp {
+  solicitacao: SolicitacaoCotacao;
+  duplicado: boolean;
+}
+
+/** Registra o resultado de um envio WhatsApp outbound (Etapa 3, seção 2) — idempotente por WAMID, nunca duplica um reprocessamento. */
+export async function servicoRegistrarOutboundWhatsapp(payload: PayloadOutboundWhatsapp): Promise<ResultadoOutboundWhatsapp> {
+  const resultado = await registrarWamidOutbound({
+    solicitacaoId: payload.solicitacaoId,
+    codigoReferencia: payload.referencia,
+    wamidOutbound: payload.wamidOutbound,
+    ycloudMessageId: payload.ycloudMessageId,
+    telefoneDestino: payload.telefoneDestino,
+    statusEnvio: payload.statusEnvio,
+    enviadoEm: payload.enviadoEm,
+  });
+  if (!resultado.duplicado) {
+    await registrarAuditoria({
+      usuarioId: null,
+      origem: 'webhook_n8n',
+      acao: 'SOLICITACAO_WHATSAPP_OUTBOUND_REGISTRADA',
+      entidade: 'solicitacao_cotacao_frete',
+      entidadeId: resultado.solicitacao.id,
+      valorNovo: {
+        wamidOutbound: payload.wamidOutbound,
+        ycloudMessageId: payload.ycloudMessageId,
+        telefoneDestino: payload.telefoneDestino,
+        statusEnvio: payload.statusEnvio ?? null,
+      },
+    });
+  }
+  return resultado;
+}
+
+export type ResultadoCorrelacaoWhatsapp =
+  | { correlacionado: true; referencia: string; solicitacaoId: string }
+  | { correlacionado: false };
+
+/**
+ * `resolverReferenciaPorWamidOutbound` (Etapa 3, seção 3) — entrada é o `context.id` do
+ * reply recebido; nunca tenta adivinhar a referência quando o WAMID não foi registrado (só
+ * devolve `correlacionado: false` explícito).
+ */
+export async function servicoResolverReferenciaPorWamidOutbound(payload: PayloadCorrelacionarWhatsapp): Promise<ResultadoCorrelacaoWhatsapp> {
+  const solicitacao = await buscarSolicitacaoPorWamidOutbound(payload.contextoReplyId);
+  await registrarAuditoria({
+    usuarioId: null,
+    origem: 'webhook_n8n',
+    acao: 'CORRELACAO_WHATSAPP_CONSULTADA',
+    entidade: 'solicitacao_cotacao_frete',
+    entidadeId: solicitacao?.id ?? null,
+    valorNovo: { wamidOutbound: payload.contextoReplyId, correlacionado: solicitacao !== null },
+  });
+  if (solicitacao === null) return { correlacionado: false };
+  return { correlacionado: true, referencia: solicitacao.codigoReferencia, solicitacaoId: solicitacao.id };
 }
