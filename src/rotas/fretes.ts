@@ -61,6 +61,12 @@ import {
   servicoSolicitarCotacoes,
   servicoValidarProposta,
 } from '../fretes/integracaoCotacoesServico.js';
+import { ErroCnpjDestinatarioNaoDisponivel, ErroDadosCotacaoIncompletos, servicoCotarBraspress } from '../fretes/braspressServico.js';
+import {
+  ErroBraspressFalhou,
+  ErroBraspressNaoConfigurada,
+  type ItemCubagemBraspress,
+} from '../fretes/integracoes/braspressCliente.js';
 import type { CanalOrigemProposta, ModalidadeExecucao, StatusCotacao } from '../fretes/tipos.js';
 import {
   validarCanalOrigem,
@@ -463,6 +469,52 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   );
 
   // --- Propostas -------------------------------------------------------
+
+  // Fase Braspress 1 — cota na API oficial e cria/reaproveita a proposta no fluxo existente.
+  rotas.post(
+    '/api/fretes/cotacoes/:id/cotar-braspress',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const bruto = req.body?.cubagem;
+      let cubagem: ItemCubagemBraspress[] | null = null;
+      if (bruto !== undefined && bruto !== null) {
+        if (!Array.isArray(bruto) || bruto.length > 50) throw new ErroValidacao('O campo "cubagem" deve ser uma lista de até 50 itens.');
+        cubagem = bruto.map((item: Record<string, unknown>, i: number) => ({
+          altura: validarNumeroNaoNegativoObrigatorio(item?.altura, `cubagem[${i}].altura`),
+          largura: validarNumeroNaoNegativoObrigatorio(item?.largura, `cubagem[${i}].largura`),
+          comprimento: validarNumeroNaoNegativoObrigatorio(item?.comprimento, `cubagem[${i}].comprimento`),
+          volumes: validarNumeroNaoNegativoObrigatorio(item?.volumes, `cubagem[${i}].volumes`),
+        }));
+      }
+      const dados = {
+        cepOrigem: validarTextoOpcional(req.body?.cepOrigem, 'cepOrigem'),
+        cubagem,
+      };
+      try {
+        const resultado = await servicoCotarBraspress(cliente, cotacaoId, dados, req.usuario!.id);
+        res.status(resultado.duplicada ? 200 : 201).json(resultado);
+      } catch (erro) {
+        if (erro instanceof ErroBraspressNaoConfigurada) {
+          res.status(503).json({ erro: 'Integração Braspress não configurada no servidor.' });
+          return;
+        }
+        if (erro instanceof ErroBraspressFalhou) {
+          res.status(502).json({ erro: erro.message });
+          return;
+        }
+        if (erro instanceof ErroCnpjDestinatarioNaoDisponivel) {
+          res.status(400).json({ erro: erro.message, codigo: erro.codigo });
+          return;
+        }
+        if (erro instanceof ErroDadosCotacaoIncompletos) {
+          res.status(400).json({ erro: erro.message, faltando: erro.faltando });
+          return;
+        }
+        throw erro;
+      }
+    }),
+  );
 
   rotas.get(
     '/api/fretes/cotacoes/:id/propostas',

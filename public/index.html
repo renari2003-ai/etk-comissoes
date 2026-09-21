@@ -447,6 +447,34 @@
           </div>
         </section>
 
+        <section id="fretes-braspress-secao">
+          <h3 class="titulo-secao">Cotar Braspress</h3>
+          <p class="filtro-data-legenda">
+            Consulta a API oficial da Braspress e registra o retorno como proposta. Cubagem em metros por volume.
+          </p>
+          <div class="filtros-relatorio">
+            <div class="campo-filtro">
+              <label for="fretes-braspress-altura">Altura (m)</label>
+              <input id="fretes-braspress-altura" type="number" min="0" step="0.01" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-braspress-largura">Largura (m)</label>
+              <input id="fretes-braspress-largura" type="number" min="0" step="0.01" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-braspress-comprimento">Comprimento (m)</label>
+              <input id="fretes-braspress-comprimento" type="number" min="0" step="0.01" />
+            </div>
+            <div class="campo-filtro">
+              <label for="fretes-braspress-volumes">Volumes</label>
+              <input id="fretes-braspress-volumes" type="number" min="1" step="1" />
+            </div>
+            <button type="button" id="fretes-botao-cotar-braspress" class="botao-secundario botao-aplicar-filtro">Cotar Braspress</button>
+          </div>
+          <p id="fretes-braspress-resultado" class="filtro-data-legenda" hidden></p>
+          <p id="fretes-braspress-erro" class="painel-login-erro" hidden></p>
+        </section>
+
         <section id="fretes-detalhe-form-secao">
           <h3 class="titulo-secao">Nova proposta</h3>
           <form id="fretes-form-nova-proposta" class="filtros-relatorio" autocomplete="off">

@@ -39,6 +39,16 @@ export const config = {
   n8nWebhookUrl: process.env.N8N_WEBHOOK_URL ?? '',
   n8nWebhookSecret: process.env.N8N_WEBHOOK_SECRET ?? '',
   n8nTimeoutMs: numeroDoAmbiente('N8N_TIMEOUT_MS', 8000),
+  /**
+   * Fase Braspress 1 — API oficial de cotação (`src/fretes/integracoes/braspressCliente.ts`).
+   * Basic Auth: usuário = CNPJ do contrato (também usado como CNPJ remetente), senha = senha da
+   * API. Nunca hardcodados nem logados; vazios → integração recusada de forma controlada. A URL
+   * é sempre do servidor (nunca do frontend).
+   */
+  braspressCnpj: process.env.BRASPRESS_CNPJ ?? '',
+  braspressPassword: process.env.BRASPRESS_PASSWORD ?? '',
+  braspressUrl: process.env.BRASPRESS_URL ?? 'https://api.braspress.com/v1/cotacao/calcular/json',
+  braspressTimeoutMs: numeroDoAmbiente('BRASPRESS_TIMEOUT_MS', 15000),
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

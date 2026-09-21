@@ -132,6 +132,8 @@ export interface Cliente {
   enderecoEntrega: EnderecoEntregaOmie | null;
   /** Fase 4A.4.1 — e-mail do cadastro (cliente/fornecedor/transportadora usam o mesmo cadastro na Omie). `null` quando a Omie não devolveu o campo ou ele veio vazio — nunca inventado. */
   email: string | null;
+  /** Ajuste Braspress 1 — `cnpj_cpf` do cadastro, só dígitos. `null` quando ausente/vazio. Somente leitura. */
+  cnpjCpf: string | null;
 }
 
 /** Campos usados de `ConsultarProduto` — a Omie devolve muito mais campos além destes. */
@@ -442,6 +444,7 @@ export class ClienteOmie {
           estado?: string;
           cidade_ibge?: string;
           email?: string;
+          cnpj_cpf?: string;
           enderecoEntrega?: {
             entCEP?: string;
             entEndereco?: string;
@@ -472,6 +475,7 @@ export class ClienteOmie {
             codigoMunicipio: resposta.cidade_ibge ?? null,
           },
           email: (resposta.email ?? '').trim() === '' ? null : resposta.email!.trim(),
+          cnpjCpf: (resposta.cnpj_cpf ?? '').replace(/\D/g, '') === '' ? null : (resposta.cnpj_cpf ?? '').replace(/\D/g, ''),
           enderecoEntrega: entregaPreenchida
             ? {
                 cep: entrega?.entCEP ?? null,

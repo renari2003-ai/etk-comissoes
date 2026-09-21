@@ -255,6 +255,56 @@ export async function criarPropostaAutomatica(dados: DadosPropostaAutomatica): P
   return linhaParaProposta(linha);
 }
 
+export interface DadosPropostaApiExterna {
+  cotacaoId: string;
+  transportadoraId: string;
+  valorCusto: number;
+  prazoDias: number | null;
+  validade: string | null;
+  peso: number | null;
+  volumes: number | null;
+  origem: string | null;
+  destino: string | null;
+  /** Ex.: 'API_BRASPRESS' — vai para `origem_proposta` (TEXT livre, sem migration). */
+  origemProposta: string;
+  /** Resposta normalizada serializada — também é a chave de idempotência (`idCotacaoExterna`). */
+  mensagemOriginal: string;
+}
+
+/**
+ * Proposta vinda de API oficial da transportadora (Fase Braspress 1): dado confiável do
+ * próprio sistema da transportadora, sem extração/IA — nasce `'RECEBIDA'` (mesmo status de uma
+ * proposta manual) e entra no fluxo normal (statusRevisao default → AGUARDANDO_LOGISTICA).
+ */
+export async function criarPropostaApiExterna(dados: DadosPropostaApiExterna): Promise<PropostaFrete> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaProposta>(
+    `INSERT INTO ${nomeTabelaPropostas()}
+       (id, cotacao_id, transportadora_id, valor_custo, prazo_dias, validade, peso, volumes, origem, destino,
+        tipo_servico, origem_proposta, mensagem_original, status, requer_revisao, selecionada)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'Rodoviário', $11, $12, 'RECEBIDA', false, false)
+     RETURNING *`,
+    [
+      randomUUID(),
+      dados.cotacaoId,
+      dados.transportadoraId,
+      dados.valorCusto,
+      dados.prazoDias,
+      dados.validade,
+      dados.peso,
+      dados.volumes,
+      dados.origem,
+      dados.destino,
+      dados.origemProposta,
+      dados.mensagemOriginal,
+    ],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new Error('Falha ao criar proposta via API.');
+  return linhaParaProposta(linha);
+}
+
 export interface CorrecaoPropostaPendente {
   valorCusto?: number;
   prazoDias?: number | null;

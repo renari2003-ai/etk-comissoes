@@ -1117,6 +1117,7 @@ export function inicializarFretes() {
         el('fretes-detalhe-bloco-veiculo').hidden = modalidadeExecucao !== 'VEICULO_PROPRIO';
         el('fretes-detalhe-bloco-retira').hidden = modalidadeExecucao !== 'RETIRA';
         el('fretes-detalhe-form-secao').hidden = cotacaoEncerrada;
+        el('fretes-braspress-secao').hidden = cotacaoEncerrada;
         let propostaSelecionada = null;
         if (modalidadeExecucao === 'TRANSPORTADORA') {
             const respostaPropostas = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/propostas`);
@@ -1365,6 +1366,53 @@ export function inicializarFretes() {
                     inputEmail.value = '';
             }
             void carregarSolicitacoes();
+        })();
+    });
+    // --- Fase Braspress 1: cotação via API oficial ---
+    const botaoCotarBraspress = el('fretes-botao-cotar-braspress');
+    const erroBraspress = el('fretes-braspress-erro');
+    const resultadoBraspress = el('fretes-braspress-resultado');
+    botaoCotarBraspress.addEventListener('click', () => {
+        void (async () => {
+            if (cotacaoAtualId === null)
+                return;
+            erroBraspress.hidden = true;
+            resultadoBraspress.hidden = true;
+            const numero = (id) => Number(el(id).value);
+            const temCubagem = ['altura', 'largura', 'comprimento', 'volumes'].some((c) => el(`fretes-braspress-${c}`).value.trim() !== '');
+            const corpo = {
+                cubagem: temCubagem
+                    ? [
+                        {
+                            altura: numero('fretes-braspress-altura'),
+                            largura: numero('fretes-braspress-largura'),
+                            comprimento: numero('fretes-braspress-comprimento'),
+                            volumes: numero('fretes-braspress-volumes'),
+                        },
+                    ]
+                    : null,
+            };
+            botaoCotarBraspress.disabled = true;
+            try {
+                const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/cotar-braspress`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(corpo),
+                });
+                if (!resposta.ok) {
+                    erroBraspress.textContent = await extrairMensagemErro(resposta);
+                    erroBraspress.hidden = false;
+                    return;
+                }
+                const dados = (await resposta.json());
+                const prazo = dados.cotacaoExterna.prazoDias === null ? '—' : `${dados.cotacaoExterna.prazoDias} dia(s)`;
+                resultadoBraspress.textContent = `Braspress — Valor: R$ ${dados.cotacaoExterna.valorFrete.toFixed(2).replace('.', ',')} — Prazo: ${prazo}${dados.duplicada ? ' (proposta já registrada)' : ''}`;
+                resultadoBraspress.hidden = false;
+                await carregarDetalheCotacao();
+            }
+            finally {
+                botaoCotarBraspress.disabled = false;
+            }
         })();
     });
     // --- Fase 4A.1: "Propostas recebidas" — validação humana (seção 17/36/37/38) ---

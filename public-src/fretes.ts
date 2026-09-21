@@ -1456,6 +1456,7 @@ export function inicializarFretes(): { ativar: () => void } {
     el<HTMLElement>('fretes-detalhe-bloco-veiculo').hidden = modalidadeExecucao !== 'VEICULO_PROPRIO';
     el<HTMLElement>('fretes-detalhe-bloco-retira').hidden = modalidadeExecucao !== 'RETIRA';
     el<HTMLElement>('fretes-detalhe-form-secao').hidden = cotacaoEncerrada;
+    el<HTMLElement>('fretes-braspress-secao').hidden = cotacaoEncerrada;
 
     let propostaSelecionada: PropostaFrete | null = null;
     if (modalidadeExecucao === 'TRANSPORTADORA') {
@@ -1706,6 +1707,52 @@ export function inicializarFretes(): { ativar: () => void } {
         if (inputEmail !== null) inputEmail.value = '';
       }
       void carregarSolicitacoes();
+    })();
+  });
+
+  // --- Fase Braspress 1: cotação via API oficial ---
+  const botaoCotarBraspress = el<HTMLButtonElement>('fretes-botao-cotar-braspress');
+  const erroBraspress = el<HTMLElement>('fretes-braspress-erro');
+  const resultadoBraspress = el<HTMLElement>('fretes-braspress-resultado');
+  botaoCotarBraspress.addEventListener('click', () => {
+    void (async () => {
+      if (cotacaoAtualId === null) return;
+      erroBraspress.hidden = true;
+      resultadoBraspress.hidden = true;
+      const numero = (id: string): number => Number(el<HTMLInputElement>(id).value);
+      const temCubagem = ['altura', 'largura', 'comprimento', 'volumes'].some((c) => el<HTMLInputElement>(`fretes-braspress-${c}`).value.trim() !== '');
+      const corpo = {
+        cubagem: temCubagem
+          ? [
+              {
+                altura: numero('fretes-braspress-altura'),
+                largura: numero('fretes-braspress-largura'),
+                comprimento: numero('fretes-braspress-comprimento'),
+                volumes: numero('fretes-braspress-volumes'),
+              },
+            ]
+          : null,
+      };
+      botaoCotarBraspress.disabled = true;
+      try {
+        const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/cotar-braspress`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(corpo),
+        });
+        if (!resposta.ok) {
+          erroBraspress.textContent = await extrairMensagemErro(resposta);
+          erroBraspress.hidden = false;
+          return;
+        }
+        const dados = (await resposta.json()) as { cotacaoExterna: { valorFrete: number; prazoDias: number | null }; duplicada: boolean };
+        const prazo = dados.cotacaoExterna.prazoDias === null ? '—' : `${dados.cotacaoExterna.prazoDias} dia(s)`;
+        resultadoBraspress.textContent = `Braspress — Valor: R$ ${dados.cotacaoExterna.valorFrete.toFixed(2).replace('.', ',')} — Prazo: ${prazo}${dados.duplicada ? ' (proposta já registrada)' : ''}`;
+        resultadoBraspress.hidden = false;
+        await carregarDetalheCotacao();
+      } finally {
+        botaoCotarBraspress.disabled = false;
+      }
     })();
   });
 
