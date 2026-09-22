@@ -61,6 +61,8 @@ import {
   servicoSolicitarCotacoes,
   servicoValidarProposta,
 } from '../fretes/integracaoCotacoesServico.js';
+import { aplicarObservacaoTde } from '../fretes/origemEtk.js';
+import { servicoBuscarTransportadoraOmie } from '../fretes/transportadoraOmieServico.js';
 import { ErroCnpjDestinatarioNaoDisponivel, ErroDadosCotacaoIncompletos, servicoCotarBraspress } from '../fretes/braspressServico.js';
 import {
   ErroBraspressFalhou,
@@ -244,7 +246,9 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         motoristaNome: validarTextoOpcional(req.body?.motoristaNome, 'motoristaNome'),
         custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
         valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
-        observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+        observacoes: aplicarObservacaoTde(validarTextoOpcional(req.body?.observacoes, 'observacoes'), req.body?.entregaProgramadaTde === true),
+        peso: validarNumeroNaoNegativoOpcional(req.body?.peso, 'peso'),
+        volumes: validarInteiroNaoNegativoOpcional(req.body?.volumes, 'volumes'),
       };
       const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, 'ORCAMENTO', destinoOverride, dadosComplementares, req.usuario!.id);
       res.status(201).json(cotacao);
@@ -259,6 +263,21 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     assincrono(async (req, res) => {
       const somenteAtivas = req.query.somenteAtivas === 'true';
       res.json({ transportadoras: await servicoListarTransportadoras(somenteAtivas) });
+    }),
+  );
+
+  // Busca somente-leitura na Omie (CNPJ > razão social > nome fantasia). Nunca cria nada.
+  rotas.post(
+    '/api/fretes/transportadoras/buscar-omie',
+    ...protegida,
+    assincrono(async (req, res) => {
+      res.json(
+        await servicoBuscarTransportadoraOmie(cliente, {
+          cnpj: validarCnpjOpcional(req.body?.cnpj),
+          razaoSocial: validarTextoOpcional(req.body?.razaoSocial, 'razaoSocial'),
+          nomeFantasia: validarTextoOpcional(req.body?.nomeFantasia, 'nomeFantasia'),
+        }),
+      );
     }),
   );
 
@@ -420,7 +439,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         veiculoId: validarUuidOpcional(req.body?.veiculoId, 'veiculoId'),
         motoristaNome: validarTextoOpcional(req.body?.motoristaNome, 'motoristaNome'),
         custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
-        observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+        observacoes: aplicarObservacaoTde(validarTextoOpcional(req.body?.observacoes, 'observacoes'), req.body?.entregaProgramadaTde === true),
       };
       const cotacao = await servicoCriarCotacao(dados, req.usuario!.id);
       res.status(201).json(cotacao);
@@ -443,7 +462,6 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       const id = validarUuid(req.params.id, 'id');
       const dados: Record<string, unknown> = {};
       if (req.body?.origem !== undefined) dados.origem = validarTextoOpcional(req.body.origem, 'origem');
-      if (req.body?.cepOrigem !== undefined) dados.cepOrigem = validarTextoOpcional(req.body.cepOrigem, 'cepOrigem');
       if (req.body?.destino !== undefined) dados.destino = validarTextoOpcional(req.body.destino, 'destino');
       if (req.body?.cepDestino !== undefined) dados.cepDestino = validarTextoOpcional(req.body.cepDestino, 'cepDestino');
       if (req.body?.peso !== undefined) dados.peso = validarNumeroNaoNegativoOpcional(req.body.peso, 'peso');

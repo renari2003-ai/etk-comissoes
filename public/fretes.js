@@ -839,6 +839,106 @@ export function inicializarFretes() {
     }
     const formNovaTransportadora = el('fretes-form-nova-transportadora');
     const erroTransportadora = el('fretes-transportadora-erro');
+    const campoCodigoOmieOculto = el('fretes-transportadora-codigo-omie');
+    const statusBuscaOmie = el('fretes-transportadora-omie-status');
+    const areaOpcoesOmie = el('fretes-transportadora-omie-opcoes');
+    const corpoOpcoesOmie = el('fretes-transportadora-omie-opcoes-corpo');
+    const botaoBuscarOmie = el('fretes-transportadora-botao-buscar-omie');
+    function formatarCnpjExibicao(cnpj) {
+        if (cnpj === null)
+            return '—';
+        return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    }
+    function preencherCampoTransportadora(id, valor) {
+        el(id).value = valor ?? '';
+    }
+    function aplicarTransportadoraOmie(o) {
+        preencherCampoTransportadora('fretes-transportadora-razao', o.razaoSocial);
+        preencherCampoTransportadora('fretes-transportadora-fantasia', o.nomeFantasia);
+        preencherCampoTransportadora('fretes-transportadora-cnpj', formatarCnpjExibicao(o.cnpjCpf) === '—' ? null : formatarCnpjExibicao(o.cnpjCpf));
+        preencherCampoTransportadora('fretes-transportadora-email', o.email);
+        preencherCampoTransportadora('fretes-transportadora-telefone', o.telefone);
+        preencherCampoTransportadora('fretes-transportadora-contato', o.contato);
+        campoCodigoOmieOculto.value = String(o.codigo); // vínculo técnico interno — nunca exibido
+        areaOpcoesOmie.hidden = true;
+        statusBuscaOmie.textContent = 'Dados preenchidos a partir da Omie. Confira e clique em "Criar transportadora".';
+        statusBuscaOmie.hidden = false;
+    }
+    // Alterar o CNPJ à mão invalida o vínculo escolhido — evita ligar um CNPJ a outro cadastro Omie.
+    el('fretes-transportadora-cnpj').addEventListener('input', () => {
+        campoCodigoOmieOculto.value = '';
+    });
+    botaoBuscarOmie.addEventListener('click', () => {
+        void (async () => {
+            erroTransportadora.hidden = true;
+            areaOpcoesOmie.hidden = true;
+            corpoOpcoesOmie.textContent = '';
+            campoCodigoOmieOculto.value = '';
+            const cnpj = textoOuNulo(el('fretes-transportadora-cnpj').value);
+            const razaoSocial = textoOuNulo(el('fretes-transportadora-razao').value);
+            const nomeFantasia = textoOuNulo(el('fretes-transportadora-fantasia').value);
+            botaoBuscarOmie.disabled = true;
+            statusBuscaOmie.textContent = 'Consultando a Omie…';
+            statusBuscaOmie.hidden = false;
+            try {
+                const resposta = await fetch('/api/fretes/transportadoras/buscar-omie', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cnpj, razaoSocial, nomeFantasia }),
+                });
+                if (!resposta.ok) {
+                    statusBuscaOmie.hidden = true;
+                    erroTransportadora.textContent = await extrairMensagemErro(resposta);
+                    erroTransportadora.hidden = false;
+                    return;
+                }
+                const dados = (await resposta.json());
+                if (dados.resultados.length === 0) {
+                    statusBuscaOmie.textContent = 'Não encontrada na Omie. Você pode cadastrar manualmente — o vínculo com a Omie ficará vazio.';
+                    return;
+                }
+                const unicoPorCnpj = dados.criterio === 'CNPJ' && dados.resultados.length === 1;
+                if (unicoPorCnpj) {
+                    const unico = dados.resultados[0];
+                    aplicarTransportadoraOmie(unico);
+                    if (unico.jaCadastrada !== null) {
+                        statusBuscaOmie.textContent = `Atenção: este CNPJ já está cadastrado no ETK como "${unico.jaCadastrada.nomeRazaoSocial}".`;
+                    }
+                    return;
+                }
+                statusBuscaOmie.textContent = `${dados.resultados.length} resultado(s) na Omie. Confira o CNPJ e selecione a empresa correta.`;
+                for (const o of dados.resultados) {
+                    const tr = document.createElement('tr');
+                    const tdCnpj = document.createElement('td');
+                    const forte = document.createElement('strong');
+                    forte.textContent = formatarCnpjExibicao(o.cnpjCpf);
+                    tdCnpj.appendChild(forte);
+                    const tdRazao = document.createElement('td');
+                    tdRazao.textContent = o.razaoSocial;
+                    const tdFantasia = document.createElement('td');
+                    tdFantasia.textContent = o.nomeFantasia ?? '—';
+                    const tdAcao = document.createElement('td');
+                    if (o.jaCadastrada !== null) {
+                        tdAcao.textContent = `Já cadastrada: ${o.jaCadastrada.nomeRazaoSocial}`;
+                    }
+                    else {
+                        const botao = document.createElement('button');
+                        botao.type = 'button';
+                        botao.className = 'botao-secundario';
+                        botao.textContent = 'Selecionar';
+                        botao.addEventListener('click', () => aplicarTransportadoraOmie(o));
+                        tdAcao.appendChild(botao);
+                    }
+                    tr.append(tdCnpj, tdRazao, tdFantasia, tdAcao);
+                    corpoOpcoesOmie.appendChild(tr);
+                }
+                areaOpcoesOmie.hidden = false;
+            }
+            finally {
+                botaoBuscarOmie.disabled = false;
+            }
+        })();
+    });
     formNovaTransportadora.addEventListener('submit', (evento) => {
         evento.preventDefault();
         void (async () => {
@@ -863,6 +963,8 @@ export function inicializarFretes() {
                 return;
             }
             formNovaTransportadora.reset();
+            statusBuscaOmie.hidden = true;
+            areaOpcoesOmie.hidden = true;
             void carregarTransportadoras();
         })();
     });
@@ -1027,39 +1129,171 @@ export function inicializarFretes() {
         radio.addEventListener('change', atualizarCamposPorModalidadeExecucao);
     });
     atualizarCamposPorModalidadeExecucao();
+    // --- Orçamento (proposta) da Omie: consulta e conferência ANTES de criar (somente leitura) ---
+    // Consultar NÃO cria cotação: só preenche a tela. A criação acontece apenas no botão "Criar cotação".
+    const inputOrcamento = el('fretes-cotacao-orcamento');
+    const infoOrcamento = el('fretes-cotacao-orcamento-info');
+    const resumoOrcamento = el('fretes-cotacao-orcamento-resumo');
+    const resumoOrcamentoInfo = el('fretes-cotacao-orcamento-resumo-info');
+    /** Orçamento já localizado na Omie e exibido para conferência — `null` até a consulta dar certo. */
+    let orcamentoPreparado = null;
+    let consultaOrcamentoEmAndamento = false;
+    const CAMPOS_PREENCHIDOS_PELO_ORCAMENTO = [
+        'fretes-cotacao-cliente',
+        'fretes-cotacao-vendedor',
+        'fretes-cotacao-valor-mercadoria',
+        'fretes-cotacao-destino',
+        'fretes-cotacao-cep-destino',
+        'fretes-cotacao-peso',
+        'fretes-cotacao-volumes',
+    ];
+    function definirValorCampoCotacao(id, valor) {
+        el(id).value = valor === null ? '' : String(valor);
+    }
+    function resumoDestinoOrcamento(d) {
+        const rua = [d.logradouro, d.numero !== null ? `nº ${d.numero}` : null, d.bairro].filter((v) => v !== null && v !== '').join(', ');
+        const cidade = [d.cidade, d.uf].filter((v) => v !== null && v !== '').join('/');
+        return [rua, cidade].filter((v) => v !== '').join(' — ');
+    }
+    /** Troca/edição do número: descarta o orçamento anterior e tudo que ele preencheu. */
+    function limparDadosOrcamento() {
+        orcamentoPreparado = null;
+        infoOrcamento.hidden = true;
+        resumoOrcamento.hidden = true;
+        resumoOrcamentoInfo.textContent = '';
+        for (const id of CAMPOS_PREENCHIDOS_PELO_ORCAMENTO)
+            definirValorCampoCotacao(id, null);
+    }
+    function formatarCnpjResumo(cnpj) {
+        if (cnpj === null)
+            return 'Não disponível';
+        return cnpj.length === 14 ? cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
+    }
+    function exibirResumoOrcamento(p) {
+        resumoOrcamentoInfo.textContent = '';
+        linhaInfo(resumoOrcamentoInfo, 'Orçamento', p.pedidoOmieNumero);
+        linhaInfo(resumoOrcamentoInfo, 'Cliente', textoOuTraco(p.clienteNome));
+        linhaInfo(resumoOrcamentoInfo, 'CNPJ', formatarCnpjResumo(p.clienteCnpj));
+        linhaInfo(resumoOrcamentoInfo, 'Vendedor', p.vendedorNome ?? 'Vendedor não identificado');
+        linhaInfo(resumoOrcamentoInfo, 'Valor total', formatarMoeda(p.valorTotalPedido));
+        linhaInfo(resumoOrcamentoInfo, 'Destino', p.destino === null ? 'Não encontrado na Omie — informe abaixo' : textoOuTraco(resumoDestinoOrcamento(p.destino)));
+        linhaInfo(resumoOrcamentoInfo, 'CEP destino', textoOuTraco(p.destino?.cep ?? null));
+        linhaInfo(resumoOrcamentoInfo, 'Peso bruto', p.logistica.pesoBruto !== null ? `${p.logistica.pesoBruto} kg` : 'Não informado');
+        linhaInfo(resumoOrcamentoInfo, 'Volumes', p.logistica.quantidadeVolumes !== null ? String(p.logistica.quantidadeVolumes) : 'Não informado');
+        linhaInfo(resumoOrcamentoInfo, 'Espécie', p.logistica.especieVolumes ?? 'Não informado');
+        linhaInfo(resumoOrcamentoInfo, 'CIF/FOB (Omie)', p.logistica.cifFobOmie ?? 'Não informado');
+        linhaInfo(resumoOrcamentoInfo, 'Etapa na Omie', p.rotuloEtapaOmie);
+        resumoOrcamento.hidden = false;
+    }
+    /** Só consulta e preenche a tela — nunca cria cotação. Devolve true se o orçamento está localizado. */
+    async function consultarOrcamentoNaOmie() {
+        erroCotacao.hidden = true;
+        const numero = inputOrcamento.value.trim();
+        if (numero === '')
+            return false;
+        if (orcamentoPreparado !== null && orcamentoPreparado.numero === numero)
+            return true;
+        if (consultaOrcamentoEmAndamento)
+            return false;
+        consultaOrcamentoEmAndamento = true;
+        infoOrcamento.textContent = 'Consultando a Omie…';
+        infoOrcamento.hidden = false;
+        try {
+            // Sempre a rota de ORÇAMENTO — nunca a de Pedido (o serviço rejeita se o número for de um Pedido).
+            const resposta = await fetch(`/api/fretes/omie/orcamentos/${encodeURIComponent(numero)}/preparar`);
+            if (inputOrcamento.value.trim() !== numero)
+                return false; // o operador já trocou o número durante a consulta
+            if (!resposta.ok) {
+                limparDadosOrcamento();
+                erroCotacao.textContent = await extrairMensagemErro(resposta);
+                erroCotacao.hidden = false;
+                return false;
+            }
+            const p = (await resposta.json());
+            orcamentoPreparado = { numero, preparacao: p };
+            definirValorCampoCotacao('fretes-cotacao-cliente', p.clienteOmieId);
+            definirValorCampoCotacao('fretes-cotacao-vendedor', p.vendedorOmieId);
+            definirValorCampoCotacao('fretes-cotacao-valor-mercadoria', p.valorTotalPedido || null);
+            definirValorCampoCotacao('fretes-cotacao-destino', p.destino === null ? null : resumoDestinoOrcamento(p.destino));
+            definirValorCampoCotacao('fretes-cotacao-cep-destino', p.destino?.cep ?? null);
+            definirValorCampoCotacao('fretes-cotacao-peso', p.logistica.pesoBruto);
+            definirValorCampoCotacao('fretes-cotacao-volumes', p.logistica.quantidadeVolumes);
+            exibirResumoOrcamento(p);
+            infoOrcamento.textContent = 'Orçamento localizado. Confira os dados e clique em "Criar cotação" para confirmar.';
+            return true;
+        }
+        finally {
+            consultaOrcamentoEmAndamento = false;
+        }
+    }
+    inputOrcamento.addEventListener('input', limparDadosOrcamento);
+    inputOrcamento.addEventListener('change', () => void consultarOrcamentoNaOmie());
+    inputOrcamento.addEventListener('keydown', (evento) => {
+        if (evento.key !== 'Enter')
+            return;
+        evento.preventDefault(); // Enter no campo consulta o orçamento; nunca envia o formulário (não cria cotação)
+        void consultarOrcamentoNaOmie();
+    });
     formNovaCotacao.addEventListener('submit', (evento) => {
         evento.preventDefault();
         void (async () => {
             erroCotacao.hidden = true;
             const dadosForm = new FormData(formNovaCotacao);
-            const resposta = await fetch('/api/fretes/cotacoes', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    pedidoOmieId: numeroOuNulo(dadosForm.get('pedidoOmieId')),
-                    clienteOmieId: numeroOuNulo(dadosForm.get('clienteOmieId')),
-                    vendedorOmieId: numeroOuNulo(dadosForm.get('vendedorOmieId')),
-                    origem: textoOuNulo(dadosForm.get('origem')),
-                    cepOrigem: textoOuNulo(dadosForm.get('cepOrigem')),
-                    destino: textoOuNulo(dadosForm.get('destino')),
-                    cepDestino: textoOuNulo(dadosForm.get('cepDestino')),
-                    peso: numeroOuNulo(dadosForm.get('peso')),
-                    volumes: numeroOuNulo(dadosForm.get('volumes')),
-                    valorMercadoria: numeroOuNulo(dadosForm.get('valorMercadoria')),
-                    modalidade: dadosForm.get('modalidade'),
-                    modalidadeExecucao: dadosForm.get('modalidadeExecucao'),
-                    veiculoId: textoOuNulo(dadosForm.get('veiculoId')),
-                    motoristaNome: textoOuNulo(dadosForm.get('motoristaNome')),
-                    custoManual: numeroOuNulo(dadosForm.get('custoManual')),
-                    observacoes: textoOuNulo(dadosForm.get('observacoes')),
-                }),
-            });
+            const entregaProgramadaTde = dadosForm.get('entregaProgramadaTde') !== null;
+            const comuns = {
+                modalidade: dadosForm.get('modalidade'),
+                modalidadeExecucao: dadosForm.get('modalidadeExecucao'),
+                veiculoId: textoOuNulo(dadosForm.get('veiculoId')),
+                motoristaNome: textoOuNulo(dadosForm.get('motoristaNome')),
+                custoManual: numeroOuNulo(dadosForm.get('custoManual')),
+                valorMercadoria: numeroOuNulo(dadosForm.get('valorMercadoria')),
+                observacoes: textoOuNulo(dadosForm.get('observacoes')),
+                entregaProgramadaTde,
+            };
+            const numeroOrcamento = inputOrcamento.value.trim();
+            let resposta;
+            if (numeroOrcamento !== '') {
+                if (orcamentoPreparado === null || orcamentoPreparado.numero !== numeroOrcamento) {
+                    // Número ainda não conferido: consulta e exibe os dados, mas NÃO cria — o operador confirma num novo clique.
+                    if (await consultarOrcamentoNaOmie()) {
+                        erroCotacao.textContent = 'Confira os dados do orçamento exibidos acima e clique em "Criar cotação" novamente para confirmar.';
+                        erroCotacao.hidden = false;
+                    }
+                    return;
+                }
+                // Orçamento: o backend relê a Omie (fonte da verdade); o destino só é enviado se a Omie não tiver um.
+                const cepDestino = textoOuNulo(dadosForm.get('cepDestino'));
+                const destinoOverride = orcamentoPreparado.preparacao.destino === null && cepDestino !== null ? { cep: cepDestino } : null;
+                resposta = await fetch(`/api/fretes/omie/orcamentos/${encodeURIComponent(numeroOrcamento)}/confirmar`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...comuns, destinoOverride, peso: numeroOuNulo(dadosForm.get('peso')), volumes: numeroOuNulo(dadosForm.get('volumes')) }),
+                });
+            }
+            else {
+                // Cotação manual (sem orçamento). O CEP de origem é definido pelo backend.
+                resposta = await fetch('/api/fretes/cotacoes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...comuns,
+                        clienteOmieId: numeroOuNulo(dadosForm.get('clienteOmieId')),
+                        vendedorOmieId: numeroOuNulo(dadosForm.get('vendedorOmieId')),
+                        origem: textoOuNulo(dadosForm.get('origem')),
+                        destino: textoOuNulo(dadosForm.get('destino')),
+                        cepDestino: textoOuNulo(dadosForm.get('cepDestino')),
+                        peso: numeroOuNulo(dadosForm.get('peso')),
+                        volumes: numeroOuNulo(dadosForm.get('volumes')),
+                    }),
+                });
+            }
             if (!resposta.ok) {
                 erroCotacao.textContent = await extrairMensagemErro(resposta);
                 erroCotacao.hidden = false;
                 return;
             }
             formNovaCotacao.reset();
+            limparDadosOrcamento();
             atualizarCamposPorModalidadeExecucao();
             void carregarCotacoes();
         })();
@@ -1804,7 +2038,7 @@ export function inicializarFretes() {
         linhaInfo(infoPedido, 'Tipo de documento', preparacao.documentoOmieTipo === 'ORCAMENTO' ? `Orçamento (etapa: ${preparacao.rotuloEtapaOmie})` : `Pedido (etapa: ${preparacao.rotuloEtapaOmie})`);
         linhaInfo(infoPedido, 'Número do documento', preparacao.pedidoOmieNumero);
         linhaInfo(infoPedido, 'Cliente', textoOuTraco(preparacao.clienteNome));
-        linhaInfo(infoPedido, 'Vendedor (código Omie)', preparacao.vendedorOmieId !== null ? String(preparacao.vendedorOmieId) : '—');
+        linhaInfo(infoPedido, 'Vendedor', preparacao.vendedorNome ?? 'Vendedor não identificado');
         linhaInfo(infoPedido, 'Valor total do pedido', formatarMoeda(preparacao.valorTotalPedido));
         if (preparacao.cotacoesExistentes.length > 0) {
             avisoDuplicidade.textContent = `Este pedido já possui ${preparacao.cotacoesExistentes.length} cotação(ões) de frete: ${preparacao.cotacoesExistentes.map((c) => `${c.codigo} (${ROTULOS_STATUS_COTACAO[c.status]})`).join(', ')}. Você ainda pode continuar — isso é só um aviso.`;

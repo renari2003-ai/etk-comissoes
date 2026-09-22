@@ -67,6 +67,20 @@ export async function buscarTransportadoraPorId(id: string): Promise<Transportad
   return linha === undefined ? null : linhaParaTransportadora(linha);
 }
 
+/** CNPJ é a chave de duplicidade — compara só dígitos, inclusive com cadastros antigos gravados com máscara. */
+export async function buscarTransportadoraPorCnpj(cnpj: string): Promise<Transportadora | null> {
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const digitos = cnpj.replace(/\D/g, '');
+  if (digitos === '') return null;
+  const { rows } = await pool.query<LinhaTransportadora>(
+    `SELECT * FROM ${nomeTabelaTransportadoras()} WHERE regexp_replace(COALESCE(cnpj, ''), '\\D', '', 'g') = $1 LIMIT 1`,
+    [digitos],
+  );
+  const linha = rows[0];
+  return linha === undefined ? null : linhaParaTransportadora(linha);
+}
+
 export async function criarTransportadora(dados: DadosTransportadora): Promise<Transportadora> {
   await garantirEsquemaFretes();
   const pool = obterPool();

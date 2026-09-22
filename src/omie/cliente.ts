@@ -136,6 +136,17 @@ export interface Cliente {
   cnpjCpf: string | null;
 }
 
+/** Resultado enxuto de `buscarClientes` (localização de transportadora). `codigo` é o vínculo técnico interno — nunca exibido. */
+export interface ClienteBuscaOmie {
+  codigo: number;
+  razaoSocial: string;
+  nomeFantasia: string | null;
+  cnpjCpf: string | null;
+  email: string | null;
+  telefone: string | null;
+  contato: string | null;
+}
+
 /** Campos usados de `ConsultarProduto` — a Omie devolve muito mais campos além destes. */
 export interface ProdutoOmie {
   codigo_produto: number;
@@ -492,6 +503,66 @@ export class ClienteOmie {
         throw erro;
       }
     });
+  }
+
+  /**
+   * Busca de cadastros por CNPJ, razão social ou nome fantasia (`ListarClientes`,
+   * `/geral/clientes/`, filtro `clientesFiltro`) — SOMENTE LEITURA, usada para localizar a
+   * transportadora na Omie. Sem cache (a busca é uma ação pontual do usuário). CNPJ tem
+   * prioridade: quando informado, só ele é usado e o resultado é filtrado por igualdade exata
+   * de dígitos (a Omie guarda o CNPJ mascarado ou não, então tenta as duas formas).
+   */
+  async buscarClientes(filtro: { cnpj?: string; razaoSocial?: string; nomeFantasia?: string }): Promise<ClienteBuscaOmie[]> {
+    const digitos = (filtro.cnpj ?? '').replace(/\D/g, '');
+    const tentativas: Record<string, string>[] = [];
+    if (digitos !== '') {
+      const mascarado = digitos.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+      tentativas.push({ cnpj_cpf: mascarado }, { cnpj_cpf: digitos });
+    } else if ((filtro.razaoSocial ?? '').trim() !== '') {
+      tentativas.push({ razao_social: filtro.razaoSocial!.trim() });
+    } else if ((filtro.nomeFantasia ?? '').trim() !== '') {
+      tentativas.push({ nome_fantasia: filtro.nomeFantasia!.trim() });
+    } else {
+      return [];
+    }
+
+    for (const clientesFiltro of tentativas) {
+      let lista: ClienteBuscaOmie[];
+      try {
+        const resposta = await this.chamar<{
+          clientes_cadastro?: Array<{
+            codigo_cliente_omie: number;
+            razao_social?: string;
+            nome_fantasia?: string;
+            cnpj_cpf?: string;
+            email?: string;
+            telefone1_ddd?: string;
+            telefone1_numero?: string;
+            contato?: string;
+          }>;
+        }>('/geral/clientes/', 'ListarClientes', { pagina: 1, registros_por_pagina: 20, apenas_importado_api: 'N', clientesFiltro });
+        lista = (resposta.clientes_cadastro ?? []).map((c) => {
+          const telefone = `${c.telefone1_ddd ?? ''} ${c.telefone1_numero ?? ''}`.trim();
+          const cnpjCpf = (c.cnpj_cpf ?? '').replace(/\D/g, '');
+          return {
+            codigo: c.codigo_cliente_omie,
+            razaoSocial: (c.razao_social ?? '').trim(),
+            nomeFantasia: (c.nome_fantasia ?? '').trim() === '' ? null : c.nome_fantasia!.trim(),
+            cnpjCpf: cnpjCpf === '' ? null : cnpjCpf,
+            email: (c.email ?? '').trim() === '' ? null : c.email!.trim(),
+            telefone: telefone === '' ? null : telefone,
+            contato: (c.contato ?? '').trim() === '' ? null : c.contato!.trim(),
+          };
+        });
+      } catch (erro) {
+        // A Omie responde com falha (não lista vazia) quando o filtro não encontra registros.
+        if (erro instanceof OmieError && /n[ãa]o existem registros/i.test(erro.message)) continue;
+        throw erro;
+      }
+      const resultado = digitos !== '' ? lista.filter((c) => c.cnpjCpf === digitos) : lista;
+      if (resultado.length > 0) return resultado;
+    }
+    return [];
   }
 
   /**

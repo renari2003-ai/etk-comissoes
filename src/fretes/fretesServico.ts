@@ -24,6 +24,7 @@ import {
   type DadosNovaCotacao,
   type FiltrosCotacao,
 } from './cotacoesRepositorio.js';
+import { CEP_ORIGEM_ETK } from './origemEtk.js';
 import { formatarDestinoTexto, prepararCotacaoDeOmie, type PreparacaoCotacaoOmie } from './omieFretes.js';
 import type { DestinoManualInformado } from './validacao.js';
 import { buscarFechamentoPorCotacao, inserirFechamento, resumirFechamentos, resumirFechamentosPorModalidade, type ResumoFechamentos } from './fechamentosRepositorio.js';
@@ -50,6 +51,7 @@ import {
 } from './composicaoComercialRepositorio.js';
 import {
   atualizarTransportadora,
+  buscarTransportadoraPorCnpj,
   criarTransportadora,
   definirAtivaTransportadora,
   listarTransportadoras,
@@ -96,6 +98,12 @@ export async function servicoListarTransportadoras(somenteAtivas: boolean): Prom
 }
 
 export async function servicoCriarTransportadora(dados: DadosTransportadora, usuarioId: string): Promise<Transportadora> {
+  if (dados.cnpj !== null) {
+    const existente = await buscarTransportadoraPorCnpj(dados.cnpj);
+    if (existente !== null) {
+      throw new ErroValidacao(`Já existe uma transportadora cadastrada com este CNPJ: ${existente.nomeRazaoSocial}.`);
+    }
+  }
   const transportadora = await criarTransportadora(dados);
   await registrarAuditoria({
     usuarioId,
@@ -195,7 +203,8 @@ async function validarCamposPorModalidadeExecucao(
 
 export async function servicoCriarCotacao(dados: DadosNovaCotacao, usuarioId: string): Promise<CotacaoFrete> {
   await validarCamposPorModalidadeExecucao(dados.modalidadeExecucao, dados.veiculoId);
-  const cotacao = await criarCotacao(dados, usuarioId);
+  // CEP de origem é sempre o da ETK (backend) — o valor enviado pelo navegador é ignorado.
+  const cotacao = await criarCotacao({ ...dados, cepOrigem: CEP_ORIGEM_ETK }, usuarioId);
   await registrarAuditoria({ usuarioId, acao: 'COTACAO_CRIADA', entidade: 'cotacao_frete', entidadeId: cotacao.id, valorNovo: cotacao });
   return cotacao;
 }
@@ -271,6 +280,9 @@ export interface DadosComplementaresCotacaoOmie {
   custoManual: number | null;
   valorMercadoria: number | null;
   observacoes: string | null;
+  /** Só complementam o que a Omie não trouxe (peso/volumes da Omie sempre têm prioridade). */
+  peso?: number | null;
+  volumes?: number | null;
 }
 
 /**
@@ -308,7 +320,7 @@ export async function servicoCriarCotacaoDeOmie(
     vendedorOmieId: preparacao.vendedorOmieId,
     clienteNomeSnapshot: preparacao.clienteNome,
     origem: null,
-    cepOrigem: null,
+    cepOrigem: CEP_ORIGEM_ETK,
     destino: formatarDestinoTexto(destinoFinal),
     cepDestino: destinoFinal.cep,
     origemDestino: destinoFinal.origem,
@@ -319,10 +331,10 @@ export async function servicoCriarCotacaoDeOmie(
     cidadeDestino: destinoFinal.cidade,
     ufDestino: destinoFinal.uf,
     codigoMunicipioDestino: destinoFinal.codigoMunicipio,
-    peso: preparacao.logistica.pesoBruto,
+    peso: preparacao.logistica.pesoBruto ?? dadosComplementares.peso ?? null,
     pesoBruto: preparacao.logistica.pesoBruto,
     pesoLiquido: preparacao.logistica.pesoLiquido,
-    volumes: preparacao.logistica.quantidadeVolumes,
+    volumes: preparacao.logistica.quantidadeVolumes ?? dadosComplementares.volumes ?? null,
     especieVolumes: preparacao.logistica.especieVolumes,
     cifFobOmie: preparacao.logistica.cifFobOmie,
     transportadoraOmieCodigo: preparacao.logistica.transportadoraOmieCodigo,

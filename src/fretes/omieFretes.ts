@@ -116,7 +116,11 @@ export interface PreparacaoCotacaoOmie {
   rotuloEtapaOmie: string;
   clienteOmieId: number | null;
   clienteNome: string | null;
+  /** CNPJ/CPF do cadastro do cliente (só dígitos) — só exibição para conferência; nunca persistido pela preparação. */
+  clienteCnpj: string | null;
   vendedorOmieId: number | null;
+  /** Nome do vendedor (`ListarVendedores`, só leitura) para exibição — `null` se não localizado; o código continua só como dado interno. */
+  vendedorNome: string | null;
   destino: EnderecoDestino | null;
   logistica: DadosLogisticosOmie;
   itens: ItemPreparacao[];
@@ -158,6 +162,16 @@ export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroDocument
   const codigoCliente = pedido.cabecalho.codigo_cliente || null;
   const registroCliente = codigoCliente !== null ? await cliente.consultarCliente(codigoCliente) : null;
 
+  const vendedorOmieId = extrairCodigoVendedor(pedido);
+  let vendedorNome: string | null = null;
+  if (vendedorOmieId !== null) {
+    try {
+      vendedorNome = textoOuNull((await cliente.listarVendedores()).find((v) => v.codigo === vendedorOmieId)?.nome);
+    } catch {
+      vendedorNome = null; // nome é só exibição — falha na consulta nunca bloqueia a preparação
+    }
+  }
+
   const enderecoEntrega = registroCliente?.enderecoEntrega;
   const clienteEntrega: CandidatoEndereco | null =
     enderecoEntrega === null || enderecoEntrega === undefined ? null : { ...enderecoEntrega, complemento: null, codigoMunicipio: null };
@@ -183,7 +197,9 @@ export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroDocument
     rotuloEtapaOmie: classificacao.rotulo,
     clienteOmieId: codigoCliente,
     clienteNome: registroCliente !== null ? textoOuNull(registroCliente.razaoSocial) ?? textoOuNull(registroCliente.nomeFantasia) : null,
-    vendedorOmieId: extrairCodigoVendedor(pedido),
+    clienteCnpj: registroCliente?.cnpjCpf ?? null,
+    vendedorOmieId,
+    vendedorNome,
     destino,
     logistica: extrairDadosLogisticos(pedido),
     itens,

@@ -195,8 +195,13 @@
           <input id="fretes-cotacao-custo-manual" name="custoManual" type="number" min="0" step="0.01" />
         </div>
         <div class="campo-filtro">
-          <label for="fretes-cotacao-pedido">Pedido Omie (nº)</label>
-          <input id="fretes-cotacao-pedido" name="pedidoOmieId" type="number" min="1" />
+          <label for="fretes-cotacao-orcamento">Orçamento (proposta)</label>
+          <input id="fretes-cotacao-orcamento" name="orcamentoOmieNumero" type="text" inputmode="numeric" />
+        </div>
+        <p id="fretes-cotacao-orcamento-info" class="filtro-data-legenda campo-filtro-checkbox" hidden aria-live="polite"></p>
+        <div id="fretes-cotacao-orcamento-resumo" class="painel-fechamento" hidden>
+          <h4>Orçamento localizado na Omie — confira antes de criar</h4>
+          <div id="fretes-cotacao-orcamento-resumo-info"></div>
         </div>
         <div class="campo-filtro">
           <label for="fretes-cotacao-cliente">Cliente Omie (código)</label>
@@ -209,10 +214,6 @@
         <div class="campo-filtro">
           <label for="fretes-cotacao-origem">Origem</label>
           <input id="fretes-cotacao-origem" name="origem" type="text" />
-        </div>
-        <div class="campo-filtro">
-          <label for="fretes-cotacao-cep-origem">CEP origem</label>
-          <input id="fretes-cotacao-cep-origem" name="cepOrigem" type="text" />
         </div>
         <div class="campo-filtro">
           <label for="fretes-cotacao-destino">Destino</label>
@@ -245,6 +246,7 @@
           <label for="fretes-cotacao-observacoes">Observações</label>
           <input id="fretes-cotacao-observacoes" name="observacoes" type="text" />
         </div>
+        <label class="campo-filtro-checkbox"><input type="checkbox" id="fretes-cotacao-tde" name="entregaProgramadaTde" /> Entrega com data programada, favor incluir a taxa (TDE) na cotação.</label>
         <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar cotação</button>
       </form>
       <p id="fretes-cotacao-erro" class="painel-login-erro" hidden></p>
@@ -607,12 +609,24 @@
           <label for="fretes-transportadora-contato">Contato</label>
           <input id="fretes-transportadora-contato" name="contato" type="text" />
         </div>
-        <div class="campo-filtro">
-          <label for="fretes-transportadora-codigo-omie">Código Omie</label>
-          <input id="fretes-transportadora-codigo-omie" name="codigoClienteOmie" type="number" min="1" step="1" placeholder="Opcional — habilita e-mail automático" />
-        </div>
+        <input id="fretes-transportadora-codigo-omie" name="codigoClienteOmie" type="hidden" />
+        <button type="button" id="fretes-transportadora-botao-buscar-omie" class="botao-secundario">Buscar na Omie</button>
         <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar transportadora</button>
       </form>
+      <p id="fretes-transportadora-omie-status" class="filtro-data-legenda" hidden aria-live="polite"></p>
+      <div id="fretes-transportadora-omie-opcoes" class="tabela-rolagem" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">CNPJ</th>
+              <th scope="col">Razão social</th>
+              <th scope="col">Nome fantasia</th>
+              <th scope="col">Ação</th>
+            </tr>
+          </thead>
+          <tbody id="fretes-transportadora-omie-opcoes-corpo"></tbody>
+        </table>
+      </div>
       <p id="fretes-transportadora-erro" class="painel-login-erro" hidden></p>
 
       <div class="area-tabela-cabecalho">
