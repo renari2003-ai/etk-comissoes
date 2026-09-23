@@ -2163,6 +2163,17 @@ export function inicializarFretes() {
             return;
         const dados = (await resposta.json());
         vazio.hidden = dados.pendentesValidacao.length > 0;
+        if (dados.pendentesValidacao.length > 0) {
+            // Cabeçalho das colunas — só aparece no layout em linha (desktop), via CSS.
+            const cabecalho = document.createElement('div');
+            cabecalho.className = 'fretes-proposta-recebida-grade fretes-proposta-recebida-cabecalho';
+            for (const rotulo of ['Transportadora', 'Canal', 'Custo', 'Prazo (dias)', 'Validade', 'Confiança', 'Observações', 'Ações']) {
+                const span = document.createElement('span');
+                span.textContent = rotulo;
+                cabecalho.appendChild(span);
+            }
+            lista.appendChild(cabecalho);
+        }
         for (const proposta of dados.pendentesValidacao) {
             lista.appendChild(await construirCardPropostaPendente(proposta));
         }
@@ -2186,70 +2197,87 @@ export function inicializarFretes() {
         const transportadora = transportadorasCache.find((t) => t.id === proposta.transportadoraId);
         const respostaOrigem = await fetch(`/api/fretes/propostas/${proposta.id}/origem`);
         const origem = respostaOrigem.ok ? (await respostaOrigem.json()) : null;
+        // Layout em linha (desktop: uma proposta por linha, colunas alinhadas com o cabeçalho
+        // da lista; tela estreita: empilhado). Só apresentação — mesmos campos e mesmas ações.
         const card = document.createElement('section');
-        card.className = 'painel-fechamento';
-        const titulo = document.createElement('h3');
-        titulo.className = 'titulo-secao';
-        titulo.textContent = `${transportadora?.nomeRazaoSocial ?? 'Transportadora'} ${proposta.requerRevisao ? '⚠️ requer revisão' : ''}`;
-        card.appendChild(titulo);
-        if (origem !== null) {
-            const mensagem = document.createElement('p');
-            mensagem.className = 'filtro-data-legenda';
-            mensagem.textContent = `Mensagem original (${ROTULOS_CANAL[origem.resposta.canal]}, ${formatarDataHoraOuTraco(origem.resposta.dataRecebimento)}): ${origem.resposta.conteudoBruto ?? '—'}`;
-            card.appendChild(mensagem);
-            if (origem.extracao.dadosExtraidos.confianca !== null) {
-                const confianca = document.createElement('p');
-                confianca.className = 'filtro-data-legenda';
-                confianca.textContent = `Confiança da extração: ${Math.round(origem.extracao.dadosExtraidos.confianca * 100)}% (apenas alerta — nunca decide sozinha)`;
-                card.appendChild(confianca);
-            }
-            if (origem.extracao.dadosExtraidos.taxas !== null && origem.extracao.dadosExtraidos.taxas.length > 0) {
-                const taxas = document.createElement('p');
-                taxas.className = 'filtro-data-legenda';
-                taxas.textContent = `Componentes adicionais informados: ${origem.extracao.dadosExtraidos.taxas.map((t) => `${t.nome}: ${formatarMoeda(t.valor)}`).join(', ')} — confira se devem ser somados ao custo abaixo.`;
-                card.appendChild(taxas);
-            }
-        }
-        const form = document.createElement('form');
-        form.className = 'filtros-relatorio';
-        form.autocomplete = 'off';
-        const campoCusto = document.createElement('div');
-        campoCusto.className = 'campo-filtro';
-        campoCusto.innerHTML = '<label>Custo (transportadora)</label>';
+        card.className = 'fretes-proposta-recebida';
+        const grade = document.createElement('div');
+        grade.className = 'fretes-proposta-recebida-grade';
+        card.appendChild(grade);
+        /** Célula com rótulo próprio (visível só no layout empilhado; no desktop o cabeçalho da lista faz esse papel). */
+        const celula = (rotulo, classeExtra = '') => {
+            const div = document.createElement('div');
+            div.className = `fretes-proposta-celula ${classeExtra}`.trim();
+            const span = document.createElement('span');
+            span.className = 'fretes-proposta-celula-rotulo';
+            span.textContent = rotulo;
+            div.appendChild(span);
+            grade.appendChild(div);
+            return div;
+        };
+        const texto = (container, valor, classe = 'fretes-proposta-celula-valor') => {
+            const span = document.createElement('span');
+            span.className = classe;
+            span.textContent = valor;
+            container.appendChild(span);
+        };
+        const celulaTransportadora = celula('Transportadora', 'fretes-proposta-celula-transportadora');
+        texto(celulaTransportadora, transportadora?.nomeRazaoSocial ?? 'Transportadora');
+        if (proposta.requerRevisao)
+            texto(celulaTransportadora, '⚠ Requer revisão', 'fretes-proposta-alerta');
+        const celulaCanal = celula('Canal');
+        texto(celulaCanal, origem !== null ? ROTULOS_CANAL[origem.resposta.canal] : '—');
+        if (origem !== null)
+            texto(celulaCanal, formatarDataHoraOuTraco(origem.resposta.dataRecebimento), 'fretes-proposta-celula-detalhe');
+        const campoEditavel = (rotulo, input, classeExtra = '') => {
+            input.setAttribute('aria-label', rotulo);
+            celula(rotulo, classeExtra).appendChild(input);
+        };
         const inputCusto = document.createElement('input');
         inputCusto.type = 'number';
         inputCusto.min = '0';
         inputCusto.step = '0.01';
         inputCusto.value = String(proposta.valorCusto);
-        campoCusto.appendChild(inputCusto);
-        form.appendChild(campoCusto);
-        const campoPrazo = document.createElement('div');
-        campoPrazo.className = 'campo-filtro';
-        campoPrazo.innerHTML = '<label>Prazo (dias)</label>';
+        campoEditavel('Custo (transportadora)', inputCusto);
         const inputPrazo = document.createElement('input');
         inputPrazo.type = 'number';
         inputPrazo.min = '0';
         inputPrazo.step = '1';
         inputPrazo.value = proposta.prazoDias !== null ? String(proposta.prazoDias) : '';
-        campoPrazo.appendChild(inputPrazo);
-        form.appendChild(campoPrazo);
-        const campoValidade = document.createElement('div');
-        campoValidade.className = 'campo-filtro';
-        campoValidade.innerHTML = '<label>Validade</label>';
+        campoEditavel('Prazo (dias)', inputPrazo);
         const inputValidade = document.createElement('input');
         inputValidade.type = 'date';
         inputValidade.value = proposta.validade ?? '';
-        campoValidade.appendChild(inputValidade);
-        form.appendChild(campoValidade);
-        const campoObs = document.createElement('div');
-        campoObs.className = 'campo-filtro campo-filtro-busca';
-        campoObs.innerHTML = '<label>Observações</label>';
+        campoEditavel('Validade', inputValidade);
+        const confiancaExtraida = origem?.extracao.dadosExtraidos.confianca ?? null;
+        const celulaConfianca = celula('Confiança');
+        texto(celulaConfianca, confiancaExtraida !== null ? `${Math.round(confiancaExtraida * 100)}%` : '—');
+        celulaConfianca.title = 'Apenas alerta — nunca decide sozinha';
         const inputObs = document.createElement('input');
         inputObs.type = 'text';
         inputObs.value = proposta.observacoes ?? '';
-        campoObs.appendChild(inputObs);
-        form.appendChild(campoObs);
-        card.appendChild(form);
+        campoEditavel('Observações', inputObs, 'fretes-proposta-celula-observacoes');
+        const celulaAcoes = celula('Ações', 'fretes-proposta-celula-acoes');
+        // Informações de apoio (abaixo da linha): componentes adicionais sempre visíveis (afetam a
+        // conferência do custo); a mensagem original fica recolhida para não alongar o card.
+        if (origem !== null) {
+            if (origem.extracao.dadosExtraidos.taxas !== null && origem.extracao.dadosExtraidos.taxas.length > 0) {
+                const taxas = document.createElement('p');
+                taxas.className = 'filtro-data-legenda fretes-proposta-apoio';
+                taxas.textContent = `Componentes adicionais informados: ${origem.extracao.dadosExtraidos.taxas.map((t) => `${t.nome}: ${formatarMoeda(t.valor)}`).join(', ')} — confira se devem ser somados ao custo.`;
+                card.appendChild(taxas);
+            }
+            const detalhes = document.createElement('details');
+            detalhes.className = 'fretes-proposta-apoio';
+            const resumo = document.createElement('summary');
+            resumo.textContent = `Mensagem original (${ROTULOS_CANAL[origem.resposta.canal]}, ${formatarDataHoraOuTraco(origem.resposta.dataRecebimento)})`;
+            detalhes.appendChild(resumo);
+            const conteudo = document.createElement('p');
+            conteudo.className = 'filtro-data-legenda fretes-proposta-mensagem';
+            conteudo.textContent = origem.resposta.conteudoBruto ?? '—';
+            detalhes.appendChild(conteudo);
+            card.appendChild(detalhes);
+        }
         const erro = document.createElement('p');
         erro.className = 'painel-login-erro';
         erro.hidden = true;
@@ -2257,7 +2285,8 @@ export function inicializarFretes() {
         const botaoConfirmar = document.createElement('button');
         botaoConfirmar.type = 'button';
         botaoConfirmar.className = 'botao-secundario';
-        botaoConfirmar.textContent = 'Confirmar (usa os valores acima)';
+        botaoConfirmar.textContent = 'Confirmar';
+        botaoConfirmar.title = 'Confirma usando os valores desta linha';
         botaoConfirmar.addEventListener('click', () => {
             void (async () => {
                 erro.hidden = true;
@@ -2279,7 +2308,7 @@ export function inicializarFretes() {
                 void carregarPropostasRecebidas();
             })();
         });
-        card.appendChild(botaoConfirmar);
+        celulaAcoes.appendChild(botaoConfirmar);
         const botaoRejeitar = document.createElement('button');
         botaoRejeitar.type = 'button';
         botaoRejeitar.className = 'botao-secundario';
@@ -2295,7 +2324,7 @@ export function inicializarFretes() {
                 void carregarPropostasRecebidas();
             })();
         });
-        card.appendChild(botaoRejeitar);
+        celulaAcoes.appendChild(botaoRejeitar);
         return card;
     }
     const formNovaProposta = el('fretes-form-nova-proposta');

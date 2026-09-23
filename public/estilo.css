@@ -1737,17 +1737,90 @@ tfoot tr td:first-child {
   margin-top: 4px;
 }
 
-.fretes-dados-carga {
+/* Dados da carga: largura total (sem o max-width do .painel-fechamento) e grade de 4 colunas
+   no desktop — Destino/Cliente (2ª e 4ª colunas) mais largas; Observações ocupa o resto da linha.
+   Ordem dos itens vem de renderizarDadosCarga: Origem, Destino, CEP, Cliente, CNPJ, Valor,
+   Peso, Volumes, Modalidade, Observações. */
+#fretes-dados-carga.fretes-dados-carga {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 1.6fr);
+  gap: 14px 20px;
+  max-width: none;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-.fretes-dados-carga > div {
+#fretes-dados-carga.fretes-dados-carga > div {
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 3px;
   min-width: 0;
-  overflow-wrap: anywhere;
+}
+
+#fretes-dados-carga .metrica-rotulo {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+#fretes-dados-carga .metrica-valor {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+  max-width: 100%;
+}
+
+#fretes-dados-carga > div:nth-child(10) {
+  grid-column: 2 / -1;
+}
+
+@media (max-width: 900px) {
+  #fretes-dados-carga.fretes-dados-carga {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  #fretes-dados-carga > div:nth-child(10) {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  #fretes-dados-carga.fretes-dados-carga {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Embalagens: cada linha alinhada em grade (4 medidas + Remover), rótulo acima do campo. */
+.fretes-embalagens .fretes-embalagem-linha {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.fretes-embalagem-linha .campo-filtro label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.fretes-embalagem-linha .campo-filtro input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@media (max-width: 700px) {
+  .fretes-embalagens .fretes-embalagem-linha {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fretes-embalagem-linha > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
 
 .fretes-conferencia {
@@ -1793,4 +1866,123 @@ tfoot tr td:first-child {
 
 .fretes-conferir-transportadora {
   margin-top: 12px;
+}
+
+/* Propostas recebidas: uma proposta por linha no desktop (colunas alinhadas ao cabeçalho da
+   lista, para comparar várias); empilhado em tela estreita. Só apresentação. */
+.fretes-proposta-recebida-grade {
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1.4fr) minmax(90px, 0.8fr) minmax(100px, 0.8fr) minmax(80px, 0.6fr)
+    minmax(130px, 0.9fr) minmax(70px, 0.5fr) minmax(160px, 1.8fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+}
+
+.fretes-proposta-recebida-cabecalho {
+  padding: 0 14px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.fretes-proposta-recebida {
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  box-shadow: var(--sombra-1);
+}
+
+.fretes-proposta-celula {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.fretes-proposta-celula-rotulo {
+  display: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.fretes-proposta-celula-valor {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fretes-proposta-celula-detalhe {
+  font-size: 12px;
+  color: var(--cor-texto-suave);
+}
+
+.fretes-proposta-alerta {
+  font-size: 12px;
+  color: var(--cor-alerta);
+}
+
+.fretes-proposta-celula input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--cor-borda-forte);
+  border-radius: var(--raio-sm);
+  font-size: 13px;
+  background: var(--cor-superficie-alt);
+  color: var(--cor-texto);
+}
+
+.fretes-proposta-celula-acoes {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fretes-proposta-apoio {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.fretes-proposta-apoio summary {
+  cursor: pointer;
+  color: var(--cor-texto-suave);
+}
+
+.fretes-proposta-mensagem {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  margin: 6px 0 0;
+}
+
+@media (max-width: 1080px) {
+  .fretes-proposta-recebida-cabecalho {
+    display: none;
+  }
+  .fretes-proposta-recebida-grade {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+  .fretes-proposta-celula-rotulo {
+    display: block;
+  }
+  .fretes-proposta-celula-transportadora,
+  .fretes-proposta-celula-observacoes,
+  .fretes-proposta-celula-acoes {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .fretes-proposta-recebida-grade {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

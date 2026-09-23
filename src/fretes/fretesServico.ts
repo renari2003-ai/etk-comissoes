@@ -450,6 +450,10 @@ async function montarLinhasCentral(propostas: PropostaFrete[]): Promise<LinhaCen
   const cotacoesPorId = new Map(cotacoes.map((c) => [c.id, c]));
   const transportadorasPorId = new Map(transportadoras.map((t) => [t.id, t]));
   return propostas
+    // Proposta automática ainda não validada por um humano (Propostas recebidas) nunca entra nas
+    // Centrais: `status_revisao` nasce AGUARDANDO_LOGISTICA por default, mas a triagem só começa
+    // depois da confirmação dos dados extraídos.
+    .filter((proposta) => proposta.status !== 'PENDENTE_VALIDACAO')
     .map((proposta) => {
       const cotacao = cotacoesPorId.get(proposta.cotacaoId);
       const transportadora = transportadorasPorId.get(proposta.transportadoraId);
@@ -489,9 +493,19 @@ function exigirPermissaoLogistica(usuario: UsuarioPublico): void {
   }
 }
 
+/** A triagem da logística só vale para proposta já confirmada por um humano em "Propostas recebidas". */
+async function exigirPropostaValidada(propostaId: string): Promise<void> {
+  const proposta = await buscarPropostaPorId(propostaId);
+  if (proposta === null) throw new ErroValidacao('Proposta não encontrada.');
+  if (proposta.status === 'PENDENTE_VALIDACAO') {
+    throw new ErroValidacao('Proposta ainda pendente de validação — confirme os dados em "Propostas recebidas" antes da triagem da logística.');
+  }
+}
+
 /** Logística libera a proposta — só a partir daí ela aparece na Central do Vendedor (seção "Permitir: liberar proposta ao vendedor"). Nunca escolhe a vencedora. */
 export async function servicoLiberarPropostaLogistica(propostaId: string, usuario: UsuarioPublico): Promise<PropostaFrete> {
   exigirPermissaoLogistica(usuario);
+  await exigirPropostaValidada(propostaId);
   const proposta = await atualizarStatusRevisaoProposta(propostaId, 'LIBERADA');
   await registrarAuditoria({ usuarioId: usuario.id, acao: 'PROPOSTA_LIBERADA_LOGISTICA', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });
   return proposta;
@@ -500,6 +514,7 @@ export async function servicoLiberarPropostaLogistica(propostaId: string, usuari
 /** Logística descarta na triagem (diferente de `servicoRejeitarProposta`, que é a rejeição comercial já existente — ver comentário de `StatusRevisaoProposta`). */
 export async function servicoDescartarPropostaLogistica(propostaId: string, usuario: UsuarioPublico): Promise<PropostaFrete> {
   exigirPermissaoLogistica(usuario);
+  await exigirPropostaValidada(propostaId);
   const proposta = await atualizarStatusRevisaoProposta(propostaId, 'DESCARTADA');
   await registrarAuditoria({ usuarioId: usuario.id, acao: 'PROPOSTA_DESCARTADA_LOGISTICA', entidade: 'proposta_frete', entidadeId: proposta.id, valorNovo: proposta });
   return proposta;
