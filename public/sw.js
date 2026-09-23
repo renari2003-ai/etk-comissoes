@@ -1,11 +1,16 @@
 // Service Worker — ETK Comissoes PWA
-const CACHE_NAME = 'etk-comissoes-v1';
+// VERSAO: altere a cada deploy com mudança de frontend. O navegador só detecta nova versão
+// quando o conteúdo deste arquivo muda — aí o SW novo instala, fica em espera e a tela mostra
+// "Nova atualização disponível" / "ATUALIZAR AGORA" (ver index.html).
+const VERSAO = '2026-09-23.1';
+const CACHE_NAME = `etk-comissoes-${VERSAO}`;
 const ASSETS_TO_CACHE = [
   '/index.html',
   '/estilo.css',
   '/app.js',
   '/auth.js',
   '/formatacao.js',
+  '/fretes.js',
   '/precificacao.js',
   '/relatorios.js',
   '/usuarios.js',
@@ -16,12 +21,20 @@ const ASSETS_TO_CACHE = [
   '/manifest.json'
 ];
 
-// Install: cache static assets
+// Install: cache static assets (sempre da rede, nunca do cache HTTP, para pegar os arquivos
+// novos). Sem skipWaiting aqui: a nova versão espera o clique em "ATUALIZAR AGORA", para
+// nunca trocar os arquivos no meio de uma operação.
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll(ASSETS_TO_CACHE.map((url) => new Request(url, { cache: 'reload' })))
+    )
   );
-  self.skipWaiting();
+});
+
+// "ATUALIZAR AGORA": ativa a versão em espera (a página recarrega no controllerchange).
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.tipo === 'ATIVAR_NOVA_VERSAO') self.skipWaiting();
 });
 
 // Activate: clean up old caches

@@ -1003,7 +1003,10 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       }
       const itens = bruto.map((v: unknown, i: number) => {
         const item = v as Record<string, unknown>;
-        const canal = validarCanalEnvio(item?.canal, `transportadoras[${i}].canal`);
+        // Canal ausente segue como `null` para o serviço, que bloqueia o envio inteiro dizendo
+        // quais transportadoras estão sem canal; canal preenchido fora do enum continua 400 aqui.
+        const semCanal = item?.canal === undefined || item?.canal === null || item?.canal === '';
+        const canal = semCanal ? null : validarCanalEnvio(item.canal, `transportadoras[${i}].canal`);
         return {
           transportadoraId: validarUuid(item?.id, `transportadoras[${i}].id`),
           canal,
@@ -1021,7 +1024,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     ...protegida,
     assincrono(async (req, res) => {
       const id = validarUuid(req.params.id, 'id');
-      res.json(await servicoReenviarSolicitacao(id, req.usuario!.id));
+      res.json(await servicoReenviarSolicitacao(cliente, id, req.usuario!.id));
     }),
   );
 

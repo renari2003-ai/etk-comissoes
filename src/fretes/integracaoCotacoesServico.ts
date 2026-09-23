@@ -7,9 +7,11 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { ClienteOmie } from '../omie/cliente.js';
+import { config } from '../config.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
-import { emailValido } from './validacao.js';
+import { cnpjValido } from './braspressServico.js';
+import { emailValido, whatsappValido } from './validacao.js';
 import { servicoBuscarCotacao } from './fretesServico.js';
 import {
   buscarExtracaoPorPropostaId,
@@ -58,7 +60,12 @@ function gerarCodigoReferencia(codigoCotacao: string): string {
  * esses conceitos nem existem neste objeto. Fase 4A.4.1 (seção 9): `transportadora.email`/
  * `fonteEmail` são o SNAPSHOT já gravado na solicitação — o n8n nunca decide/consulta Omie.
  */
-function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao): PayloadSolicitacaoN8n {
+function montarPayloadN8n(
+  cotacao: CotacaoFrete,
+  solicitacao: SolicitacaoCotacao,
+  cnpjs: CnpjsPayloadN8n,
+  whatsapp: string | null,
+): PayloadSolicitacaoN8n {
   return {
     versao: 1,
     evento: 'SOLICITACAO_COTACAO',
@@ -69,6 +76,7 @@ function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao
       id: solicitacao.transportadoraId,
       email: solicitacao.emailDestino,
       fonteEmail: solicitacao.emailOrigem,
+      whatsapp: solicitacao.canal === 'WHATSAPP' ? whatsapp : null,
     },
     canal: solicitacao.canal,
     logistica: {
@@ -81,8 +89,49 @@ function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao
       peso: cotacao.peso,
       volumes: cotacao.volumes,
       especie: cotacao.especieVolumes,
+      cnpjOrigem: cnpjs.cnpjOrigem,
+      cnpjDestino: cnpjs.cnpjDestino,
     },
   };
+}
+
+/**
+ * Canal WHATSAPP exige `whatsappCotacao` válido no cadastro — ausente/inválido bloqueia antes
+ * de criar a solicitação (ou de reenviar). Nunca inferido de `telefone`.
+ */
+function exigirWhatsappDestino(transportadora: Transportadora): string {
+  if (!whatsappValido(transportadora.whatsappCotacao)) {
+    throw new ErroValidacao(
+      `WHATSAPP_TRANSPORTADORA_NAO_CADASTRADO: "${transportadora.nomeRazaoSocial}" não tem WhatsApp para cotação válido no cadastro (DDD + número, 10 a 13 dígitos).`,
+    );
+  }
+  return transportadora.whatsappCotacao;
+}
+
+interface CnpjsPayloadN8n {
+  cnpjOrigem: string | null;
+  cnpjDestino: string | null;
+}
+
+/**
+ * CNPJs do payload outbound — nunca inventados: origem = `FRETES_CNPJ_ORIGEM` (dado cadastral
+ * da ETK, nunca a credencial `BRASPRESS_CNPJ`); destino = CNPJ do cliente da cotação no
+ * cadastro Omie (somente leitura, mesma consulta da Braspress). Ausente, CPF ou dígitos
+ * inválidos → `null`. Nunca lança: falha na Omie não impede o envio, só deixa o campo `null`.
+ */
+async function obterCnpjsPayloadN8n(cliente: ClienteOmie, cotacao: CotacaoFrete): Promise<CnpjsPayloadN8n> {
+  const origem = config.fretesCnpjOrigem.replace(/\D/g, '');
+  let cnpjDestino: string | null = null;
+  if (cotacao.clienteOmieId !== null) {
+    try {
+      const registro = await cliente.consultarCliente(cotacao.clienteOmieId);
+      const digitos = (registro?.cnpjCpf ?? '').replace(/\D/g, '');
+      if (cnpjValido(digitos)) cnpjDestino = digitos;
+    } catch (erro) {
+      console.error('Consulta do CNPJ do cliente na Omie falhou; payload segue sem cnpjDestino:', erro instanceof Error ? erro.message : erro);
+    }
+  }
+  return { cnpjOrigem: cnpjValido(origem) ? origem : null, cnpjDestino };
 }
 
 /**
@@ -126,9 +175,15 @@ async function resolverEmailDestino(
  * própria solicitação (seção 8/11/27), preservando a cotação íntegra e sem criar proposta
  * nenhuma. Usada tanto no envio inicial quanto no reenvio manual.
  */
-async function tentarEnviarAoN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao, usuarioId: string | null): Promise<SolicitacaoCotacao> {
+async function tentarEnviarAoN8n(
+  cotacao: CotacaoFrete,
+  solicitacao: SolicitacaoCotacao,
+  cnpjs: CnpjsPayloadN8n,
+  whatsapp: string | null,
+  usuarioId: string | null,
+): Promise<SolicitacaoCotacao> {
   try {
-    await enviarSolicitacaoAoN8n(montarPayloadN8n(cotacao, solicitacao));
+    await enviarSolicitacaoAoN8n(montarPayloadN8n(cotacao, solicitacao, cnpjs, whatsapp));
     const atualizada = await marcarSolicitacaoEnviada(solicitacao.id, null);
     await registrarAuditoria({
       usuarioId,
@@ -175,6 +230,7 @@ export async function servicoSolicitarCotacoes(
   }
   if (itens.length === 0) throw new ErroValidacao('Selecione ao menos uma transportadora.');
 
+  const cnpjs = await obterCnpjsPayloadN8n(cliente, cotacao);
   const resultado: SolicitacaoCotacao[] = [];
   for (const item of itens) {
     const transportadora = await buscarTransportadoraPorId(item.transportadoraId);
@@ -184,6 +240,7 @@ export async function servicoSolicitarCotacoes(
     // tocam a Omie (nenhuma consulta é feita para canal API/MANUAL/WHATSAPP/OUTRO).
     let emailDestino: string | null = null;
     let emailOrigem: EmailOrigem | null = null;
+    const whatsapp = canal === 'WHATSAPP' ? exigirWhatsappDestino(transportadora) : null;
     if (canal === 'EMAIL') {
       const resolvido = await resolverEmailDestino(cliente, transportadora, item.emailManual ?? null);
       emailDestino = resolvido.emailDestino;
@@ -208,7 +265,7 @@ export async function servicoSolicitarCotacoes(
     });
     // Envio outbound síncrono (Fase 4A.2) — uma única tentativa automática (seção 11); falha
     // nunca aborta o laço nem propaga: a solicitação fica registrada com status ERRO.
-    const final = await tentarEnviarAoN8n(cotacao, solicitacao, usuarioId);
+    const final = await tentarEnviarAoN8n(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
     resultado.push(final);
   }
   return resultado;
@@ -226,7 +283,7 @@ const LIMITE_REENVIOS = 5;
  * cria uma segunda linha. Só permitido quando o envio anterior falhou (`status = 'ERRO'`);
  * limitado a `LIMITE_REENVIOS` tentativas totais para nunca virar um loop, mesmo manual.
  */
-export async function servicoReenviarSolicitacao(solicitacaoId: string, usuarioId: string): Promise<SolicitacaoCotacao> {
+export async function servicoReenviarSolicitacao(cliente: ClienteOmie, solicitacaoId: string, usuarioId: string): Promise<SolicitacaoCotacao> {
   const solicitacao = await buscarSolicitacaoPorId(solicitacaoId);
   if (solicitacao === null) throw new ErroValidacao('Solicitação de cotação não encontrada.');
   if (solicitacao.status !== 'ERRO') {
@@ -236,7 +293,13 @@ export async function servicoReenviarSolicitacao(solicitacaoId: string, usuarioI
     throw new ErroValidacao(`Limite de ${LIMITE_REENVIOS} tentativas de envio atingido para esta solicitação.`);
   }
   const cotacao = await servicoBuscarCotacao(solicitacao.cotacaoFreteId);
-  return tentarEnviarAoN8n(cotacao, solicitacao, usuarioId);
+  let whatsapp: string | null = null;
+  if (solicitacao.canal === 'WHATSAPP') {
+    const transportadora = await buscarTransportadoraPorId(solicitacao.transportadoraId);
+    if (transportadora === null) throw new ErroValidacao('Transportadora da solicitação não encontrada.');
+    whatsapp = exigirWhatsappDestino(transportadora);
+  }
+  return tentarEnviarAoN8n(cotacao, solicitacao, await obterCnpjsPayloadN8n(cliente, cotacao), whatsapp, usuarioId);
 }
 
 // --- Webhook de entrada (seção 20/23) ---------------------------------------------------

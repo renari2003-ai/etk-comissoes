@@ -243,6 +243,8 @@ interface SolicitacaoCotacao {
   codigoReferencia: string;
   dataEnvio: string | null;
   dataResposta: string | null;
+  /** Motivo técnico da última falha de envio (ex.: rejeição SMTP) — só aparece em "Detalhes". */
+  erroUltimaTentativa: string | null;
   /** Fase 4A.4.1 — snapshot do e-mail efetivamente usado (só canal EMAIL). */
   emailDestino: string | null;
   emailOrigem: 'OMIE' | 'MANUAL' | null;
@@ -1885,6 +1887,20 @@ export function inicializarFretes(): { ativar: () => void } {
     return Number.isNaN(data.getTime()) ? '—' : data.toLocaleString('pt-BR');
   }
 
+  /**
+   * Status de e-mail para o operador: só ENVIADO (envio aceito pelo fluxo SMTP/n8n existente,
+   * ou já respondido, sem falha conhecida) ou FALHA (erro/bounce/rejeição registrada). Nunca
+   * "Entregue": não há confirmação real de entrega. Os status técnicos continuam no banco;
+   * pendente/cancelada e os demais canais mantêm o rótulo original.
+   */
+  function statusOperadorSolicitacao(s: SolicitacaoCotacao): string {
+    if (s.canal === 'EMAIL') {
+      if (s.status === 'ERRO') return 'FALHA';
+      if (s.status === 'ENVIADA' || s.status === 'ENTREGUE' || s.status === 'RESPONDIDA') return 'ENVIADO';
+    }
+    return ROTULOS_STATUS_SOLICITACAO[s.status];
+  }
+
   async function carregarSolicitacoes(): Promise<void> {
     if (cotacaoAtualId === null) return;
     const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/solicitacoes`);
@@ -1901,9 +1917,9 @@ export function inicializarFretes(): { ativar: () => void } {
       };
       tr.appendChild(celula(transportadora?.nomeRazaoSocial ?? '—'));
       tr.appendChild(celula(ROTULOS_CANAL[s.canal]));
-      // Fase 4A.2, seção 33: nunca expõe o motivo técnico bruto (ex.: código HTTP, mensagem
-      // do cliente n8n) na tela — só o rótulo de status. O detalhe fica na auditoria/log.
-      tr.appendChild(celula(ROTULOS_STATUS_SOLICITACAO[s.status]));
+      // A célula mostra só o status simplificado; o motivo técnico da falha (ex.: "550 5.4.1")
+      // fica atrás de "Detalhes", na coluna de ações.
+      tr.appendChild(celula(statusOperadorSolicitacao(s)));
       tr.appendChild(celula(formatarDataHoraOuTraco(s.dataEnvio)));
       tr.appendChild(celula(formatarDataHoraOuTraco(s.dataResposta)));
       tr.appendChild(celula(s.emailDestino ?? '—'));
@@ -1911,6 +1927,15 @@ export function inicializarFretes(): { ativar: () => void } {
 
       const tdAcoes = document.createElement('td');
       if (s.status === 'ERRO') {
+        const detalhes = document.createElement('details');
+        detalhes.className = 'fretes-solicitacao-detalhes';
+        const resumo = document.createElement('summary');
+        resumo.textContent = 'Detalhes';
+        const motivo = document.createElement('p');
+        motivo.textContent = s.erroUltimaTentativa ?? 'Motivo da falha não registrado.';
+        detalhes.append(resumo, motivo);
+        tdAcoes.appendChild(detalhes);
+
         const botaoReenviar = document.createElement('button');
         botaoReenviar.type = 'button';
         botaoReenviar.className = 'botao-secundario';
@@ -1946,6 +1971,8 @@ export function inicializarFretes(): { ativar: () => void } {
     cnpj: string | null;
     canaisDisponiveis: CanalEnvio[];
     canalSugerido: CanalEnvio | null;
+    /** Canal principal do cadastro (EMAIL/WHATSAPP/API) — marcado com "*" (canal prioritário). */
+    canalPrincipal: CanalEnvio | null;
     urlPortal: string | null;
     whatsappCadastrado: boolean;
     apiIntegrada: boolean;
@@ -1984,15 +2011,21 @@ export function inicializarFretes(): { ativar: () => void } {
     return t.nomeFantasia ?? t.nomeRazaoSocial;
   }
 
-  function descreverCanais(canais: CanalEnvio[]): string {
-    return canais.length === 0 ? 'Nenhum canal disponível' : canais.map((c) => ROTULOS_CANAL_ENVIO[c]).join(' / ');
+  /** Rótulo do canal com "*" quando é o canal principal (prioritário) da transportadora. */
+  function rotuloCanalEnvio(c: CanalEnvio, t: TransportadoraBusca): string {
+    return t.canalPrincipal === c ? `${ROTULOS_CANAL_ENVIO[c]} *` : ROTULOS_CANAL_ENVIO[c];
   }
 
-  /** Portal/site e WhatsApp cadastrados são informação operacional — nunca viram canal por conta própria. */
+  function descreverCanais(t: TransportadoraBusca): string {
+    const canais = t.canaisDisponiveis;
+    return canais.length === 0 ? 'Nenhum canal disponível' : canais.map((c) => rotuloCanalEnvio(c, t)).join(' / ');
+  }
+
+  /** Portal/site é só informação operacional; WhatsApp só vira canal com número válido (decidido no backend). */
   function observacoesCanais(t: TransportadoraBusca): string[] {
     const notas: string[] = [];
     if (t.urlPortal !== null && !t.apiIntegrada) notas.push('Portal cadastrado — integração API não disponível');
-    if (t.whatsappCadastrado) notas.push('WhatsApp cadastrado — envio por WhatsApp ainda não habilitado');
+    if (t.whatsappCadastrado && !t.canaisDisponiveis.includes('WHATSAPP')) notas.push('WhatsApp cadastrado inválido — corrija o número no cadastro');
     return notas;
   }
 
@@ -2039,7 +2072,7 @@ export function inicializarFretes(): { ativar: () => void } {
       const linhas = [
         t.nomeFantasia !== null && t.nomeFantasia !== t.nomeRazaoSocial ? `Razão social: ${t.nomeRazaoSocial}` : null,
         `CNPJ: ${formatarCnpjTransportadora(t.cnpj)}`,
-        `Canais disponíveis: ${descreverCanais(t.canaisDisponiveis)}`,
+        `Canais disponíveis: ${descreverCanais(t)}`,
         ...observacoesCanais(t),
       ];
       for (const texto of linhas) {
@@ -2272,7 +2305,7 @@ export function inicializarFretes(): { ativar: () => void } {
       complemento = `Não selecionada: ${motivoNaoSelecionavel(transportadora)}.`;
     } else {
       selecionarTransportadora(transportadora);
-      complemento = `Selecionada — canais disponíveis: ${descreverCanais(transportadora.canaisDisponiveis)}.`;
+      complemento = `Selecionada — canais disponíveis: ${descreverCanais(transportadora)}.`;
     }
     infoConferir.textContent = `${nomeTransportadoraBusca(transportadora)}: ${origem} ${complemento}`;
     infoConferir.hidden = false;
@@ -2291,13 +2324,14 @@ export function inicializarFretes(): { ativar: () => void } {
       };
       tr.appendChild(celula(nomeTransportadoraBusca(s)));
       tr.appendChild(celula(formatarCnpjTransportadora(s.cnpj)));
-      tr.appendChild(celula([descreverCanais(s.canaisDisponiveis), ...observacoesCanais(s)].join(' — ')));
+      tr.appendChild(celula([descreverCanais(s), ...observacoesCanais(s)].join(' — ')));
 
       const tdCanal = document.createElement('td');
       if (s.canaisDisponiveis.length === 1) {
-        tdCanal.textContent = ROTULOS_CANAL_ENVIO[s.canaisDisponiveis[0] as CanalEnvio];
+        // Um canal só: selecionado automaticamente (canalSugerido do backend).
+        tdCanal.textContent = rotuloCanalEnvio(s.canaisDisponiveis[0] as CanalEnvio, s);
       } else {
-        // Vários canais sem canal principal válido: o operador precisa escolher (nunca arbitrário).
+        // Vários canais: pré-seleciona o principal válido; sem ele, o operador precisa escolher (nunca arbitrário).
         const select = document.createElement('select');
         select.setAttribute('aria-label', `Canal do envio para ${nomeTransportadoraBusca(s)}`);
         const vazio = document.createElement('option');
@@ -2307,7 +2341,7 @@ export function inicializarFretes(): { ativar: () => void } {
         for (const c of s.canaisDisponiveis) {
           const opcao = document.createElement('option');
           opcao.value = c;
-          opcao.textContent = ROTULOS_CANAL_ENVIO[c];
+          opcao.textContent = rotuloCanalEnvio(c, s);
           select.appendChild(opcao);
         }
         select.value = s.canal ?? '';
@@ -2459,13 +2493,13 @@ export function inicializarFretes(): { ativar: () => void } {
     } catch (erro) {
       problemas.push((erro as Error).message);
     }
+    // Canal obrigatório: qualquer transportadora sem canal bloqueia o envio inteiro.
+    const semCanal = selecionadas.filter((s) => s.canal === null).map((s) => nomeTransportadoraBusca(s).toUpperCase());
+    if (semCanal.length > 0) problemas.push(`Selecione o canal de envio para todas as transportadoras. Sem canal: ${semCanal.join(', ')}.`);
     const c = cotacaoEnvioAtual;
     for (const s of selecionadas) {
       const nome = nomeTransportadoraBusca(s).toUpperCase();
-      if (s.canal === null) {
-        problemas.push(`${nome}: escolha o canal de envio.`);
-        continue;
-      }
+      if (s.canal === null) continue;
       if (s.canal === 'EMAIL' && s.emailManual.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.emailManual.trim())) {
         problemas.push(`${nome}: e-mail manual inválido.`);
       }
@@ -2531,7 +2565,10 @@ export function inicializarFretes(): { ativar: () => void } {
     void (async () => {
       if (cotacaoAtualId === null) return;
       erroEnvio.hidden = true;
-      if (problemasEnvio().length > 0) {
+      const problemas = problemasEnvio();
+      if (problemas.length > 0) {
+        erroEnvio.textContent = problemas.join(' ');
+        erroEnvio.hidden = false;
         atualizarConferenciaEnvio();
         return;
       }

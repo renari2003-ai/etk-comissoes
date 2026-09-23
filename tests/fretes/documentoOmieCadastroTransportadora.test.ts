@@ -136,7 +136,7 @@ describe('cadastro de transportadora a partir da cotação (serviço)', () => {
     const primeira = await envio.servicoConfirmarCadastroTransportadora(dadosOmie, USUARIO);
     expect(primeira.existente).toBe(false);
     expect(primeira.transportadora).toMatchObject({
-      canaisDisponiveis: ['EMAIL'], // e-mail para cotação cadastrado; WhatsApp ainda não habilitado; portal ≠ API
+      canaisDisponiveis: ['EMAIL', 'WHATSAPP'], // e-mail para cotação + WhatsApp válido cadastrados; portal ≠ API
       canalSugerido: 'EMAIL',
       urlPortal: 'https://portal.novalog.com.br',
       whatsappCadastrado: true,
@@ -161,7 +161,7 @@ describe('cadastro de transportadora a partir da cotação (serviço)', () => {
 
     // API continua só Braspress
     const braspress = await envio.servicoConfirmarCadastroTransportadora(
-      { ...dadosOmie, nomeRazaoSocial: 'BRASPRESS TRANSPORTES URGENTES', nomeFantasia: 'BRASPRESS', cnpj: '55666777000155', email: null, codigoClienteOmie: null, canalPrincipal: 'API', urlPortal: null },
+      { ...dadosOmie, nomeRazaoSocial: 'BRASPRESS TRANSPORTES URGENTES', nomeFantasia: 'BRASPRESS', cnpj: '55666777000155', email: null, codigoClienteOmie: null, canalPrincipal: 'API', urlPortal: null, whatsappCotacao: null },
       USUARIO,
     );
     expect(braspress.transportadora).toMatchObject({ canaisDisponiveis: ['API'], canalSugerido: 'API', apiIntegrada: true });

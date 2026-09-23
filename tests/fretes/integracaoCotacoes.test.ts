@@ -459,7 +459,7 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     vi.resetModules();
     const integracaoAtualizada = await import('../../src/fretes/integracaoCotacoesServico.js');
 
-    const reenviada = await integracaoAtualizada.servicoReenviarSolicitacao(solicitacao.id, USUARIO_TESTE);
+    const reenviada = await integracaoAtualizada.servicoReenviarSolicitacao(clienteOmieFakeSemFornecedor(), solicitacao.id, USUARIO_TESTE);
     expect(reenviada.id).toBe(solicitacao.id); // mesma linha, nunca uma nova
     expect(reenviada.codigoReferencia).toBe(solicitacao.codigoReferencia);
     expect(reenviada.status).toBe('ENVIADA');
@@ -487,7 +487,134 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
     if (solicitacao === undefined) throw new Error('setup falhou');
     expect(solicitacao.status).toBe('ENVIADA');
 
-    await expect(integracao.servicoReenviarSolicitacao(solicitacao.id, USUARIO_TESTE)).rejects.toThrow(/status ERRO/);
+    await expect(integracao.servicoReenviarSolicitacao(clienteOmieFakeSemFornecedor(), solicitacao.id, USUARIO_TESTE)).rejects.toThrow(/status ERRO/);
+  });
+
+  it('payload leva logistica.cnpjOrigem (FRETES_CNPJ_ORIGEM) e logistica.cnpjDestino (cliente na Omie, só leitura); ausente/inválido → null, nunca inventado', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 200 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+    process.env.FRETES_CNPJ_ORIGEM = '11.222.333/0001-81';
+    try {
+      const servico = await importarServico();
+      const integracao = await importarIntegracao();
+      const { transportadora, outraTransportadora, cotacao } = await prepararCotacaoETransportadora(servico);
+      const comCliente = await servico.servicoCriarCotacao(
+        {
+          clienteOmieId: 777,
+          pedidoOmieId: null,
+          vendedorOmieId: null,
+          origem: 'São Paulo',
+          cepOrigem: '01000-000',
+          destino: 'Curitiba',
+          cepDestino: '80000-000',
+          peso: 100,
+          volumes: 5,
+          valorMercadoria: 5000,
+          modalidade: 'CIF',
+          modalidadeExecucao: 'TRANSPORTADORA',
+          veiculoId: null,
+          motoristaNome: null,
+          custoManual: null,
+          observacoes: null,
+        },
+        USUARIO_TESTE,
+      );
+      const consultas: number[] = [];
+      const omieComCnpj = {
+        consultarCliente: async (codigo: number) => {
+          consultas.push(codigo);
+          return { cnpjCpf: '11444777000161', email: null };
+        },
+      } as unknown as ClienteOmie;
+
+      await integracao.servicoSolicitarCotacoes(omieComCnpj, comCliente.id, itensComEmail(transportadora.id), 'EMAIL', USUARIO_TESTE);
+      // Cotação sem cliente Omie → sem consulta, cnpjDestino null.
+      await integracao.servicoSolicitarCotacoes(omieComCnpj, cotacao.id, itensComEmail(outraTransportadora.id), 'EMAIL', USUARIO_TESTE);
+
+      const corpos = mock.chamadas.map((c) => JSON.parse(c.body) as { versao: number; logistica: { cnpjOrigem: unknown; cnpjDestino: unknown } });
+      expect(corpos[0]?.versao).toBe(1);
+      expect(corpos[0]?.logistica).toMatchObject({ cnpjOrigem: '11222333000181', cnpjDestino: '11444777000161' });
+      expect(corpos[1]?.logistica).toMatchObject({ cnpjOrigem: '11222333000181', cnpjDestino: null });
+      expect(consultas).toEqual([777]);
+
+      // CPF no cadastro Omie e CNPJ de origem inválido → ambos null (config relida após reset).
+      process.env.FRETES_CNPJ_ORIGEM = '123';
+      vi.resetModules();
+      const integracaoRecarregada = await import('../../src/fretes/integracaoCotacoesServico.js');
+      const omieComCpf = { consultarCliente: async () => ({ cnpjCpf: '12345678909', email: null }) } as unknown as ClienteOmie;
+      const terceira = await servico.servicoCriarTransportadora(
+        { nomeRazaoSocial: 'QWE Log', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+        USUARIO_TESTE,
+      );
+      await integracaoRecarregada.servicoSolicitarCotacoes(omieComCpf, comCliente.id, itensComEmail(terceira.id), 'EMAIL', USUARIO_TESTE);
+      const ultimo = JSON.parse(mock.chamadas[2]?.body ?? '{}') as { logistica: { cnpjOrigem: unknown; cnpjDestino: unknown } };
+      expect(ultimo.logistica).toMatchObject({ cnpjOrigem: null, cnpjDestino: null });
+    } finally {
+      delete process.env.FRETES_CNPJ_ORIGEM;
+    }
+  }, 60000); // reset de módulos + 3 envios (mesmo padrão do teste de reenvio acima)
+
+  it('WHATSAPP: payload leva transportadora.whatsapp (só no canal WHATSAPP) com referência/solicitacaoId preservados; sem número válido bloqueia antes de criar solicitação', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 200 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { transportadora: semWhatsapp, cotacao } = await prepararCotacaoETransportadora(servico);
+    const comWhatsapp = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'Zap Cargas', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null, whatsappCotacao: '5511988887777' },
+      USUARIO_TESTE,
+    );
+
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, [{ transportadoraId: comWhatsapp.id }], 'WHATSAPP', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao).toMatchObject({ canal: 'WHATSAPP', status: 'ENVIADA', emailDestino: null });
+    const corpo = JSON.parse(mock.chamadas[0]?.body ?? '{}') as {
+      versao: number;
+      canal: string;
+      referencia: string;
+      solicitacaoId: string;
+      transportadora: { whatsapp: unknown; email: unknown };
+    };
+    expect(corpo).toMatchObject({ versao: 1, canal: 'WHATSAPP', referencia: solicitacao.codigoReferencia, solicitacaoId: solicitacao.id });
+    expect(corpo.transportadora).toMatchObject({ whatsapp: '5511988887777', email: null });
+
+    // Sem whatsappCotacao (telefone nunca vale): bloqueio explícito, nada criado nem enviado.
+    await expect(
+      integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, [{ transportadoraId: semWhatsapp.id }], 'WHATSAPP', USUARIO_TESTE),
+    ).rejects.toThrow(/WHATSAPP_TRANSPORTADORA_NAO_CADASTRADO/);
+    expect(mock.chamadas).toHaveLength(1);
+    expect(await integracao.servicoListarSolicitacoes(cotacao.id)).toHaveLength(1);
+
+    // Canal EMAIL nunca leva o número.
+    await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, itensComEmail(comWhatsapp.id), 'EMAIL', USUARIO_TESTE);
+    const corpoEmail = JSON.parse(mock.chamadas[1]?.body ?? '{}') as { transportadora: { whatsapp: unknown } };
+    expect(corpoEmail.transportadora.whatsapp).toBeNull();
+  });
+
+  it('WHATSAPP: reenvio revalida o número — cadastro sem WhatsApp válido bloqueia o reenvio', async () => {
+    mock = await iniciarMockN8n(() => ({ status: 500 }));
+    process.env.N8N_WEBHOOK_URL = mock.url;
+    process.env.N8N_WEBHOOK_SECRET = N8N_SECRET_TESTE;
+
+    const servico = await importarServico();
+    const integracao = await importarIntegracao();
+    const { cotacao } = await prepararCotacaoETransportadora(servico);
+    const t = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'Zap Cargas', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null, whatsappCotacao: '11988887777' },
+      USUARIO_TESTE,
+    );
+    const [solicitacao] = await integracao.servicoSolicitarCotacoes(clienteOmieFakeSemFornecedor(), cotacao.id, [{ transportadoraId: t.id }], 'WHATSAPP', USUARIO_TESTE);
+    if (solicitacao === undefined) throw new Error('setup falhou');
+    expect(solicitacao.status).toBe('ERRO');
+
+    await servico.servicoAtualizarTransportadora(t.id, { whatsappCotacao: null }, USUARIO_TESTE);
+    await expect(integracao.servicoReenviarSolicitacao(clienteOmieFakeSemFornecedor(), solicitacao.id, USUARIO_TESTE)).rejects.toThrow(
+      /WHATSAPP_TRANSPORTADORA_NAO_CADASTRADO/,
+    );
+    expect(mock.chamadas).toHaveLength(1);
   });
 
   it('SSRF: a URL do n8n vem só da configuração do servidor — um campo extra no corpo da requisição do usuário nunca é usado como destino do envio', async () => {

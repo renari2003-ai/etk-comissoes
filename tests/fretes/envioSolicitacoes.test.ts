@@ -4,6 +4,7 @@ import {
   canaisDisponiveis,
   canalSugerido,
   escolherCanonicasPorCnpj,
+  paraTransportadoraBusca,
   servicoEnviarSolicitacoes,
   type DependenciasEnvio,
   type ItemEnvioSolicitacao,
@@ -62,9 +63,13 @@ describe('canais disponíveis', () => {
     expect(canaisDisponiveis(transportadora({ id: 'w', nomeRazaoSocial: 'E-mail ruim', email: 'nao-e-email' }))).toEqual([]);
   });
 
-  it('WHATSAPP nunca disponível nesta fase: telefone comum não é WhatsApp, e nem o número cadastrado como WhatsApp libera o envio', () => {
+  it('WHATSAPP só com whatsappCotacao válido (10 a 13 dígitos): telefone comum ou canalPrincipal nunca liberam; número inválido não conta', () => {
     expect(canaisDisponiveis(ABC)).toEqual([]);
-    expect(canaisDisponiveis({ ...ABC, whatsappCotacao: '11999990000' })).toEqual([]);
+    expect(canaisDisponiveis({ ...ABC, whatsappCotacao: '11999990000' })).toEqual(['WHATSAPP']);
+    expect(canaisDisponiveis({ ...ABC, whatsappCotacao: '5511999990000' })).toEqual(['WHATSAPP']);
+    expect(canaisDisponiveis({ ...ABC, whatsappCotacao: '999' })).toEqual([]);
+    expect(canaisDisponiveis({ ...ABC, whatsappCotacao: '(11) 99999-0000' })).toEqual([]);
+    expect(canaisDisponiveis({ ...XYZ, whatsappCotacao: '11999990000' })).toEqual(['EMAIL', 'WHATSAPP']);
   });
 
   it('canal sugerido: único canal → ele; vários → canalPrincipal válido; senão null (operador escolhe)', () => {
@@ -73,6 +78,13 @@ describe('canais disponíveis', () => {
     expect(canalSugerido(ambos, ['EMAIL', 'API'])).toBeNull();
     expect(canalSugerido({ ...ambos, canalPrincipal: 'API' }, ['EMAIL', 'API'])).toBe('API');
     expect(canalSugerido({ ...ambos, canalPrincipal: 'SITE' }, ['EMAIL', 'API'])).toBeNull();
+  });
+
+  it('canal principal exposto na busca (para o "*"): só EMAIL/WHATSAPP/API; SITE ou vazio → null', () => {
+    const ambos = transportadora({ id: 'z', nomeRazaoSocial: 'Braspress Filial', codigoClienteOmie: 1 });
+    expect(paraTransportadoraBusca({ ...ambos, canalPrincipal: 'EMAIL' })).toMatchObject({ canalPrincipal: 'EMAIL', canalSugerido: 'EMAIL' });
+    expect(paraTransportadoraBusca({ ...ambos, canalPrincipal: 'SITE' })).toMatchObject({ canalPrincipal: null, canalSugerido: null });
+    expect(paraTransportadoraBusca(ambos).canalPrincipal).toBeNull();
   });
 });
 
@@ -136,6 +148,23 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
     await expect(servicoEnviarSolicitacoes(cliente, COTACAO_ID, [], null, USUARIO_TESTE, d)).rejects.toBeInstanceOf(ErroValidacao);
     expect(d.solicitar).not.toHaveBeenCalled();
     expect(d.cotarBraspress).not.toHaveBeenCalled();
+  });
+
+  it('canal obrigatório: qualquer transportadora sem canal bloqueia TODO o envio (nada despachado) e diz qual está sem canal', async () => {
+    const d = deps();
+    const itens: ItemEnvioSolicitacao[] = [
+      { transportadoraId: BRASPRESS.id, canal: 'API', emailManual: null },
+      { transportadoraId: XYZ.id, canal: null, emailManual: null },
+    ];
+    const envio = servicoEnviarSolicitacoes(cliente, COTACAO_ID, itens, CUBAGEM, USUARIO_TESTE, d);
+    await expect(envio).rejects.toBeInstanceOf(ErroValidacao);
+    await expect(servicoEnviarSolicitacoes(cliente, COTACAO_ID, itens, CUBAGEM, USUARIO_TESTE, d)).rejects.toThrow(
+      'Selecione o canal de envio para todas as transportadoras. Sem canal: Transportes XYZ.',
+    );
+    const invalido = [{ transportadoraId: XYZ.id, canal: 'SITE', emailManual: null }] as unknown as ItemEnvioSolicitacao[];
+    await expect(servicoEnviarSolicitacoes(cliente, COTACAO_ID, invalido, null, USUARIO_TESTE, d)).rejects.toThrow(/Selecione o canal de envio/);
+    expect(d.cotarBraspress).not.toHaveBeenCalled();
+    expect(d.solicitar).not.toHaveBeenCalled();
   });
 
   it('despacha cada canal ao serviço existente e devolve resultado individual; falha de uma não impede as outras', async () => {
@@ -214,6 +243,21 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
     });
     const [n8n] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: null }], null, USUARIO_TESTE, comErroN8n);
     expect(n8n).toMatchObject({ status: 'FALHOU', solicitacaoId: 'sol-erro', mensagem: expect.stringContaining('Reenviar') });
+  });
+
+  it('WHATSAPP com número válido é despachado ao fluxo n8n existente (canal WHATSAPP, sem e-mail manual)', async () => {
+    const comWhatsapp = { ...ABC, whatsappCotacao: '11999990000' };
+    const d = deps({ buscarTransportadora: vi.fn(async () => comWhatsapp) as unknown as DependenciasEnvio['buscarTransportadora'] });
+    const [r] = await servicoEnviarSolicitacoes(
+      cliente,
+      COTACAO_ID,
+      [{ transportadoraId: ABC.id, canal: 'WHATSAPP', emailManual: 'ignorado@x.com' }],
+      null,
+      USUARIO_TESTE,
+      d,
+    );
+    expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, emailManual: null }], 'WHATSAPP', USUARIO_TESTE);
+    expect(r).toMatchObject({ canal: 'WHATSAPP', status: 'ENVIADO', mensagem: 'Enviado via WhatsApp.' });
   });
 
   it('idempotência: transportadora/canal já solicitados nesta cotação não geram nova solicitação', async () => {

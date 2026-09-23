@@ -20,7 +20,13 @@ export interface PayloadSolicitacaoN8n {
    * (regra MANUAL > OMIE > bloqueio) — `null` para canais diferentes de EMAIL. O n8n nunca
    * decide a fonte nem consulta a Omie; só usa o valor recebido aqui.
    */
-  transportadora: { id: string; email: string | null; fonteEmail: 'OMIE' | 'MANUAL' | 'CADASTRO' | null };
+  transportadora: {
+    id: string;
+    email: string | null;
+    fonteEmail: 'OMIE' | 'MANUAL' | 'CADASTRO' | null;
+    /** Aditivo (compatível com `versao: 1`): `whatsappCotacao` do cadastro, só dígitos — preenchido só no canal WHATSAPP, `null` nos demais. */
+    whatsapp: string | null;
+  };
   canal: string;
   logistica: {
     origem: string | null;
@@ -32,6 +38,13 @@ export interface PayloadSolicitacaoN8n {
     peso: number | null;
     volumes: number | null;
     especie: string | null;
+    /**
+     * Aditivos (compatível com `versao: 1`) — só dígitos, `null` quando não disponível/válido
+     * (nunca inventado). Origem = CNPJ da ETK (`FRETES_CNPJ_ORIGEM`); destino = CNPJ do
+     * cliente da cotação no cadastro Omie (consulta somente leitura).
+     */
+    cnpjOrigem: string | null;
+    cnpjDestino: string | null;
   };
 }
 

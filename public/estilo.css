@@ -1986,3 +1986,45 @@ tfoot tr td:first-child {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Aviso de nova versão do app (service worker em espera) — acima do login, nunca bloqueia. */
+.aviso-atualizacao {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  border: 1px solid var(--cor-alerta-borda);
+  border-radius: var(--raio);
+  background: var(--cor-alerta-fundo);
+  color: var(--cor-alerta);
+  font-weight: 600;
+  box-shadow: var(--sombra-2);
+}
+
+.aviso-atualizacao[hidden] {
+  display: none;
+}
+
+.aviso-atualizacao button {
+  white-space: nowrap;
+}
+
+/* "Detalhes" da falha de envio na tabela de solicitações. */
+.fretes-solicitacao-detalhes summary {
+  cursor: pointer;
+  color: var(--cor-primaria);
+}
+
+.fretes-solicitacao-detalhes p {
+  margin: 4px 0 8px;
+  max-width: 320px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--cor-negativo);
+}

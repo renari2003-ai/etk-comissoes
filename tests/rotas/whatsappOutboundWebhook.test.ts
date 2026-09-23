@@ -79,7 +79,8 @@ async function prepararSolicitacao(
 ) {
   const { servicoSolicitarCotacoes } = await import('../../src/fretes/integracaoCotacoesServico.js');
   const transportadora = await servico.servicoCriarTransportadora(
-    { nomeRazaoSocial: 'Transportes WhatsApp Teste', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+    // Canal WHATSAPP exige whatsappCotacao válido no cadastro (bloqueio do backend).
+    { nomeRazaoSocial: 'Transportes WhatsApp Teste', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null, whatsappCotacao: '11988887777' },
     USUARIO_TESTE,
   );
   const cotacao = await servico.servicoCriarCotacao(

@@ -40,6 +40,12 @@ export const config = {
   n8nWebhookSecret: process.env.N8N_WEBHOOK_SECRET ?? '',
   n8nTimeoutMs: numeroDoAmbiente('N8N_TIMEOUT_MS', 8000),
   /**
+   * CNPJ da ETK (remetente) incluído no payload outbound ao n8n (`logistica.cnpjOrigem`). Dado
+   * cadastral, não credencial — separado de propósito de `BRASPRESS_CNPJ` (usuário de login da
+   * API Braspress, que nunca sai do servidor). Vazio/inválido → campo vai `null`.
+   */
+  fretesCnpjOrigem: process.env.FRETES_CNPJ_ORIGEM ?? '',
+  /**
    * Fase Braspress 1 — API oficial de cotação (`src/fretes/integracoes/braspressCliente.ts`).
    * Basic Auth: usuário = CNPJ do contrato (também usado como CNPJ remetente), senha = senha da
    * API. Nunca hardcodados nem logados; vazios → integração recusada de forma controlada. A URL

@@ -198,6 +198,11 @@ export function validarWhatsappOpcional(valor: unknown): string | null {
   return digitos;
 }
 
+/** `whatsappCotacao` já gravado utilizável para envio: só dígitos, 10 a 13 (mesma regra do cadastro). */
+export function whatsappValido(valor: string | null): valor is string {
+  return valor !== null && /^\d{10,13}$/.test(valor);
+}
+
 /** Confiança da extração (seção 38) — só um número entre 0 e 1; NUNCA usado para decisão financeira, só para alerta/priorização visual. */
 export function validarConfiancaOpcional(valor: unknown): number | null {
   if (valor === undefined || valor === null || valor === '') return null;

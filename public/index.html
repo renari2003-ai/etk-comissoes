@@ -39,6 +39,12 @@
     Nenhum acesso liberado para este usuário ainda — fale com o administrador do sistema.
   </p>
 
+  <!-- Aviso de nova versão (service worker em espera) — fica acima do login, nunca bloqueia. -->
+  <div id="aviso-atualizacao" class="aviso-atualizacao" role="status" hidden>
+    <span>Nova atualização disponível</span>
+    <button type="button" id="botao-atualizar-agora">ATUALIZAR AGORA</button>
+  </div>
+
   <div class="overlay-login" id="overlay-login" hidden>
     <form class="painel-login" id="form-login" autocomplete="off">
       <img src="logos/logos-etk-lado-a-lado.png" alt="ETK" class="painel-login-logo" />
@@ -517,6 +523,7 @@
               <tbody id="fretes-tabela-selecionadas-corpo"></tbody>
             </table>
           </div>
+          <p class="filtro-data-legenda">* Canal prioritário</p>
 
           <h4 class="fretes-subtitulo">Dados da carga</h4>
           <div id="fretes-dados-carga" class="painel-fechamento fretes-dados-carga"></div>
@@ -1253,8 +1260,36 @@
 
   <script src="app.js" type="module"></script>
   <script>
+    // Nova versão: o sw.js novo instala e fica em espera ("waiting"); só é ativado quando o
+    // operador clica em "ATUALIZAR AGORA" — aí a página recarrega com os arquivos novos.
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      var aviso = document.getElementById('aviso-atualizacao');
+      var botaoAtualizar = document.getElementById('botao-atualizar-agora');
+      var atualizacaoSolicitada = false;
+      var mostrarAviso = function (worker) {
+        if (!navigator.serviceWorker.controller) return; // primeira instalação: já está na versão atual
+        aviso.hidden = false;
+        botaoAtualizar.onclick = function () {
+          atualizacaoSolicitada = true;
+          botaoAtualizar.disabled = true;
+          worker.postMessage({ tipo: 'ATIVAR_NOVA_VERSAO' });
+        };
+      };
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (atualizacaoSolicitada) window.location.reload(); // nunca recarrega sem o clique
+      });
+      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(function (reg) {
+        if (reg.waiting) mostrarAviso(reg.waiting);
+        reg.addEventListener('updatefound', function () {
+          var novo = reg.installing;
+          if (!novo) return;
+          novo.addEventListener('statechange', function () {
+            if (novo.state === 'installed') mostrarAviso(novo);
+          });
+        });
+        // App aberto por muito tempo: confere de tempos em tempos se há deploy novo.
+        setInterval(function () { reg.update().catch(function () {}); }, 30 * 60 * 1000);
+      }).catch(function () {});
     }
   </script>
 </body>

@@ -21,7 +21,7 @@ import {
   buscarTransportadorasAtivasPorTermo,
   type DadosTransportadora,
 } from './transportadorasRepositorio.js';
-import { emailValido } from './validacao.js';
+import { emailValido, whatsappValido } from './validacao.js';
 import type { Transportadora } from './tipos.js';
 
 export type CanalEnvio = 'EMAIL' | 'WHATSAPP' | 'API';
@@ -32,17 +32,20 @@ const LIMITE_RESULTADOS_BUSCA = 15;
 
 const ROTULOS_CANAL_ENVIO: Record<CanalEnvio, string> = { EMAIL: 'E-mail', WHATSAPP: 'WhatsApp', API: 'API' };
 
+export const MENSAGEM_SEM_CANAL_ENVIO = 'Selecione o canal de envio para todas as transportadoras.';
+
 /**
  * Canais realmente utilizáveis para a transportadora:
  * - EMAIL: e-mail para cotação válido no cadastro ETK, ou código Omie vinculado (o envio
  *   resolve MANUAL > CADASTRO > OMIE > bloqueio — Omie sem e-mail falha explicitamente).
- * - WHATSAPP: indisponível nesta fase, mesmo com `whatsappCotacao` cadastrado — o payload do
- *   n8n ainda não leva o número. Nunca inferido de `telefone` nem de `canalPrincipal`.
+ * - WHATSAPP: só com `whatsappCotacao` válido no cadastro (o número vai no payload do n8n →
+ *   YCloud). Nunca inferido de `telefone` nem de `canalPrincipal`.
  * - API: só a Braspress (única integração existente). `urlPortal` nunca conta como API.
  */
 export function canaisDisponiveis(t: Transportadora): CanalEnvio[] {
   const canais: CanalEnvio[] = [];
   if (emailValido(t.email) || t.codigoClienteOmie !== null) canais.push('EMAIL');
+  if (whatsappValido(t.whatsappCotacao)) canais.push('WHATSAPP');
   if (ehTransportadoraBraspress(t)) canais.push('API');
   return canais;
 }
@@ -86,6 +89,8 @@ export interface TransportadoraBusca {
   cnpj: string | null;
   canaisDisponiveis: CanalEnvio[];
   canalSugerido: CanalEnvio | null;
+  /** Canal principal do cadastro, só quando é um canal de envio (SITE nunca conta) — marcado com "*" na tela. */
+  canalPrincipal: CanalEnvio | null;
   /** Portal/site é só informação operacional — nunca vira API. */
   urlPortal: string | null;
   /** Número cadastrado como WhatsApp (envio ainda indisponível nesta fase). */
@@ -103,6 +108,7 @@ export function paraTransportadoraBusca(t: Transportadora): TransportadoraBusca 
     cnpj: t.cnpj,
     canaisDisponiveis: disponiveis,
     canalSugerido: canalSugerido(t, disponiveis),
+    canalPrincipal: (CANAIS_ENVIO as readonly string[]).includes(t.canalPrincipal ?? '') ? (t.canalPrincipal as CanalEnvio) : null,
     urlPortal: t.urlPortal,
     whatsappCadastrado: t.whatsappCotacao !== null,
     apiIntegrada: disponiveis.includes('API'),
@@ -136,7 +142,8 @@ export async function servicoConfirmarCadastroTransportadora(
 
 export interface ItemEnvioSolicitacao {
   transportadoraId: string;
-  canal: CanalEnvio;
+  /** `null` = operador não escolheu canal — bloqueia o envio inteiro (nada é enviado). */
+  canal: CanalEnvio | null;
   /** Só para EMAIL: override manual válido apenas nesta solicitação (mesma regra do fluxo existente). */
   emailManual: string | null;
 }
@@ -200,10 +207,22 @@ export async function servicoEnviarSolicitacoes(
   if (cotacao.modalidadeExecucao !== 'TRANSPORTADORA') {
     throw new ErroValidacao(`Solicitação de cotação só se aplica à modalidade TRANSPORTADORA (esta cotação é ${cotacao.modalidadeExecucao}).`);
   }
+  // Canal obrigatório: qualquer transportadora sem canal válido bloqueia TODO o envio, antes
+  // de qualquer despacho (a tela já bloqueia; aqui é a revalidação no servidor).
+  const semCanal = itens.filter((i) => i.canal === null || !CANAIS_ENVIO.includes(i.canal));
+  if (semCanal.length > 0) {
+    const nomes: string[] = [];
+    for (const i of semCanal) {
+      const t = await deps.buscarTransportadora(i.transportadoraId);
+      nomes.push(t === null ? i.transportadoraId : nomeExibicao(t));
+    }
+    throw new ErroValidacao(`${MENSAGEM_SEM_CANAL_ENVIO} Sem canal: ${nomes.join(', ')}.`);
+  }
+  const itensComCanal = itens as (ItemEnvioSolicitacao & { canal: CanalEnvio })[];
   const solicitacoesExistentes = await deps.listarSolicitacoes(cotacaoId);
 
   const resultados: ResultadoEnvioTransportadora[] = [];
-  for (const item of itens) {
+  for (const item of itensComCanal) {
     const base = { transportadoraId: item.transportadoraId, canal: item.canal, solicitacaoId: null, propostaId: null };
     const transportadora = await deps.buscarTransportadora(item.transportadoraId);
     if (transportadora === null) {

@@ -72,6 +72,8 @@ function payloadDeTeste(): import('../../../src/fretes/integracoes/n8nCliente.js
       peso: 100,
       volumes: 5,
       especie: 'Caixas',
+      cnpjOrigem: '11222333000181',
+      cnpjDestino: null,
     },
   };
 }
