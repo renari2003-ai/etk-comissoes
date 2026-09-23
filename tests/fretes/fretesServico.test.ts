@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClienteOmie, Cliente } from '../../src/omie/cliente.js';
 import type { PedidoOmie } from '../../src/calculo/tipos.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Este arquivo cria/derruba 5 tabelas novas por teste (Supabase real, sobre a rede) —
 // bem mais round-trips que os demais testes de integração do projeto. 5000ms (padrão do
@@ -23,6 +24,7 @@ let sufixo: string;
 
 beforeEach(() => {
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  isolarTabelasComerciais(sufixo);
   process.env.TRANSPORTADORAS_TABELA = `transportadoras_teste_${sufixo}`;
   process.env.VEICULOS_FRETE_TABELA = `veiculos_frete_teste_${sufixo}`;
   process.env.COTACOES_FRETE_TABELA = `cotacoes_frete_teste_${sufixo}`;
@@ -35,6 +37,7 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
+  await limparTabelasComerciais(pool);
   // Ordem inversa às FKs (fechamentos/propostas antes de cotações/transportadoras/veículos).
   await pool.query(`DROP TABLE IF EXISTS ${process.env.FECHAMENTOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.PROPOSTAS_FRETE_TABELA}`).catch(() => undefined);
@@ -42,6 +45,7 @@ afterEach(async () => {
   await pool.query(`DROP TABLE IF EXISTS ${process.env.TRANSPORTADORAS_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.VEICULOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.AUDITORIA_FRETES_TABELA}`).catch(() => undefined);
+  await droparTabelasRemanescentes(pool);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   delete process.env.TRANSPORTADORAS_TABELA;
   delete process.env.VEICULOS_FRETE_TABELA;

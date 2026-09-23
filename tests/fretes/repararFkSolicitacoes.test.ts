@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Homologação real 2026-09-16/17: reproduz e comprova a autocura das FKs de
 // `solicitacoes_cotacao_frete`/`extracoes_proposta_frete` que, na primeira execução real de
@@ -10,11 +11,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // já existente; a correção em `schema.ts` (`repararFkSeApontarParaTabelaErrada`) detecta e
 // repara isso a cada start, de forma idempotente.
 vi.setConfig({ testTimeout: 20000 });
+// Os testes que rodam `garantirEsquemaFretes()` duas vezes (antes/depois da corrupção) levam
+// ~25s contra o banco remoto — só eles têm timeout próprio maior (60s); o resto segue 20s.
 
 let sufixo: string;
 
 beforeEach(() => {
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  isolarTabelasComerciais(sufixo);
   process.env.TRANSPORTADORAS_TABELA = `transportadoras_teste_${sufixo}`;
   process.env.VEICULOS_FRETE_TABELA = `veiculos_frete_teste_${sufixo}`;
   process.env.COTACOES_FRETE_TABELA = `cotacoes_frete_teste_${sufixo}`;
@@ -30,8 +34,10 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
+  await limparTabelasComerciais(pool);
   await pool.query(`DROP TABLE IF EXISTS decoy_cotacoes_${sufixo}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS decoy_transportadoras_${sufixo}`).catch(() => undefined);
+  await pool.query(`DROP TABLE IF EXISTS decoy_propostas_${sufixo}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.EXTRACOES_PROPOSTA_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.RESPOSTAS_COTACAO_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.SOLICITACOES_COTACAO_TABELA}`).catch(() => undefined);
@@ -41,6 +47,7 @@ afterEach(async () => {
   await pool.query(`DROP TABLE IF EXISTS ${process.env.TRANSPORTADORAS_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.VEICULOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.AUDITORIA_FRETES_TABELA}`).catch(() => undefined);
+  await droparTabelasRemanescentes(pool);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   delete process.env.TRANSPORTADORAS_TABELA;
   delete process.env.VEICULOS_FRETE_TABELA;
@@ -106,7 +113,7 @@ describe('autocura de FK corrompida em solicitacoes_cotacao_frete/extracoes_prop
     );
   });
 
-  it('repara a FK cotacao_frete_id quando ela aponta para uma tabela errada (reprodução exata do bug real)', async () => {
+  it('repara a FK cotacao_frete_id quando ela aponta para uma tabela errada (reprodução exata do bug real)', { timeout: 60000 }, async () => {
     const { schema, pool } = await importarModulos();
     await schema.garantirEsquemaFretes();
 
@@ -141,7 +148,7 @@ describe('autocura de FK corrompida em solicitacoes_cotacao_frete/extracoes_prop
     expect(depois.rows[0]?.tabela_referenciada).toBe(schema.nomeTabelaCotacoes());
   });
 
-  it('repara a FK transportadora_id quando ela aponta para uma tabela errada', async () => {
+  it('repara a FK transportadora_id quando ela aponta para uma tabela errada', { timeout: 60000 }, async () => {
     const { schema, pool } = await importarModulos();
     await schema.garantirEsquemaFretes();
 
@@ -164,7 +171,7 @@ describe('autocura de FK corrompida em solicitacoes_cotacao_frete/extracoes_prop
     expect(depois.rows[0]?.tabela_referenciada).toBe(schema.nomeTabelaTransportadoras());
   });
 
-  it('depois da reparação, criar uma solicitação para uma cotação VÁLIDA funciona normalmente (fim a fim, sem chamar n8n)', async () => {
+  it('depois da reparação, criar uma solicitação para uma cotação VÁLIDA funciona normalmente (fim a fim, sem chamar n8n)', { timeout: 60000 }, async () => {
     const { schema, servico, pool } = await importarModulos();
     await schema.garantirEsquemaFretes();
 
@@ -246,4 +253,41 @@ describe('autocura de FK corrompida em solicitacoes_cotacao_frete/extracoes_prop
     },
     45000,
   );
+});
+
+describe('autocura das FKs de composição comercial/aprovação de valor mínimo (produção 2026-09-23)', () => {
+  it('tabelas comerciais ficam isoladas no teste e a FK proposta_id corrompida volta para a tabela de propostas correta', { timeout: 60000 }, async () => {
+    const { schema, pool } = await importarModulos();
+    // isolamento: nunca as tabelas reais (era isso que corrompia a produção)
+    expect(schema.nomeTabelaComposicoesComerciais()).not.toBe('composicoes_comerciais_frete');
+    expect(schema.nomeTabelaAprovacoesValorMinimo()).not.toBe('aprovacoes_valor_minimo_frete');
+    expect(schema.nomeTabelaParametrosFiscais()).not.toBe('parametros_fiscais_frete');
+    await schema.garantirEsquemaFretes();
+
+    const tabelaReferenciada = async (nome: string) =>
+      (
+        await pool.query<{ tabela_referenciada: string }>(
+          `SELECT rel_ref.relname AS tabela_referenciada FROM pg_constraint con
+             JOIN pg_class rel_ref ON rel_ref.oid = con.confrelid WHERE con.conname = $1`,
+          [nome],
+        )
+      ).rows[0]?.tabela_referenciada;
+
+    await pool.query(`CREATE TABLE decoy_propostas_${sufixo} (id UUID PRIMARY KEY)`);
+    const composicoes = schema.nomeTabelaComposicoesComerciais();
+    const nomeConstraint = await buscarNomeConstraintFk(pool, composicoes, 'proposta_id');
+    await pool.query(`ALTER TABLE ${composicoes} DROP CONSTRAINT ${nomeConstraint}`);
+    await pool.query(`ALTER TABLE ${composicoes} ADD CONSTRAINT ${nomeConstraint} FOREIGN KEY (proposta_id) REFERENCES decoy_propostas_${sufixo}(id)`);
+    expect(await tabelaReferenciada(nomeConstraint)).toBe(`decoy_propostas_${sufixo}`);
+
+    schema.resetarEsquemaGarantidoParaTestes();
+    await schema.garantirEsquemaFretes();
+    expect(await tabelaReferenciada(nomeConstraint)).toBe(schema.nomeTabelaPropostas()); // mesmo nome, alvo correto
+
+    // as outras 3 FKs comerciais continuam (ou passam a) apontar para as tabelas corretas
+    const aprovacoes = schema.nomeTabelaAprovacoesValorMinimo();
+    expect(await tabelaReferenciada(await buscarNomeConstraintFk(pool, composicoes, 'cotacao_id'))).toBe(schema.nomeTabelaCotacoes());
+    expect(await tabelaReferenciada(await buscarNomeConstraintFk(pool, aprovacoes, 'cotacao_id'))).toBe(schema.nomeTabelaCotacoes());
+    expect(await tabelaReferenciada(await buscarNomeConstraintFk(pool, aprovacoes, 'proposta_id'))).toBe(schema.nomeTabelaPropostas());
+  });
 });

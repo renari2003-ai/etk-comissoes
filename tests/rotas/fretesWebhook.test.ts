@@ -2,6 +2,7 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClienteOmie } from '../../src/omie/cliente.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from '../fretes/isolamentoTabelasComerciais.js';
 
 // Mesmo motivo de `tests/fretes/fretesServico.test.ts`: cria/derruba tabelas novas no
 // Postgres real por teste.
@@ -13,6 +14,7 @@ let sufixo: string;
 
 beforeEach(() => {
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  isolarTabelasComerciais(sufixo);
   process.env.FRETES_WEBHOOK_SECRET = SEGREDO_TESTE;
   process.env.TRANSPORTADORAS_TABELA = `transportadoras_teste_${sufixo}`;
   process.env.VEICULOS_FRETE_TABELA = `veiculos_frete_teste_${sufixo}`;
@@ -29,6 +31,7 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
+  await limparTabelasComerciais(pool);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.EXTRACOES_PROPOSTA_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.RESPOSTAS_COTACAO_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.SOLICITACOES_COTACAO_TABELA}`).catch(() => undefined);
@@ -38,6 +41,7 @@ afterEach(async () => {
   await pool.query(`DROP TABLE IF EXISTS ${process.env.TRANSPORTADORAS_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.VEICULOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.AUDITORIA_FRETES_TABELA}`).catch(() => undefined);
+  await droparTabelasRemanescentes(pool);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   delete process.env.FRETES_WEBHOOK_SECRET;
   delete process.env.TRANSPORTADORAS_TABELA;

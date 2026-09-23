@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClienteOmie } from '../../src/omie/cliente.js';
 import { CEP_ORIGEM_ETK, OBSERVACAO_TDE, aplicarObservacaoTde } from '../../src/fretes/origemEtk.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Ajuste Nova cotação: Orçamento (proposta), CEP de origem fixo no backend e observação TDE.
 vi.setConfig({ testTimeout: 30000 });
@@ -109,6 +110,7 @@ function omieFalso(etapaTipo: 'ORCAMENTO' | 'PEDIDO', chamadas: string[]): Clien
 describe('serviço (Postgres real, tabelas isoladas)', () => {
   beforeEach(() => {
     const sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    isolarTabelasComerciais(sufixo);
     for (const n of NOMES) process.env[n] = `${n.toLowerCase()}_oc_${sufixo}`;
     process.env.COTACOES_FRETE_SEQ = `cotacoes_frete_seq_oc_${sufixo}`;
   });
@@ -116,7 +118,9 @@ describe('serviço (Postgres real, tabelas isoladas)', () => {
   afterEach(async () => {
     const { obterPool } = await import('../../src/db.js');
     const pool = obterPool();
+    await limparTabelasComerciais(pool);
     for (const n of [...NOMES].reverse()) await pool.query(`DROP TABLE IF EXISTS ${process.env[n]}`).catch(() => undefined);
+    await droparTabelasRemanescentes(pool);
     await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
     for (const n of NOMES) delete process.env[n];
     delete process.env.COTACOES_FRETE_SEQ;

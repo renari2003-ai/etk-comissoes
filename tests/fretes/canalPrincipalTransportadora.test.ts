@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { ErroValidacao } from '../../src/validacao.js';
 import { validarCanalPrincipalOpcional } from '../../src/fretes/validacao.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Postgres real (sem mock) — mesmo padrão de tests/fretes/transportadoraOmie.test.ts.
 vi.setConfig({ testTimeout: 30000 });
@@ -48,6 +49,7 @@ const USUARIO_TESTE = '11111111-1111-1111-1111-111111111111';
 describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
   beforeEach(() => {
     const sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    isolarTabelasComerciais(sufixo);
     for (const n of NOMES) process.env[n] = `${n.toLowerCase()}_cp_${sufixo}`;
     process.env.COTACOES_FRETE_SEQ = `cotacoes_frete_seq_cp_${sufixo}`;
   });
@@ -55,7 +57,9 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
   afterEach(async () => {
     const { obterPool } = await import('../../src/db.js');
     const pool = obterPool();
+    await limparTabelasComerciais(pool);
     for (const n of [...NOMES].reverse()) await pool.query(`DROP TABLE IF EXISTS ${process.env[n]}`).catch(() => undefined);
+    await droparTabelasRemanescentes(pool);
     await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
     for (const n of NOMES) delete process.env[n];
     delete process.env.COTACOES_FRETE_SEQ;

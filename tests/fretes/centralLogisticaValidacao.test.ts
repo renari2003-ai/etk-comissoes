@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PERMISSOES_VAZIAS, type Permissoes, type UsuarioPublico } from '../../src/auth/tipos.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Regressão: proposta automática ainda PENDENTE_VALIDACAO aparecia na Central da Logística
 // (status_revisao nasce AGUARDANDO_LOGISTICA) e podia ser liberada antes da validação humana —
@@ -21,6 +22,7 @@ const NOMES = [
 
 beforeEach(() => {
   const sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  isolarTabelasComerciais(sufixo);
   for (const n of NOMES) process.env[n] = `${n.toLowerCase()}_cl_${sufixo}`;
   process.env.COTACOES_FRETE_SEQ = `cotacoes_frete_seq_cl_${sufixo}`;
 });
@@ -28,7 +30,9 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
+  await limparTabelasComerciais(pool);
   for (const n of [...NOMES].reverse()) await pool.query(`DROP TABLE IF EXISTS ${process.env[n]}`).catch(() => undefined);
+  await droparTabelasRemanescentes(pool);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   for (const n of NOMES) delete process.env[n];
   delete process.env.COTACOES_FRETE_SEQ;

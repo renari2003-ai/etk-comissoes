@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PERMISSOES_VAZIAS, type Permissoes, type UsuarioPublico } from '../../src/auth/tipos.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Fase 4A.6 — Central da Logística + Central do Vendedor. Mesmo padrão de
 // `fretesServico.test.ts`: Postgres (Supabase) real, tabelas descartáveis por teste via
@@ -25,6 +26,7 @@ let sufixo: string;
 
 beforeEach(() => {
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  isolarTabelasComerciais(sufixo);
   process.env.TRANSPORTADORAS_TABELA = `transportadoras_teste_${sufixo}`;
   process.env.VEICULOS_FRETE_TABELA = `veiculos_frete_teste_${sufixo}`;
   process.env.COTACOES_FRETE_TABELA = `cotacoes_frete_teste_${sufixo}`;
@@ -40,6 +42,7 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
+  await limparTabelasComerciais(pool);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.EXTRACOES_PROPOSTA_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.RESPOSTAS_COTACAO_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.SOLICITACOES_COTACAO_TABELA}`).catch(() => undefined);
@@ -49,6 +52,7 @@ afterEach(async () => {
   await pool.query(`DROP TABLE IF EXISTS ${process.env.TRANSPORTADORAS_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.VEICULOS_FRETE_TABELA}`).catch(() => undefined);
   await pool.query(`DROP TABLE IF EXISTS ${process.env.AUDITORIA_FRETES_TABELA}`).catch(() => undefined);
+  await droparTabelasRemanescentes(pool);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   delete process.env.TRANSPORTADORAS_TABELA;
   delete process.env.VEICULOS_FRETE_TABELA;

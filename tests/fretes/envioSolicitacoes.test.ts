@@ -11,6 +11,7 @@ import {
 import { ErroDadosCotacaoIncompletos } from '../../src/fretes/braspressServico.js';
 import { ErroValidacao } from '../../src/validacao.js';
 import type { CotacaoFrete, SolicitacaoCotacao, Transportadora } from '../../src/fretes/tipos.js';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Envio único do detalhe da cotação: canais disponíveis, dedupe por CNPJ e despacho para os
 // serviços EXISTENTES (mockados aqui — nenhuma chamada real a n8n/Braspress/Omie).
@@ -252,6 +253,7 @@ describe('busca de transportadoras (Postgres real, tabelas isoladas)', () => {
 
   beforeEach(() => {
     const sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    isolarTabelasComerciais(sufixo);
     for (const n of NOMES) process.env[n] = `${n.toLowerCase()}_busca_${sufixo}`;
     process.env.COTACOES_FRETE_SEQ = `cotacoes_frete_seq_busca_${sufixo}`;
   });
@@ -259,7 +261,9 @@ describe('busca de transportadoras (Postgres real, tabelas isoladas)', () => {
   afterEach(async () => {
     const { obterPool } = await import('../../src/db.js');
     const pool = obterPool();
+    await limparTabelasComerciais(pool);
     for (const n of [...NOMES].reverse()) await pool.query(`DROP TABLE IF EXISTS ${process.env[n]}`).catch(() => undefined);
+    await droparTabelasRemanescentes(pool);
     await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
     for (const n of NOMES) delete process.env[n];
     delete process.env.COTACOES_FRETE_SEQ;

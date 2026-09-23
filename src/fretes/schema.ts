@@ -558,6 +558,16 @@ export function garantirEsquemaFretes(): Promise<void> {
     `);
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${aprovacoesValorMinimo}_status ON ${aprovacoesValorMinimo} (status)`);
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${aprovacoesValorMinimo}_proposta ON ${aprovacoesValorMinimo} (proposta_id)`);
+
+    // Mesma autocura de `${solicitacoes}` (ver `repararFkSeApontarParaTabelaErrada`): em
+    // 2026-09-23 as 4 FKs abaixo foram encontradas em produção apontando para tabelas
+    // `*_teste_*` (testes que isolavam cotações/propostas mas não estas tabelas). Seguro só
+    // porque todos os testes que isolam cotações/propostas agora isolam também composição/
+    // aprovação/parâmetros (`tests/fretes/isolamentoTabelasComerciais.ts`).
+    await repararFkSeApontarParaTabelaErrada(composicoes, 'cotacao_id', cotacoes);
+    await repararFkSeApontarParaTabelaErrada(composicoes, 'proposta_id', propostas);
+    await repararFkSeApontarParaTabelaErrada(aprovacoesValorMinimo, 'cotacao_id', cotacoes);
+    await repararFkSeApontarParaTabelaErrada(aprovacoesValorMinimo, 'proposta_id', propostas);
   })();
   return esquemaGarantido;
 }

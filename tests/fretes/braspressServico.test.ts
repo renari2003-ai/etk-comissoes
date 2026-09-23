@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Fase Braspress 1 — criação/idempotência da proposta. Postgres real, tabelas descartáveis
 // (todas as ~10 tabelas isoladas), API Braspress simulada via fetch injetado.
@@ -19,6 +20,7 @@ const NOMES = [
 
 beforeEach(() => {
   const sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  isolarTabelasComerciais(sufixo);
   for (const n of NOMES) process.env[n] = `${n.toLowerCase()}_bp_${sufixo}`;
   process.env.COTACOES_FRETE_SEQ = `cotacoes_frete_seq_bp_${sufixo}`;
 });
@@ -26,7 +28,9 @@ beforeEach(() => {
 afterEach(async () => {
   const { obterPool } = await import('../../src/db.js');
   const pool = obterPool();
+  await limparTabelasComerciais(pool);
   for (const n of [...NOMES].reverse()) await pool.query(`DROP TABLE IF EXISTS ${process.env[n]}`).catch(() => undefined);
+  await droparTabelasRemanescentes(pool);
   await pool.query(`DROP SEQUENCE IF EXISTS ${process.env.COTACOES_FRETE_SEQ}`).catch(() => undefined);
   for (const n of NOMES) delete process.env[n];
   delete process.env.COTACOES_FRETE_SEQ;
