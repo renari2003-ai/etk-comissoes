@@ -182,6 +182,22 @@ export function validarCanalPrincipalOpcional(valor: unknown): CanalPrincipalTra
   return valor as CanalPrincipalTransportadora;
 }
 
+/**
+ * WhatsApp para cotação: aceita máscara ("+55 (11) 99999-0000") e guarda só dígitos — 10 a
+ * 13 dígitos (DDD + número, com ou sem DDI 55). Vazio = não cadastrado. Nunca inferido de `telefone`.
+ */
+export function validarWhatsappOpcional(valor: unknown): string | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  if (typeof valor !== 'string' || !/^[\d\s()+.-]+$/.test(valor.trim())) {
+    throw new ErroValidacao('O campo "whatsappCotacao" deve conter só o número (dígitos, espaço, parênteses, "+" ou "-").');
+  }
+  const digitos = valor.replace(/\D/g, '');
+  if (digitos.length < 10 || digitos.length > 13) {
+    throw new ErroValidacao('O campo "whatsappCotacao" deve ter DDD + número (10 a 13 dígitos).');
+  }
+  return digitos;
+}
+
 /** Confiança da extração (seção 38) — só um número entre 0 e 1; NUNCA usado para decisão financeira, só para alerta/priorização visual. */
 export function validarConfiancaOpcional(valor: unknown): number | null {
   if (valor === undefined || valor === null || valor === '') return null;

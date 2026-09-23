@@ -20,7 +20,7 @@ export interface PayloadSolicitacaoN8n {
    * (regra MANUAL > OMIE > bloqueio) — `null` para canais diferentes de EMAIL. O n8n nunca
    * decide a fonte nem consulta a Omie; só usa o valor recebido aqui.
    */
-  transportadora: { id: string; email: string | null; fonteEmail: 'OMIE' | 'MANUAL' | null };
+  transportadora: { id: string; email: string | null; fonteEmail: 'OMIE' | 'MANUAL' | 'CADASTRO' | null };
   canal: string;
   logistica: {
     origem: string | null;

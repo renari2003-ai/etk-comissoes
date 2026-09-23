@@ -31,8 +31,11 @@ describe('tela Nova cotação', () => {
   const form = html.slice(html.indexOf('id="fretes-form-nova-cotacao"'), html.indexOf('</form>', html.indexOf('id="fretes-form-nova-cotacao"')));
   const codigo = readFileSync('public-src/fretes.ts', 'utf8');
 
-  it('campo ORÇAMENTO (PROPOSTA) no lugar do Pedido Omie (nº); CEP origem removido; checkbox TDE presente', () => {
-    expect(form).toContain('Orçamento (proposta)');
+  it('campo DOCUMENTO OMIE (orçamento ou pedido) único; CEP origem removido; checkbox TDE presente; aba "Importar da Omie" fora do menu', () => {
+    expect(form).toContain('Documento Omie — orçamento ou pedido');
+    expect(form).not.toContain('Orçamento (proposta)');
+    expect(html).toMatch(/id="fretes-aba-importar-omie"[^>]*\bhidden\b/);
+    expect(html).toContain('id="fretes-secao-importar-omie"'); // seção/serviços preservados, só fora do menu
     expect(form).not.toContain('Pedido Omie (nº)');
     expect(form).not.toMatch(/CEP origem/i);
     expect(form).not.toContain('name="cepOrigem"');
@@ -48,16 +51,22 @@ describe('tela Nova cotação', () => {
     expect(form).not.toContain('Orçamento localizado na Omie — confira antes de criar');
     expect(form).toContain('fretes-cotacao-cliente-nome-campo');
     expect(form).toContain('fretes-cotacao-vendedor-nome-campo');
-    const bloco = codigo.slice(codigo.indexOf('Orçamento (proposta) da Omie'), codigo.indexOf('formNovaCotacao.addEventListener'));
+    const bloco = codigo.slice(codigo.indexOf('Documento Omie (orçamento OU pedido)'), codigo.indexOf('formNovaCotacao.addEventListener'));
+    expect(bloco.length).toBeGreaterThan(0);
     expect(bloco).toContain("addEventListener('change'");
     expect(bloco).toMatch(/Enter[\s\S]*preventDefault/);
     expect(bloco).toContain("addEventListener('input', limparDadosOrcamento)");
     expect(bloco).not.toContain('/confirmar'); // a consulta nunca chama a rota que cria
   });
 
-  it('o número informado consulta a rota de ORÇAMENTO, nunca a de Pedido, e o navegador não envia cepOrigem', () => {
-    const bloco = codigo.slice(codigo.indexOf('Orçamento (proposta) da Omie'), codigo.indexOf('el<HTMLSelectElement>(\'fretes-filtro-status\')'));
-    expect(bloco).toContain('/api/fretes/omie/orcamentos/');
+  it('o número consulta a rota de DOCUMENTO (a Omie diz o tipo); criar envia o tipo conferido; o navegador não envia cepOrigem', () => {
+    const bloco = codigo.slice(codigo.indexOf('Documento Omie (orçamento OU pedido)'), codigo.indexOf('el<HTMLSelectElement>(\'fretes-filtro-status\')'));
+    expect(bloco).toContain('/api/fretes/omie/documentos/${encodeURIComponent(numero)}/preparar');
+    expect(bloco).toContain('/api/fretes/omie/documentos/${encodeURIComponent(numeroOrcamento)}/confirmar');
+    expect(bloco).toContain('tipoDocumento: orcamentoPreparado.preparacao.documentoOmieTipo');
+    expect(bloco).toContain("'ORÇAMENTO OMIE' : 'PEDIDO OMIE'");
+    expect(bloco).toContain('localizado');
+    expect(bloco).not.toContain('/api/fretes/omie/orcamentos/');
     expect(bloco).not.toContain('/api/fretes/omie/pedidos/');
     expect(bloco).not.toContain('cepOrigem');
   });

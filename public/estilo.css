@@ -1673,10 +1673,7 @@ tfoot tr td:first-child {
   font-size: 14px;
 }
 
-/* Detalhe da cotação — transportadoras para solicitar cotação e várias embalagens (Braspress). */
-.fretes-solicitacao-linha {
-  flex-basis: 100%;
-}
+/* Detalhe da cotação — busca/seleção de transportadoras, dados da carga, embalagens e envio único. */
 
 .fretes-embalagens {
   display: flex;
@@ -1688,4 +1685,112 @@ tfoot tr td:first-child {
 .fretes-embalagens-total {
   margin: 0;
   font-size: 14px;
+}
+
+.fretes-subtitulo {
+  margin: 20px 0 8px;
+  font-size: 15px;
+}
+
+.fretes-busca-campo {
+  max-width: 560px;
+}
+
+.fretes-busca-campo input {
+  width: 100%;
+}
+
+.fretes-busca-resultados {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.fretes-busca-resultado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--cor-superficie);
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+}
+
+.fretes-busca-resultado-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+#fretes-tabela-selecionadas select,
+.fretes-selecionada-email {
+  display: block;
+  width: 100%;
+  min-width: 180px;
+  max-width: 320px;
+  margin-top: 4px;
+}
+
+.fretes-dados-carga {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.fretes-dados-carga > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fretes-conferencia {
+  margin: 12px 0 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.fretes-conferencia-ok {
+  background: var(--cor-positivo-fundo);
+  color: var(--cor-positivo);
+}
+
+.fretes-conferencia-alerta {
+  background: var(--cor-alerta-fundo);
+  color: var(--cor-alerta);
+}
+
+.fretes-envio-resultado {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.fretes-envio-ok {
+  color: var(--cor-positivo);
+}
+
+.fretes-envio-falha {
+  color: var(--cor-negativo);
+}
+
+.fretes-busca-omie-oferta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.fretes-conferir-transportadora {
+  margin-top: 12px;
 }

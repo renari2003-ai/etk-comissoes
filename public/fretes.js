@@ -971,6 +971,7 @@ export function inicializarFretes() {
                     codigoClienteOmie: numeroOuNulo(dadosForm.get('codigoClienteOmie')),
                     canalPrincipal: textoOuNulo(dadosForm.get('canalPrincipal')),
                     urlPortal: textoOuNulo(dadosForm.get('urlPortal')),
+                    whatsappCotacao: textoOuNulo(dadosForm.get('whatsappCotacao')),
                 }),
             });
             if (!resposta.ok) {
@@ -1145,7 +1146,9 @@ export function inicializarFretes() {
         radio.addEventListener('change', atualizarCamposPorModalidadeExecucao);
     });
     atualizarCamposPorModalidadeExecucao();
-    // --- Orçamento (proposta) da Omie: consulta e conferência ANTES de criar (somente leitura) ---
+    // --- Documento Omie (orçamento OU pedido): consulta e conferência ANTES de criar (somente leitura) ---
+    // O operador informa só o número; a Omie diz se é Orçamento ou Pedido. Ao criar, o tipo
+    // conferido vai junto e o backend reconsulta a Omie (divergência de tipo é rejeitada).
     // Consultar NÃO cria cotação: só preenche a tela. A criação acontece apenas no botão "Criar cotação".
     const inputOrcamento = el('fretes-cotacao-orcamento');
     const infoOrcamento = el('fretes-cotacao-orcamento-info');
@@ -1214,8 +1217,7 @@ export function inicializarFretes() {
         infoOrcamento.textContent = 'Consultando a Omie…';
         infoOrcamento.hidden = false;
         try {
-            // Sempre a rota de ORÇAMENTO — nunca a de Pedido (o serviço rejeita se o número for de um Pedido).
-            const resposta = await fetch(`/api/fretes/omie/orcamentos/${encodeURIComponent(numero)}/preparar`);
+            const resposta = await fetch(`/api/fretes/omie/documentos/${encodeURIComponent(numero)}/preparar`);
             if (inputOrcamento.value.trim() !== numero)
                 return false; // o operador já trocou o número durante a consulta
             if (!resposta.ok) {
@@ -1232,7 +1234,13 @@ export function inicializarFretes() {
             definirValorCampoCotacao('fretes-cotacao-cep-destino', p.destino?.cep ?? null);
             definirValorCampoCotacao('fretes-cotacao-peso', p.logistica.pesoBruto);
             definirValorCampoCotacao('fretes-cotacao-volumes', p.logistica.quantidadeVolumes);
-            infoOrcamento.textContent = 'Orçamento localizado. Confira os dados e clique em "Criar cotação" para confirmar.';
+            const tipo = p.documentoOmieTipo === 'ORCAMENTO' ? 'ORÇAMENTO OMIE' : 'PEDIDO OMIE';
+            const extras = [
+                p.logistica.cifFobOmie !== null ? `CIF/FOB (Omie): ${p.logistica.cifFobOmie}` : null,
+                p.logistica.especieVolumes !== null ? `Espécie: ${p.logistica.especieVolumes}` : null,
+                p.logistica.pesoLiquido !== null ? `Peso líquido: ${p.logistica.pesoLiquido} kg` : null,
+            ].filter((x) => x !== null);
+            infoOrcamento.textContent = `${tipo} Nº ${p.pedidoOmieNumero} localizado${extras.length > 0 ? ` — ${extras.join(' • ')}` : ''}. Confira os dados e clique em "Criar cotação" para confirmar.`;
             return true;
         }
         finally {
@@ -1269,18 +1277,25 @@ export function inicializarFretes() {
                 if (orcamentoPreparado === null || orcamentoPreparado.numero !== numeroOrcamento) {
                     // Número ainda não conferido: consulta e exibe os dados, mas NÃO cria — o operador confirma num novo clique.
                     if (await consultarOrcamentoNaOmie()) {
-                        erroCotacao.textContent = 'Confira os dados do orçamento exibidos acima e clique em "Criar cotação" novamente para confirmar.';
+                        erroCotacao.textContent = 'Confira os dados do documento Omie exibidos acima e clique em "Criar cotação" novamente para confirmar.';
                         erroCotacao.hidden = false;
                     }
                     return;
                 }
-                // Orçamento: o backend relê a Omie (fonte da verdade); o destino só é enviado se a Omie não tiver um.
+                // Documento Omie: o backend relê a Omie (fonte da verdade) exigindo o MESMO tipo conferido
+                // aqui; o destino só é enviado se a Omie não tiver um.
                 const cepDestino = textoOuNulo(dadosForm.get('cepDestino'));
                 const destinoOverride = orcamentoPreparado.preparacao.destino === null && cepDestino !== null ? { cep: cepDestino } : null;
-                resposta = await fetch(`/api/fretes/omie/orcamentos/${encodeURIComponent(numeroOrcamento)}/confirmar`, {
+                resposta = await fetch(`/api/fretes/omie/documentos/${encodeURIComponent(numeroOrcamento)}/confirmar`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...comuns, destinoOverride, peso: numeroOuNulo(dadosForm.get('peso')), volumes: numeroOuNulo(dadosForm.get('volumes')) }),
+                    body: JSON.stringify({
+                        ...comuns,
+                        tipoDocumento: orcamentoPreparado.preparacao.documentoOmieTipo,
+                        destinoOverride,
+                        peso: numeroOuNulo(dadosForm.get('peso')),
+                        volumes: numeroOuNulo(dadosForm.get('volumes')),
+                    }),
                 });
             }
             else {
@@ -1364,15 +1379,13 @@ export function inicializarFretes() {
         el('fretes-detalhe-bloco-veiculo').hidden = modalidadeExecucao !== 'VEICULO_PROPRIO';
         el('fretes-detalhe-bloco-retira').hidden = modalidadeExecucao !== 'RETIRA';
         el('fretes-detalhe-form-secao').hidden = cotacaoEncerrada;
-        el('fretes-braspress-secao').hidden = cotacaoEncerrada;
         let propostaSelecionada = null;
         if (modalidadeExecucao === 'TRANSPORTADORA') {
             const respostaPropostas = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/propostas`);
             const propostas = respostaPropostas.ok ? (await respostaPropostas.json()).propostas : [];
             renderizarTabelaPropostas(propostas, cotacaoEncerrada);
             propostaSelecionada = propostas.find((p) => p.selecionada) ?? null;
-            renderizarCheckboxesSolicitacao();
-            el('fretes-botao-solicitar-cotacao').disabled = cotacaoEncerrada;
+            prepararEnvioSolicitacoes(cotacao, cotacaoEncerrada);
             void carregarSolicitacoes();
         }
         else if (modalidadeExecucao === 'VEICULO_PROPRIO') {
@@ -1498,40 +1511,6 @@ export function inicializarFretes() {
         const data = new Date(iso);
         return Number.isNaN(data.getTime()) ? '—' : data.toLocaleString('pt-BR');
     }
-    /**
-     * Fase 4A.4.1 (seção 7/8) — este painel é sempre canal EMAIL (`canal: 'EMAIL'` já fixo no
-     * envio, ver `botaoSolicitarCotacao` abaixo). Cada transportadora marcada ganha um campo de
-     * e-mail opcional: em branco, o ETK resolve automaticamente pelo Omie (se a transportadora
-     * tiver `codigoClienteOmie`); preenchido, vale como override manual SÓ para esta
-     * solicitação (nunca grava em `transportadoras.email` nem na Omie — a resolução real e o
-     * e-mail/fonte efetivamente usados só são conhecidos depois do envio, na tabela abaixo).
-     */
-    function renderizarCheckboxesSolicitacao() {
-        const container = el('fretes-solicitacoes-checkboxes');
-        container.textContent = '';
-        for (const t of transportadorasCache.filter((t) => t.ativo)) {
-            const linha = document.createElement('div');
-            linha.className = 'campo-filtro fretes-solicitacao-linha';
-            const label = document.createElement('label');
-            const input = document.createElement('input');
-            input.type = 'checkbox';
-            input.value = t.id;
-            input.name = 'solicitacao-transportadora';
-            label.appendChild(input);
-            label.append(` ${t.nomeFantasia ? `${t.nomeRazaoSocial} (${t.nomeFantasia})` : t.nomeRazaoSocial}`);
-            linha.appendChild(label);
-            const inputEmail = document.createElement('input');
-            inputEmail.type = 'email';
-            inputEmail.dataset.transportadoraId = t.id;
-            inputEmail.className = 'fretes-solicitacao-email-manual';
-            inputEmail.placeholder =
-                t.codigoClienteOmie !== null
-                    ? 'Em branco = usa o e-mail do Omie. Preencha para substituir só nesta solicitação.'
-                    : 'Transportadora sem código Omie — informe o e-mail para esta solicitação.';
-            linha.appendChild(inputEmail);
-            container.appendChild(linha);
-        }
-    }
     async function carregarSolicitacoes() {
         if (cotacaoAtualId === null)
             return;
@@ -1578,44 +1557,384 @@ export function inicializarFretes() {
             corpo.appendChild(tr);
         }
     }
-    const botaoSolicitarCotacao = el('fretes-botao-solicitar-cotacao');
-    const erroSolicitacao = el('fretes-solicitacao-erro');
-    botaoSolicitarCotacao.addEventListener('click', () => {
-        void (async () => {
-            if (cotacaoAtualId === null)
-                return;
-            erroSolicitacao.hidden = true;
-            const marcadas = Array.from(document.querySelectorAll('input[name="solicitacao-transportadora"]:checked'));
-            if (marcadas.length === 0) {
-                erroSolicitacao.textContent = 'Selecione ao menos uma transportadora.';
-                erroSolicitacao.hidden = false;
-                return;
+    const ROTULOS_CANAL_ENVIO = { EMAIL: 'E-mail', WHATSAPP: 'WhatsApp', API: 'API' };
+    const LIMITE_TRANSPORTADORAS_SELECIONADAS = 7;
+    let selecionadas = [];
+    let cotacaoEnvioAtual = null;
+    let envioBloqueadoPorStatus = false;
+    const inputBuscaTransportadora = el('fretes-busca-transportadora');
+    const infoBuscaTransportadora = el('fretes-busca-transportadora-info');
+    const resultadosBuscaTransportadora = el('fretes-busca-transportadora-resultados');
+    const corpoSelecionadas = el('fretes-tabela-selecionadas-corpo');
+    const vazioSelecionadas = el('fretes-selecionadas-vazio');
+    const contadorSelecionadas = el('fretes-selecionadas-contador');
+    const dadosCarga = el('fretes-dados-carga');
+    const conferenciaEnvio = el('fretes-envio-conferencia');
+    const botaoEnviarSolicitacoes = el('fretes-botao-enviar-solicitacoes');
+    const erroEnvio = el('fretes-envio-erro');
+    const resultadoEnvio = el('fretes-envio-resultado');
+    function nomeTransportadoraBusca(t) {
+        return t.nomeFantasia ?? t.nomeRazaoSocial;
+    }
+    function descreverCanais(canais) {
+        return canais.length === 0 ? 'Nenhum canal disponível' : canais.map((c) => ROTULOS_CANAL_ENVIO[c]).join(' / ');
+    }
+    /** Portal/site e WhatsApp cadastrados são informação operacional — nunca viram canal por conta própria. */
+    function observacoesCanais(t) {
+        const notas = [];
+        if (t.urlPortal !== null && !t.apiIntegrada)
+            notas.push('Portal cadastrado — integração API não disponível');
+        if (t.whatsappCadastrado)
+            notas.push('WhatsApp cadastrado — envio por WhatsApp ainda não habilitado');
+        return notas;
+    }
+    function formatarCnpjTransportadora(cnpj) {
+        if (cnpj === null || cnpj.trim() === '')
+            return 'Não informado';
+        const digitos = cnpj.replace(/\D/g, '');
+        return digitos.length === 14 ? digitos.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
+    }
+    /** Regras de seleção: sem duplicidade, no máximo 7, e só com algum canal disponível. */
+    function motivoNaoSelecionavel(t) {
+        if (selecionadas.some((s) => s.id === t.id))
+            return 'Já selecionada';
+        if (selecionadas.length >= LIMITE_TRANSPORTADORAS_SELECIONADAS)
+            return `Limite de ${LIMITE_TRANSPORTADORAS_SELECIONADAS} transportadoras`;
+        if (t.canaisDisponiveis.length === 0)
+            return 'Transportadora cadastrada, mas sem canal de cotação disponível.';
+        return null;
+    }
+    function selecionarTransportadora(t) {
+        if (motivoNaoSelecionavel(t) !== null)
+            return;
+        selecionadas.push({ ...t, canal: t.canalSugerido, emailManual: '' });
+        renderizarSelecionadas();
+        renderizarResultadosBusca(ultimosResultadosBusca);
+    }
+    function removerTransportadora(id) {
+        selecionadas = selecionadas.filter((s) => s.id !== id);
+        renderizarSelecionadas();
+        renderizarResultadosBusca(ultimosResultadosBusca);
+    }
+    let ultimosResultadosBusca = [];
+    function renderizarResultadosBusca(lista) {
+        ultimosResultadosBusca = lista;
+        resultadosBuscaTransportadora.textContent = '';
+        for (const t of lista) {
+            const card = document.createElement('div');
+            card.className = 'fretes-busca-resultado';
+            const info = document.createElement('div');
+            info.className = 'fretes-busca-resultado-info';
+            const nome = document.createElement('strong');
+            nome.textContent = nomeTransportadoraBusca(t);
+            info.appendChild(nome);
+            const linhas = [
+                t.nomeFantasia !== null && t.nomeFantasia !== t.nomeRazaoSocial ? `Razão social: ${t.nomeRazaoSocial}` : null,
+                `CNPJ: ${formatarCnpjTransportadora(t.cnpj)}`,
+                `Canais disponíveis: ${descreverCanais(t.canaisDisponiveis)}`,
+                ...observacoesCanais(t),
+            ];
+            for (const texto of linhas) {
+                if (texto === null)
+                    continue;
+                const span = document.createElement('span');
+                span.textContent = texto;
+                info.appendChild(span);
             }
-            const transportadoras = marcadas.map((i) => {
-                const inputEmail = document.querySelector(`.fretes-solicitacao-email-manual[data-transportadora-id="${i.value}"]`);
-                return { id: i.value, emailManual: textoOuNulo(inputEmail?.value ?? '') };
-            });
-            const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/solicitacoes`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ transportadoras, canal: 'EMAIL' }),
-            });
-            if (!resposta.ok) {
-                erroSolicitacao.textContent = await extrairMensagemErro(resposta);
-                erroSolicitacao.hidden = false;
-                return;
-            }
-            for (const i of marcadas)
-                i.checked = false;
-            for (const t of transportadoras) {
-                const inputEmail = document.querySelector(`.fretes-solicitacao-email-manual[data-transportadora-id="${t.id}"]`);
-                if (inputEmail !== null)
-                    inputEmail.value = '';
-            }
-            void carregarSolicitacoes();
-        })();
+            card.appendChild(info);
+            const botao = document.createElement('button');
+            botao.type = 'button';
+            botao.className = 'botao-secundario';
+            const motivo = motivoNaoSelecionavel(t);
+            botao.textContent = motivo === 'Já selecionada' ? 'Selecionada' : 'Selecionar';
+            botao.disabled = motivo !== null || envioBloqueadoPorStatus;
+            if (motivo !== null)
+                botao.title = motivo;
+            botao.addEventListener('click', () => selecionarTransportadora(t));
+            card.appendChild(botao);
+            resultadosBuscaTransportadora.appendChild(card);
+        }
+    }
+    let temporizadorBusca;
+    let sequenciaBusca = 0;
+    inputBuscaTransportadora.addEventListener('input', () => {
+        window.clearTimeout(temporizadorBusca);
+        temporizadorBusca = window.setTimeout(() => void buscarTransportadoras(), 300);
     });
-    // --- Fase Braspress 1: cotação via API oficial ---
+    async function buscarTransportadoras() {
+        const termo = inputBuscaTransportadora.value.trim();
+        const sequencia = ++sequenciaBusca;
+        limparBuscaOmie();
+        if (termo.length < 2) {
+            infoBuscaTransportadora.hidden = true;
+            renderizarResultadosBusca([]);
+            return;
+        }
+        const resposta = await fetch(`/api/fretes/transportadoras/buscar?q=${encodeURIComponent(termo)}`);
+        if (sequencia !== sequenciaBusca)
+            return; // uma busca mais nova já foi disparada
+        if (!resposta.ok) {
+            infoBuscaTransportadora.textContent = await extrairMensagemErro(resposta);
+            infoBuscaTransportadora.hidden = false;
+            renderizarResultadosBusca([]);
+            return;
+        }
+        const dados = (await resposta.json());
+        infoBuscaTransportadora.hidden = true;
+        // Não achou no cadastro ETK: oferece a busca na Omie (somente leitura, nunca cadastra sozinha).
+        ofertaBuscaOmie.hidden = dados.transportadoras.length > 0 || envioBloqueadoPorStatus;
+        renderizarResultadosBusca(dados.transportadoras);
+    }
+    const ofertaBuscaOmie = el('fretes-busca-omie-oferta');
+    const infoBuscaOmie = el('fretes-busca-omie-info');
+    const resultadosBuscaOmie = el('fretes-busca-omie-resultados');
+    const painelConferir = el('fretes-conferir-transportadora');
+    const formConferir = el('fretes-form-conferir-transportadora');
+    const erroConferir = el('fretes-conferir-erro');
+    const infoConferir = el('fretes-conferir-info');
+    const apiConferir = el('fretes-conferir-api');
+    function limparBuscaOmie() {
+        ofertaBuscaOmie.hidden = true;
+        infoBuscaOmie.hidden = true;
+        resultadosBuscaOmie.textContent = '';
+        painelConferir.hidden = true;
+        erroConferir.hidden = true;
+    }
+    el('fretes-busca-omie-botao').addEventListener('click', () => void buscarTransportadoraNaOmie());
+    async function buscarTransportadoraNaOmie() {
+        const termo = inputBuscaTransportadora.value.trim();
+        const digitos = termo.replace(/\D/g, '');
+        // CNPJ completo → critério CNPJ; senão, nome (razão social e, na falta, nome fantasia).
+        const filtro = digitos.length === 14 ? { cnpj: digitos } : { razaoSocial: termo, nomeFantasia: termo };
+        infoBuscaOmie.textContent = 'Consultando a Omie…';
+        infoBuscaOmie.hidden = false;
+        resultadosBuscaOmie.textContent = '';
+        const resposta = await fetch('/api/fretes/transportadoras/buscar-omie', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(filtro),
+        });
+        if (!resposta.ok) {
+            infoBuscaOmie.textContent = await extrairMensagemErro(resposta);
+            return;
+        }
+        const dados = (await resposta.json());
+        infoBuscaOmie.textContent =
+            dados.resultados.length === 0 ? 'Nenhum cadastro encontrado na Omie.' : 'Escolha pelo CNPJ. Nada é cadastrado sem a sua confirmação.';
+        for (const o of dados.resultados) {
+            const card = document.createElement('div');
+            card.className = 'fretes-busca-resultado';
+            const info = document.createElement('div');
+            info.className = 'fretes-busca-resultado-info';
+            const nome = document.createElement('strong');
+            nome.textContent = o.razaoSocial;
+            info.appendChild(nome);
+            for (const texto of [
+                o.nomeFantasia !== null ? `Nome fantasia: ${o.nomeFantasia}` : null,
+                `CNPJ: ${formatarCnpjTransportadora(o.cnpjCpf)}`,
+                o.jaCadastrada !== null ? 'Já cadastrada no ETK' : null,
+            ]) {
+                if (texto === null)
+                    continue;
+                const span = document.createElement('span');
+                span.textContent = texto;
+                info.appendChild(span);
+            }
+            card.appendChild(info);
+            const botao = document.createElement('button');
+            botao.type = 'button';
+            botao.className = 'botao-secundario';
+            const cnpjValido = (o.cnpjCpf ?? '').replace(/\D/g, '').length === 14;
+            botao.disabled = !cnpjValido;
+            if (!cnpjValido)
+                botao.title = 'Cadastro na Omie sem CNPJ válido';
+            if (o.jaCadastrada !== null) {
+                botao.textContent = 'Usar cadastro existente';
+                botao.addEventListener('click', () => void confirmarCadastro({ nomeRazaoSocial: o.razaoSocial, cnpj: o.cnpjCpf }));
+            }
+            else {
+                botao.textContent = 'Selecionar';
+                botao.addEventListener('click', () => abrirConferencia(o));
+            }
+            card.appendChild(botao);
+            resultadosBuscaOmie.appendChild(card);
+        }
+    }
+    /** Braspress é a única integração API desta fase — o resto é "API integrada: NÃO" (portal/site nunca conta). */
+    function descreverApiConferencia() {
+        const dados = new FormData(formConferir);
+        const nomes = `${String(dados.get('nomeRazaoSocial') ?? '')} ${String(dados.get('nomeFantasia') ?? '')}`;
+        const portal = String(dados.get('urlPortal') ?? '').trim() !== '';
+        apiConferir.textContent = /braspress/i.test(nomes)
+            ? 'API INTEGRADA: SIM (Braspress)'
+            : `API INTEGRADA: NÃO${portal ? ' — portal/site cadastrado é só informação operacional' : ''}. Integração futura só após análise técnica da transportadora.`;
+    }
+    formConferir.addEventListener('input', descreverApiConferencia);
+    function abrirConferencia(o) {
+        formConferir.reset();
+        const preencher = (id, valor) => {
+            el(id).value = valor === null ? '' : String(valor);
+        };
+        preencher('fretes-conferir-razao', o.razaoSocial);
+        preencher('fretes-conferir-fantasia', o.nomeFantasia);
+        preencher('fretes-conferir-cnpj', formatarCnpjTransportadora(o.cnpjCpf));
+        preencher('fretes-conferir-email', o.email);
+        preencher('fretes-conferir-telefone', o.telefone);
+        preencher('fretes-conferir-contato', o.contato);
+        preencher('fretes-conferir-codigo-omie', o.codigo);
+        // WhatsApp nunca é pré-preenchido com o telefone: só vale o que o operador informar como WhatsApp.
+        preencher('fretes-conferir-whatsapp', null);
+        descreverApiConferencia();
+        erroConferir.hidden = true;
+        painelConferir.hidden = false;
+        painelConferir.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    el('fretes-conferir-cancelar').addEventListener('click', () => {
+        painelConferir.hidden = true;
+    });
+    formConferir.addEventListener('submit', (evento) => {
+        evento.preventDefault();
+        const dados = new FormData(formConferir);
+        void confirmarCadastro({
+            nomeRazaoSocial: textoOuNulo(dados.get('nomeRazaoSocial')),
+            nomeFantasia: textoOuNulo(dados.get('nomeFantasia')),
+            cnpj: textoOuNulo(dados.get('cnpj')),
+            email: textoOuNulo(dados.get('email')),
+            whatsappCotacao: textoOuNulo(dados.get('whatsappCotacao')),
+            telefone: textoOuNulo(dados.get('telefone')),
+            contato: textoOuNulo(dados.get('contato')),
+            urlPortal: textoOuNulo(dados.get('urlPortal')),
+            canalPrincipal: textoOuNulo(dados.get('canalPrincipal')),
+            codigoClienteOmie: numeroOuNulo(dados.get('codigoClienteOmie')),
+        });
+    });
+    /** Grava (ou reaproveita, pelo CNPJ) e devolve a transportadora já selecionada na cotação. */
+    async function confirmarCadastro(corpo) {
+        erroConferir.hidden = true;
+        infoConferir.hidden = true;
+        const resposta = await fetch('/api/fretes/transportadoras/confirmar-cadastro', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(corpo),
+        });
+        if (!resposta.ok) {
+            const mensagem = await extrairMensagemErro(resposta);
+            if (painelConferir.hidden) {
+                infoConferir.textContent = mensagem;
+                infoConferir.hidden = false;
+            }
+            else {
+                erroConferir.textContent = mensagem;
+                erroConferir.hidden = false;
+            }
+            return;
+        }
+        const { transportadora, existente, ativa } = (await resposta.json());
+        limparBuscaOmie();
+        void carregarTransportadoras(); // mantém nomes/listas da tela em dia com o cadastro
+        const origem = existente ? 'Já existia no cadastro ETK (mesmo CNPJ) — usando o cadastro existente.' : 'Transportadora cadastrada.';
+        let complemento;
+        if (!ativa) {
+            complemento = 'Ela está inativa no cadastro — reative-a em Transportadoras para usar na cotação.';
+        }
+        else if (transportadora.canaisDisponiveis.length === 0) {
+            complemento = 'Transportadora cadastrada, mas sem canal de cotação disponível.';
+        }
+        else if (motivoNaoSelecionavel(transportadora) !== null) {
+            complemento = `Não selecionada: ${motivoNaoSelecionavel(transportadora)}.`;
+        }
+        else {
+            selecionarTransportadora(transportadora);
+            complemento = `Selecionada — canais disponíveis: ${descreverCanais(transportadora.canaisDisponiveis)}.`;
+        }
+        infoConferir.textContent = `${nomeTransportadoraBusca(transportadora)}: ${origem} ${complemento}`;
+        infoConferir.hidden = false;
+    }
+    function renderizarSelecionadas() {
+        corpoSelecionadas.textContent = '';
+        contadorSelecionadas.textContent = `${selecionadas.length}/${LIMITE_TRANSPORTADORAS_SELECIONADAS}`;
+        vazioSelecionadas.hidden = selecionadas.length > 0;
+        for (const s of selecionadas) {
+            const tr = document.createElement('tr');
+            const celula = (texto) => {
+                const td = document.createElement('td');
+                td.textContent = texto;
+                return td;
+            };
+            tr.appendChild(celula(nomeTransportadoraBusca(s)));
+            tr.appendChild(celula(formatarCnpjTransportadora(s.cnpj)));
+            tr.appendChild(celula([descreverCanais(s.canaisDisponiveis), ...observacoesCanais(s)].join(' — ')));
+            const tdCanal = document.createElement('td');
+            if (s.canaisDisponiveis.length === 1) {
+                tdCanal.textContent = ROTULOS_CANAL_ENVIO[s.canaisDisponiveis[0]];
+            }
+            else {
+                // Vários canais sem canal principal válido: o operador precisa escolher (nunca arbitrário).
+                const select = document.createElement('select');
+                select.setAttribute('aria-label', `Canal do envio para ${nomeTransportadoraBusca(s)}`);
+                const vazio = document.createElement('option');
+                vazio.value = '';
+                vazio.textContent = 'Escolha o canal...';
+                select.appendChild(vazio);
+                for (const c of s.canaisDisponiveis) {
+                    const opcao = document.createElement('option');
+                    opcao.value = c;
+                    opcao.textContent = ROTULOS_CANAL_ENVIO[c];
+                    select.appendChild(opcao);
+                }
+                select.value = s.canal ?? '';
+                select.addEventListener('change', () => {
+                    s.canal = select.value === '' ? null : select.value;
+                    renderizarSelecionadas();
+                });
+                tdCanal.appendChild(select);
+            }
+            if (s.canal === 'EMAIL') {
+                const inputEmail = document.createElement('input');
+                inputEmail.type = 'email';
+                inputEmail.className = 'fretes-selecionada-email';
+                inputEmail.value = s.emailManual;
+                inputEmail.placeholder = 'E-mail só desta solicitação (opcional — em branco usa o Omie)';
+                inputEmail.setAttribute('aria-label', `E-mail manual para ${nomeTransportadoraBusca(s)}`);
+                inputEmail.addEventListener('input', () => {
+                    s.emailManual = inputEmail.value;
+                    atualizarConferenciaEnvio();
+                });
+                tdCanal.appendChild(inputEmail);
+            }
+            tr.appendChild(tdCanal);
+            const tdRemover = document.createElement('td');
+            const botaoRemover = document.createElement('button');
+            botaoRemover.type = 'button';
+            botaoRemover.className = 'botao-secundario';
+            botaoRemover.textContent = 'Remover';
+            botaoRemover.addEventListener('click', () => removerTransportadora(s.id));
+            tdRemover.appendChild(botaoRemover);
+            tr.appendChild(tdRemover);
+            corpoSelecionadas.appendChild(tr);
+        }
+        atualizarConferenciaEnvio();
+    }
+    /** Dados da carga: só leitura, direto da cotação (nenhuma segunda fonte de verdade). */
+    function renderizarDadosCarga() {
+        const c = cotacaoEnvioAtual;
+        dadosCarga.textContent = '';
+        if (c === null)
+            return;
+        const naoInformado = (v) => (v === null || v === '' ? 'Não informado' : String(v));
+        const peso = c.pesoBruto ?? c.peso;
+        const totalEmbalagens = totalVolumesEmbalagensValidas();
+        linhaInfo(dadosCarga, 'Origem', naoInformado(c.origem));
+        linhaInfo(dadosCarga, 'Destino', naoInformado(c.destino));
+        linhaInfo(dadosCarga, 'CEP destino', naoInformado(c.cepDestino));
+        linhaInfo(dadosCarga, 'Cliente', c.clienteNomeSnapshot ?? (c.clienteOmieId !== null ? `Código Omie ${c.clienteOmieId}` : 'Não informado'));
+        linhaInfo(dadosCarga, 'CNPJ destinatário', c.clienteOmieId !== null ? 'Consultado na Omie no envio via API' : 'Não disponível');
+        linhaInfo(dadosCarga, 'Valor da mercadoria', c.valorMercadoria === null ? 'Não informado' : formatarMoeda(c.valorMercadoria));
+        linhaInfo(dadosCarga, 'Peso bruto', peso === null ? 'Não informado' : `${peso} kg`);
+        linhaInfo(dadosCarga, 'Total de volumes', totalEmbalagens > 0 ? `${totalEmbalagens} (embalagens)` : naoInformado(c.volumes));
+        linhaInfo(dadosCarga, 'Modalidade', c.modalidade);
+        linhaInfo(dadosCarga, 'Observações', naoInformado(c.observacoes));
+    }
     // Várias embalagens: cada linha vira um item de `cubagem` (formato já aceito pela rota,
     // até 50 itens). Linhas totalmente em branco são ignoradas.
     const CAMPOS_EMBALAGEM = [
@@ -1624,20 +1943,24 @@ export function inicializarFretes() {
         { campo: 'comprimento', rotulo: 'Comprimento (m)', step: '0.01' },
         { campo: 'volumes', rotulo: 'Quantidade', step: '1' },
     ];
-    const containerEmbalagens = el('fretes-braspress-embalagens');
-    const totalVolumesEmbalagens = el('fretes-braspress-total-volumes');
+    const containerEmbalagens = el('fretes-embalagens');
+    const totalVolumesEmbalagens = el('fretes-embalagens-total-volumes');
     function linhasEmbalagem() {
         return Array.from(containerEmbalagens.querySelectorAll('.fretes-embalagem-linha'));
     }
     function valorEmbalagem(linha, campo) {
         return linha.querySelector(`input[data-campo="${campo}"]`)?.value.trim() ?? '';
     }
-    function atualizarTotalVolumes() {
-        const total = linhasEmbalagem().reduce((soma, linha) => {
+    function totalVolumesEmbalagensValidas() {
+        return linhasEmbalagem().reduce((soma, linha) => {
             const quantidade = Number(valorEmbalagem(linha, 'volumes'));
             return Number.isInteger(quantidade) && quantidade > 0 ? soma + quantidade : soma;
         }, 0);
-        totalVolumesEmbalagens.textContent = String(total);
+    }
+    function atualizarTotalVolumes() {
+        totalVolumesEmbalagens.textContent = String(totalVolumesEmbalagensValidas());
+        renderizarDadosCarga();
+        atualizarConferenciaEnvio();
     }
     function adicionarLinhaEmbalagem() {
         const linha = document.createElement('div');
@@ -1688,47 +2011,136 @@ export function inicializarFretes() {
         });
         return itens;
     }
-    el('fretes-braspress-adicionar-embalagem').addEventListener('click', adicionarLinhaEmbalagem);
+    el('fretes-embalagens-adicionar').addEventListener('click', adicionarLinhaEmbalagem);
     adicionarLinhaEmbalagem();
-    const botaoCotarBraspress = el('fretes-botao-cotar-braspress');
-    const erroBraspress = el('fretes-braspress-erro');
-    const resultadoBraspress = el('fretes-braspress-resultado');
-    botaoCotarBraspress.addEventListener('click', () => {
+    /** Conferência antes do envio: lista o problema por transportadora/canal; vazio = pode enviar. */
+    function problemasEnvio() {
+        const problemas = [];
+        if (selecionadas.length === 0)
+            problemas.push('Selecione ao menos uma transportadora.');
+        let embalagens = [];
+        try {
+            embalagens = lerEmbalagens();
+        }
+        catch (erro) {
+            problemas.push(erro.message);
+        }
+        const c = cotacaoEnvioAtual;
+        for (const s of selecionadas) {
+            const nome = nomeTransportadoraBusca(s).toUpperCase();
+            if (s.canal === null) {
+                problemas.push(`${nome}: escolha o canal de envio.`);
+                continue;
+            }
+            if (s.canal === 'EMAIL' && s.emailManual.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.emailManual.trim())) {
+                problemas.push(`${nome}: e-mail manual inválido.`);
+            }
+            if (s.canal === 'API') {
+                if (embalagens.length === 0)
+                    problemas.push(`${nome}: informe as dimensões da carga.`);
+                if (c !== null && (c.peso === null || c.peso <= 0))
+                    problemas.push(`${nome}: peso da cotação não informado.`);
+                if (c !== null && (c.valorMercadoria === null || c.valorMercadoria <= 0))
+                    problemas.push(`${nome}: valor da mercadoria não informado.`);
+                if (c !== null && (c.cepDestino === null || c.cepDestino.trim() === ''))
+                    problemas.push(`${nome}: CEP de destino não informado.`);
+            }
+        }
+        return problemas;
+    }
+    function atualizarConferenciaEnvio() {
+        const problemas = problemasEnvio();
+        conferenciaEnvio.textContent = '';
+        conferenciaEnvio.className = problemas.length === 0 ? 'fretes-conferencia fretes-conferencia-ok' : 'fretes-conferencia fretes-conferencia-alerta';
+        if (problemas.length === 0) {
+            conferenciaEnvio.textContent = '✓ Dados da carga completos';
+        }
+        else {
+            for (const p of problemas) {
+                const linha = document.createElement('div');
+                linha.textContent = `⚠ ${p}`;
+                conferenciaEnvio.appendChild(linha);
+            }
+        }
+        const quantidade = selecionadas.length;
+        botaoEnviarSolicitacoes.textContent =
+            quantidade === 1 ? 'Enviar solicitação para 1 transportadora' : `Enviar solicitação para ${quantidade} transportadoras`;
+        botaoEnviarSolicitacoes.disabled = problemas.length > 0 || envioBloqueadoPorStatus;
+    }
+    /** Chamado a cada carga do detalhe: zera a seleção ao trocar de cotação, mantém ao recarregar a mesma. */
+    function prepararEnvioSolicitacoes(cotacao, encerrada) {
+        if (cotacaoEnvioAtual?.id !== cotacao.id) {
+            selecionadas = [];
+            inputBuscaTransportadora.value = '';
+            infoBuscaTransportadora.hidden = true;
+            renderizarResultadosBusca([]);
+            limparBuscaOmie();
+            infoConferir.hidden = true;
+            containerEmbalagens.textContent = '';
+            adicionarLinhaEmbalagem();
+            resultadoEnvio.textContent = '';
+            resultadoEnvio.hidden = true;
+            erroEnvio.hidden = true;
+        }
+        cotacaoEnvioAtual = cotacao;
+        envioBloqueadoPorStatus = encerrada;
+        inputBuscaTransportadora.disabled = encerrada;
+        totalVolumesEmbalagens.textContent = String(totalVolumesEmbalagensValidas());
+        renderizarDadosCarga();
+        renderizarSelecionadas();
+    }
+    const ROTULOS_RESULTADO_ENVIO = {
+        ENVIADO: 'ENVIADO VIA',
+        FALHOU: 'FALHOU',
+        NAO_ENVIADO: 'NÃO ENVIADO',
+    };
+    botaoEnviarSolicitacoes.addEventListener('click', () => {
         void (async () => {
             if (cotacaoAtualId === null)
                 return;
-            erroBraspress.hidden = true;
-            resultadoBraspress.hidden = true;
-            let embalagens;
-            try {
-                embalagens = lerEmbalagens();
-            }
-            catch (erro) {
-                erroBraspress.textContent = erro.message;
-                erroBraspress.hidden = false;
+            erroEnvio.hidden = true;
+            if (problemasEnvio().length > 0) {
+                atualizarConferenciaEnvio();
                 return;
             }
-            const corpo = { cubagem: embalagens.length > 0 ? embalagens : null };
-            botaoCotarBraspress.disabled = true;
+            const embalagens = lerEmbalagens();
+            const corpo = {
+                transportadoras: selecionadas.map((s) => ({
+                    id: s.id,
+                    canal: s.canal,
+                    emailManual: s.canal === 'EMAIL' ? textoOuNulo(s.emailManual) : null,
+                })),
+                cubagem: embalagens.length > 0 ? embalagens : null,
+            };
+            botaoEnviarSolicitacoes.disabled = true;
             try {
-                const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/cotar-braspress`, {
+                const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/enviar-solicitacoes`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(corpo),
                 });
                 if (!resposta.ok) {
-                    erroBraspress.textContent = await extrairMensagemErro(resposta);
-                    erroBraspress.hidden = false;
+                    erroEnvio.textContent = await extrairMensagemErro(resposta);
+                    erroEnvio.hidden = false;
                     return;
                 }
-                const dados = (await resposta.json());
-                const prazo = dados.cotacaoExterna.prazoDias === null ? '—' : `${dados.cotacaoExterna.prazoDias} dia(s)`;
-                resultadoBraspress.textContent = `Braspress — Valor: R$ ${dados.cotacaoExterna.valorFrete.toFixed(2).replace('.', ',')} — Prazo: ${prazo}${dados.duplicada ? ' (proposta já registrada)' : ''}`;
-                resultadoBraspress.hidden = false;
+                const { resultados } = (await resposta.json());
+                resultadoEnvio.textContent = '';
+                for (const r of resultados) {
+                    const li = document.createElement('li');
+                    li.className = r.status === 'ENVIADO' ? 'fretes-envio-ok' : 'fretes-envio-falha';
+                    const rotulo = r.status === 'ENVIADO' ? `${ROTULOS_RESULTADO_ENVIO.ENVIADO} ${ROTULOS_CANAL_ENVIO[r.canal].toUpperCase()}` : ROTULOS_RESULTADO_ENVIO[r.status];
+                    li.textContent = `${r.transportadora.toUpperCase()} — ${rotulo}: ${r.mensagem}`;
+                    resultadoEnvio.appendChild(li);
+                }
+                resultadoEnvio.hidden = false;
+                // Só sai da seleção quem foi efetivamente enviado; falhas ficam para correção.
+                const enviados = new Set(resultados.filter((r) => r.status === 'ENVIADO').map((r) => r.transportadoraId));
+                selecionadas = selecionadas.filter((s) => !enviados.has(s.id));
                 await carregarDetalheCotacao();
             }
             finally {
-                botaoCotarBraspress.disabled = false;
+                atualizarConferenciaEnvio();
             }
         })();
     });

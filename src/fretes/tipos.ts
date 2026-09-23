@@ -64,8 +64,8 @@ export type StatusExtracaoProposta = 'EXTRAIDA' | 'REQUER_REVISAO' | 'ERRO';
  * transportadora (seção 24) — é ele, nunca nome/assunto/texto aproximado, que reconcilia a
  * resposta recebida de volta com esta solicitação (seção 23).
  */
-/** Fase 4A.4.1 (seção 3/6) — de onde veio o e-mail efetivamente usado numa solicitação por canal EMAIL. Regra: MANUAL > OMIE > bloqueio (nunca inferido/inventado). */
-export type EmailOrigem = 'OMIE' | 'MANUAL';
+/** De onde veio o e-mail efetivamente usado numa solicitação por canal EMAIL. Regra: MANUAL > CADASTRO (e-mail para cotação do cadastro ETK) > OMIE > bloqueio (nunca inferido/inventado). */
+export type EmailOrigem = 'OMIE' | 'MANUAL' | 'CADASTRO';
 
 export interface SolicitacaoCotacao {
   id: string;
@@ -225,6 +225,8 @@ export interface Transportadora {
   canalPrincipal: CanalPrincipalTransportadora | null;
   /** URL do portal da transportadora — usada futuramente quando `canalPrincipal = 'SITE'`. Nullable, sem validação de formato nesta fase. */
   urlPortal: string | null;
+  /** Número cadastrado explicitamente como WhatsApp para cotação (só dígitos); nunca inferido de `telefone`. */
+  whatsappCotacao: string | null;
   criadoEm: string;
   atualizadoEm: string;
 }

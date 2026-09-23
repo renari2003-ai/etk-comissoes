@@ -134,7 +134,7 @@
     <nav class="abas-tipo-documento" role="tablist" aria-label="Seção de Fretes">
       <button type="button" id="fretes-aba-dashboard" class="aba-tipo-documento aba-ativa" role="tab" aria-selected="true">Dashboard</button>
       <button type="button" id="fretes-aba-cotacoes" class="aba-tipo-documento" role="tab" aria-selected="false">Cotações</button>
-      <button type="button" id="fretes-aba-importar-omie" class="aba-tipo-documento" role="tab" aria-selected="false">Importar da Omie</button>
+      <button type="button" id="fretes-aba-importar-omie" class="aba-tipo-documento" role="tab" aria-selected="false" hidden>Importar da Omie</button>
       <button type="button" id="fretes-aba-transportadoras" class="aba-tipo-documento" role="tab" aria-selected="false">Transportadoras</button>
       <button type="button" id="fretes-aba-veiculos" class="aba-tipo-documento" role="tab" aria-selected="false">Veículos</button>
       <button type="button" id="fretes-aba-propostas-recebidas" class="aba-tipo-documento" role="tab" aria-selected="false">Propostas recebidas <span id="fretes-badge-pendentes" class="badge-pendente" hidden>0</span></button>
@@ -195,8 +195,8 @@
           <input id="fretes-cotacao-custo-manual" name="custoManual" type="number" min="0" step="0.01" />
         </div>
         <div class="campo-filtro">
-          <label for="fretes-cotacao-orcamento">Orçamento (proposta)</label>
-          <input id="fretes-cotacao-orcamento" name="orcamentoOmieNumero" type="text" inputmode="numeric" />
+          <label for="fretes-cotacao-orcamento">Documento Omie — orçamento ou pedido</label>
+          <input id="fretes-cotacao-orcamento" name="documentoOmieNumero" type="text" inputmode="numeric" placeholder="Número do orçamento ou do pedido" />
         </div>
         <p id="fretes-cotacao-orcamento-info" class="filtro-data-legenda campo-filtro-checkbox" hidden aria-live="polite"></p>
         <div class="campo-filtro" id="fretes-cotacao-cliente-manual-campo">
@@ -423,12 +423,120 @@
         <section id="fretes-detalhe-solicitacoes-secao">
           <h3 class="titulo-secao">Transportadoras para solicitar cotação</h3>
           <p class="filtro-data-legenda">
-            Marque as transportadoras que devem receber o pedido de cotação. O e-mail ao lado é opcional: em branco,
-            usa o cadastro do Omie; preenchido, vale só para esta solicitação.
+            Busque e selecione até 7 transportadoras. Para cada uma, o canal de envio só é oferecido quando o cadastro
+            permite (E-mail: e-mail para cotação cadastrado ou vínculo Omie; API: somente Braspress). Não achou? Busque na Omie e confirme o cadastro.
           </p>
-          <div id="fretes-solicitacoes-checkboxes" class="filtros-relatorio"></div>
-          <button type="button" id="fretes-botao-solicitar-cotacao" class="botao-secundario">Solicitar cotação</button>
-          <p id="fretes-solicitacao-erro" class="painel-login-erro" hidden></p>
+          <div class="campo-filtro campo-filtro-busca fretes-busca-campo">
+            <label for="fretes-busca-transportadora">Buscar transportadora</label>
+            <input
+              id="fretes-busca-transportadora"
+              type="search"
+              autocomplete="off"
+              placeholder="Buscar por nome, razão social, nome fantasia ou CNPJ..."
+            />
+          </div>
+          <p id="fretes-busca-transportadora-info" class="filtro-data-legenda" hidden aria-live="polite"></p>
+          <div id="fretes-busca-transportadora-resultados" class="fretes-busca-resultados"></div>
+          <div id="fretes-busca-omie-oferta" class="fretes-busca-omie-oferta" hidden>
+            <span>Transportadora não cadastrada.</span>
+            <button type="button" id="fretes-busca-omie-botao" class="botao-secundario">Buscar na Omie?</button>
+          </div>
+          <p id="fretes-busca-omie-info" class="filtro-data-legenda" hidden aria-live="polite"></p>
+          <div id="fretes-busca-omie-resultados" class="fretes-busca-resultados"></div>
+
+          <section id="fretes-conferir-transportadora" class="painel-fechamento fretes-conferir-transportadora" hidden>
+            <h4 class="fretes-subtitulo">Conferir transportadora antes de cadastrar</h4>
+            <p class="filtro-data-legenda">
+              Dados vindos da Omie (somente leitura). Confira e ajuste antes de salvar — nada é gravado até "Confirmar cadastro".
+            </p>
+            <form id="fretes-form-conferir-transportadora" class="filtros-relatorio" autocomplete="off">
+              <div class="campo-filtro">
+                <label for="fretes-conferir-razao">Razão social</label>
+                <input id="fretes-conferir-razao" name="nomeRazaoSocial" type="text" required />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-fantasia">Nome fantasia</label>
+                <input id="fretes-conferir-fantasia" name="nomeFantasia" type="text" />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-cnpj">CNPJ</label>
+                <input id="fretes-conferir-cnpj" name="cnpj" type="text" readonly />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-email">E-mail para cotação</label>
+                <input id="fretes-conferir-email" name="email" type="email" />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-whatsapp">WhatsApp para cotação</label>
+                <input id="fretes-conferir-whatsapp" name="whatsappCotacao" type="tel" placeholder="DDD + número" />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-telefone">Telefone</label>
+                <input id="fretes-conferir-telefone" name="telefone" type="text" />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-contato">Contato</label>
+                <input id="fretes-conferir-contato" name="contato" type="text" />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-url-portal">URL do portal / site</label>
+                <input id="fretes-conferir-url-portal" name="urlPortal" type="text" />
+              </div>
+              <div class="campo-filtro">
+                <label for="fretes-conferir-canal-principal">Canal principal</label>
+                <select id="fretes-conferir-canal-principal" name="canalPrincipal">
+                  <option value="" selected>Não definido</option>
+                  <option value="EMAIL">E-mail</option>
+                  <option value="WHATSAPP">WhatsApp</option>
+                  <option value="SITE">Site</option>
+                  <option value="API">API</option>
+                </select>
+              </div>
+              <input id="fretes-conferir-codigo-omie" name="codigoClienteOmie" type="hidden" />
+              <p id="fretes-conferir-api" class="filtro-data-legenda campo-filtro-checkbox"></p>
+              <button type="submit" class="botao-secundario botao-aplicar-filtro">Confirmar cadastro</button>
+              <button type="button" id="fretes-conferir-cancelar" class="botao-secundario">Cancelar</button>
+            </form>
+            <p id="fretes-conferir-erro" class="painel-login-erro" hidden></p>
+          </section>
+          <p id="fretes-conferir-info" class="filtro-data-legenda" hidden aria-live="polite"></p>
+
+          <h4 class="fretes-subtitulo">Transportadoras selecionadas <span id="fretes-selecionadas-contador">0/7</span></h4>
+          <p id="fretes-selecionadas-vazio" class="filtro-data-legenda">Nenhuma transportadora selecionada.</p>
+          <div class="tabela-rolagem">
+            <table id="fretes-tabela-selecionadas">
+              <thead>
+                <tr>
+                  <th scope="col">Transportadora</th>
+                  <th scope="col">CNPJ</th>
+                  <th scope="col">Canais disponíveis</th>
+                  <th scope="col">Canal do envio</th>
+                  <th scope="col">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="fretes-tabela-selecionadas-corpo"></tbody>
+            </table>
+          </div>
+
+          <h4 class="fretes-subtitulo">Dados da carga</h4>
+          <div id="fretes-dados-carga" class="painel-fechamento fretes-dados-carga"></div>
+
+          <h4 class="fretes-subtitulo">Embalagens</h4>
+          <p class="filtro-data-legenda">Uma linha por tipo de embalagem (medidas em metros, por volume). Obrigatório para envio via API.</p>
+          <div id="fretes-embalagens" class="fretes-embalagens"></div>
+          <div class="filtros-relatorio">
+            <button type="button" id="fretes-embalagens-adicionar" class="botao-secundario">+ Adicionar embalagem</button>
+            <p class="fretes-embalagens-total">TOTAL DE VOLUMES: <strong id="fretes-embalagens-total-volumes">0</strong></p>
+          </div>
+
+          <div id="fretes-envio-conferencia" class="fretes-conferencia" aria-live="polite"></div>
+          <button type="button" id="fretes-botao-enviar-solicitacoes" class="botao-secundario botao-aplicar-filtro" disabled>
+            Enviar solicitações
+          </button>
+          <p id="fretes-envio-erro" class="painel-login-erro" hidden></p>
+          <ul id="fretes-envio-resultado" class="fretes-envio-resultado" hidden aria-live="polite"></ul>
+
+          <h4 class="fretes-subtitulo">Solicitações enviadas</h4>
           <div class="tabela-rolagem">
             <table id="fretes-tabela-solicitacoes">
               <thead>
@@ -446,22 +554,6 @@
               <tbody id="fretes-tabela-solicitacoes-corpo"></tbody>
             </table>
           </div>
-        </section>
-
-        <section id="fretes-braspress-secao">
-          <h3 class="titulo-secao">Cotar Braspress</h3>
-          <p class="filtro-data-legenda">
-            Consulta a API oficial da Braspress e registra o retorno como proposta. Informe uma linha por tipo de
-            embalagem (medidas em metros, por volume).
-          </p>
-          <div id="fretes-braspress-embalagens" class="fretes-embalagens"></div>
-          <div class="filtros-relatorio">
-            <button type="button" id="fretes-braspress-adicionar-embalagem" class="botao-secundario">+ Adicionar embalagem</button>
-            <p class="fretes-embalagens-total">Total de volumes: <strong id="fretes-braspress-total-volumes">0</strong></p>
-            <button type="button" id="fretes-botao-cotar-braspress" class="botao-secundario botao-aplicar-filtro">Cotar Braspress</button>
-          </div>
-          <p id="fretes-braspress-resultado" class="filtro-data-legenda" hidden></p>
-          <p id="fretes-braspress-erro" class="painel-login-erro" hidden></p>
         </section>
 
         <section id="fretes-detalhe-form-secao">
@@ -585,8 +677,12 @@
           <input id="fretes-transportadora-cnpj" name="cnpj" type="text" />
         </div>
         <div class="campo-filtro">
-          <label for="fretes-transportadora-email">E-mail</label>
+          <label for="fretes-transportadora-email">E-mail para cotação</label>
           <input id="fretes-transportadora-email" name="email" type="email" />
+        </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-whatsapp">WhatsApp para cotação</label>
+          <input id="fretes-transportadora-whatsapp" name="whatsappCotacao" type="tel" placeholder="DDD + número" />
         </div>
         <div class="campo-filtro">
           <label for="fretes-transportadora-telefone">Telefone</label>
@@ -607,7 +703,7 @@
           </select>
         </div>
         <div class="campo-filtro" id="fretes-transportadora-campo-url-portal">
-          <label for="fretes-transportadora-url-portal">URL do portal</label>
+          <label for="fretes-transportadora-url-portal">URL do portal / site</label>
           <input id="fretes-transportadora-url-portal" name="urlPortal" type="text" />
         </div>
         <input id="fretes-transportadora-codigo-omie" name="codigoClienteOmie" type="hidden" />

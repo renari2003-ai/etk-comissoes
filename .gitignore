@@ -7,8 +7,12 @@
 # Backup local do sistema de login antes da migração para Postgres (contém hashes de senha reais)
 data/
 
-# Configuração local do Claude Code
-.claude/
+# Configuração do Claude Code — versiona o que é do projeto (skills, agents, settings.json
+# compartilhado), mantém local/pessoal ignorado (settings.local.json, locks, caches, etc.)
+.claude/*
+!.claude/skills/
+!.claude/agents/
+!.claude/settings.json
 
 # Dependências
 node_modules/

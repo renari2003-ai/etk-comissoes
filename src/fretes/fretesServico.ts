@@ -263,7 +263,8 @@ export interface PreparacaoCotacaoComAviso extends PreparacaoCotacaoOmie {
 export async function servicoPrepararCotacaoDeOmie(
   cliente: ClienteOmie,
   numeroDocumento: string,
-  tipoDocumento: TipoDocumento,
+  /** `null` = documento Omie único: aceita o tipo (Orçamento/Pedido) que a Omie indicar. */
+  tipoDocumento: TipoDocumento | null,
 ): Promise<PreparacaoCotacaoComAviso> {
   const preparacao = await prepararCotacaoDeOmie(cliente, numeroDocumento, tipoDocumento);
   // Detecção de duplicidade (Fase 3.6, inalterada) — chave por identificador Omie, a mesma

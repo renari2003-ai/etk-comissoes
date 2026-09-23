@@ -10,6 +10,7 @@
 import type { ClienteOmie } from '../omie/cliente.js';
 import type { PedidoOmie } from '../calculo/tipos.js';
 import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
+import { OmieError, OmieErroTransitorio } from '../omie/erros.js';
 import { ErroValidacao } from '../validacao.js';
 import { resolverDestinoFrete, type CandidatoEndereco } from './resolucaoDestino.js';
 import type { EnderecoDestino } from './tipos.js';
@@ -137,14 +138,41 @@ export interface PreparacaoCotacaoOmie {
  * Pedido nem vice-versa: a Omie modela os dois como o mesmo documento (`pedido_venda_produto`),
  * então sem essa checagem explícita nada impediria digitar um número de Pedido na tela de
  * Orçamento (ou o contrário) e importar o documento errado com o rótulo errado.
+ *
+ * Documento Omie único (Nova cotação): `tipoEsperado = null` aceita o tipo que a própria
+ * Omie indicar (classificação pela etapa, nunca adivinhada) — o chamador exibe esse tipo e,
+ * ao confirmar, reconsulta passando o tipo conferido (aí qualquer divergência é rejeitada).
  */
-export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroDocumento: string, tipoEsperado: TipoDocumento): Promise<PreparacaoCotacaoOmie> {
+/**
+ * "Não encontrado" da Omie (`ConsultarPedido`) chega como `OmieError` com a mensagem da
+ * própria Omie (ex.: "Pedido não cadastrado..."). Só essa situação vira "não localizado";
+ * falha transitória, credencial ou qualquer outro erro continua sendo repassado como está.
+ */
+function documentoNaoLocalizado(erro: unknown): boolean {
+  if (!(erro instanceof OmieError) || erro instanceof OmieErroTransitorio) return false;
+  const texto = erro.message.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+  return /nao (cadastrad|encontrad|localizad|existe)/.test(texto);
+}
+
+export async function prepararCotacaoDeOmie(
+  cliente: ClienteOmie,
+  numeroDocumento: string,
+  tipoEsperado: TipoDocumento | null,
+): Promise<PreparacaoCotacaoOmie> {
   const numero = numeroDocumento.trim();
   if (numero === '') {
-    throw new ErroValidacao(`Informe o número do ${tipoEsperado === 'ORCAMENTO' ? 'orçamento' : 'pedido'} Omie.`);
+    throw new ErroValidacao(
+      tipoEsperado === null ? 'Informe o número do documento Omie.' : `Informe o número do ${tipoEsperado === 'ORCAMENTO' ? 'orçamento' : 'pedido'} Omie.`,
+    );
   }
 
-  const pedido = await cliente.consultarPedido({ numeroPedido: numero });
+  let pedido: PedidoOmie;
+  try {
+    pedido = await cliente.consultarPedido({ numeroPedido: numero });
+  } catch (erro) {
+    if (tipoEsperado === null && documentoNaoLocalizado(erro)) throw new ErroValidacao('Documento Omie não localizado.');
+    throw erro;
+  }
 
   const classificacao = await cliente.classificarPedido(pedido.cabecalho.etapa);
   if (classificacao.ambiguo) {
@@ -152,7 +180,7 @@ export async function prepararCotacaoDeOmie(cliente: ClienteOmie, numeroDocument
       `Não foi possível confirmar se o documento ${numero} é um Pedido ou um Orçamento (${classificacao.motivo}).`,
     );
   }
-  if (classificacao.tipo !== tipoEsperado) {
+  if (tipoEsperado !== null && classificacao.tipo !== tipoEsperado) {
     const rotulo = (tipo: TipoDocumento) => (tipo === 'ORCAMENTO' ? 'Orçamento' : 'Pedido');
     throw new ErroValidacao(
       `O documento ${numero} é um ${rotulo(classificacao.tipo)} (etapa "${classificacao.rotulo}"), não um ${rotulo(tipoEsperado)}. Use a origem correta para importar.`,

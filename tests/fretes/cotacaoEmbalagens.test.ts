@@ -2,24 +2,54 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { cotarNaBraspress, type EntradaCotacaoBraspress } from '../../src/fretes/integracoes/braspressCliente.js';
 
-// UX do detalhe da cotação: seção de transportadoras renomeada e várias embalagens na cotação Braspress.
+// UX do detalhe da cotação: busca + seleção de transportadoras, dados da carga, várias
+// embalagens e um único botão de envio (Braspress entra no mesmo fluxo).
 describe('tela de detalhe da cotação', () => {
   const html = readFileSync('public/index.html', 'utf8');
   const codigo = readFileSync('public-src/fretes.ts', 'utf8');
-  const secaoBraspress = html.slice(html.indexOf('id="fretes-braspress-secao"'), html.indexOf('</section>', html.indexOf('id="fretes-braspress-secao"')));
+  const inicioSecao = html.indexOf('id="fretes-detalhe-solicitacoes-secao"');
+  const secao = html.slice(inicioSecao, html.indexOf('id="fretes-detalhe-form-secao"'));
 
-  it('seção renomeada para "Transportadoras para solicitar cotação" mantendo a lista e o botão existentes', () => {
-    expect(html).toContain('Transportadoras para solicitar cotação');
-    expect(html).toContain('id="fretes-solicitacoes-checkboxes"');
-    expect(html).toContain('id="fretes-botao-solicitar-cotacao"');
+  it('busca no lugar da lista de todas as transportadoras; ordem: busca → selecionadas → carga → embalagens → envio', () => {
+    expect(secao).toContain('Transportadoras para solicitar cotação');
+    expect(secao).toContain('Buscar por nome, razão social, nome fantasia ou CNPJ...');
+    expect(html).not.toContain('id="fretes-solicitacoes-checkboxes"');
+    expect(codigo).not.toContain('renderizarCheckboxesSolicitacao');
+    const ordem = ['fretes-busca-transportadora"', 'Transportadoras selecionadas', 'Dados da carga', 'Embalagens', 'fretes-botao-enviar-solicitacoes'].map((m) =>
+      secao.indexOf(m),
+    );
+    expect(ordem.every((i) => i >= 0)).toBe(true);
+    expect([...ordem].sort((a, b) => a - b)).toEqual(ordem);
+    expect(codigo).toContain('/api/fretes/transportadoras/buscar?q=');
   });
 
-  it('entrada única de dimensões substituída por lista de embalagens com "+ Adicionar embalagem" e total de volumes', () => {
-    expect(secaoBraspress).not.toContain('id="fretes-braspress-altura"');
-    expect(secaoBraspress).not.toContain('id="fretes-braspress-volumes"');
-    expect(secaoBraspress).toContain('id="fretes-braspress-embalagens"');
-    expect(secaoBraspress).toContain('+ Adicionar embalagem');
-    expect(secaoBraspress).toContain('id="fretes-braspress-total-volumes"');
+  it('seleção: sem duplicidade, no máximo 7, remover; canal único automático, vários exigem escolha', () => {
+    expect(codigo).toContain('const LIMITE_TRANSPORTADORAS_SELECIONADAS = 7;');
+    expect(codigo).toContain("if (selecionadas.some((s) => s.id === t.id)) return 'Já selecionada';");
+    expect(codigo).toContain('if (selecionadas.length >= LIMITE_TRANSPORTADORAS_SELECIONADAS)');
+    expect(codigo).toContain('selecionadas = selecionadas.filter((s) => s.id !== id);');
+    expect(codigo).toContain('canal: t.canalSugerido');
+    expect(codigo).toContain('Escolha o canal...');
+    expect(codigo).toContain('${nome}: escolha o canal de envio.');
+  });
+
+  it('um único botão de envio; "Cotar Braspress" separado removido; conferência por transportadora/canal', () => {
+    expect(html).not.toContain('Cotar Braspress');
+    expect(html).not.toContain('fretes-braspress-secao');
+    expect(html).not.toContain('id="fretes-botao-solicitar-cotacao"');
+    expect(codigo).not.toContain('/cotar-braspress');
+    expect(codigo).toContain('/enviar-solicitacoes');
+    expect(codigo).toContain('✓ Dados da carga completos');
+    expect(codigo).toContain('${nome}: informe as dimensões da carga.');
+    expect(codigo).toContain('Enviar solicitação para ${quantidade} transportadoras');
+  });
+
+  it('lista de embalagens com "+ Adicionar embalagem" e TOTAL DE VOLUMES', () => {
+    expect(secao).not.toContain('id="fretes-braspress-altura"');
+    expect(secao).toContain('id="fretes-embalagens"');
+    expect(secao).toContain('+ Adicionar embalagem');
+    expect(secao).toContain('TOTAL DE VOLUMES');
+    expect(secao).toContain('id="fretes-embalagens-total-volumes"');
   });
 
   it('cada linha tem altura, largura, comprimento, quantidade e remover; valida medidas > 0 e quantidade >= 1', () => {

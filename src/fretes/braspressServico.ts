@@ -17,7 +17,7 @@ import {
 } from './integracoes/braspressCliente.js';
 import { criarPropostaApiExterna, listarPropostasPorCotacao } from './propostasRepositorio.js';
 import { criarTransportadora, listarTransportadoras } from './transportadorasRepositorio.js';
-import type { PropostaFrete } from './tipos.js';
+import type { PropostaFrete, Transportadora } from './tipos.js';
 
 export const ORIGEM_PROPOSTA_API_BRASPRESS = 'API_BRASPRESS';
 
@@ -73,9 +73,14 @@ export class ErroDadosCotacaoIncompletos extends ErroValidacao {
   }
 }
 
+/** Critério único de "esta transportadora é a Braspress" (a única com integração API nesta fase). */
+export function ehTransportadoraBraspress(t: Pick<Transportadora, 'nomeRazaoSocial' | 'nomeFantasia'>): boolean {
+  return /braspress/i.test(t.nomeRazaoSocial) || /braspress/i.test(t.nomeFantasia ?? '');
+}
+
 async function obterTransportadoraBraspress(): Promise<string> {
   const todas = await listarTransportadoras(false);
-  const existente = todas.find((t) => /braspress/i.test(t.nomeRazaoSocial) || /braspress/i.test(t.nomeFantasia ?? ''));
+  const existente = todas.find(ehTransportadoraBraspress);
   if (existente !== undefined) return existente.id;
   const criada = await criarTransportadora({
     nomeRazaoSocial: 'BRASPRESS',

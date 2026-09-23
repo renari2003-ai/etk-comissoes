@@ -5,6 +5,7 @@ import { exigirAdministrador, exigirAutenticacao, exigirPermissao } from '../aut
 import { ErroSemPermissao } from '../auth/erros.js';
 import { config } from '../config.js';
 import type { ClienteOmie } from '../omie/cliente.js';
+import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
 import { ErroValidacao } from '../validacao.js';
 import {
   servicoAprovarValorMinimo,
@@ -62,6 +63,14 @@ import {
   servicoValidarProposta,
 } from '../fretes/integracaoCotacoesServico.js';
 import { aplicarObservacaoTde } from '../fretes/origemEtk.js';
+import {
+  CANAIS_ENVIO,
+  LIMITE_TRANSPORTADORAS_POR_ENVIO,
+  servicoBuscarTransportadorasParaSolicitacao,
+  servicoConfirmarCadastroTransportadora,
+  servicoEnviarSolicitacoes,
+  type CanalEnvio,
+} from '../fretes/envioSolicitacoesServico.js';
 import { servicoBuscarTransportadoraOmie } from '../fretes/transportadoraOmieServico.js';
 import { ErroCnpjDestinatarioNaoDisponivel, ErroDadosCotacaoIncompletos, servicoCotarBraspress } from '../fretes/braspressServico.js';
 import {
@@ -87,6 +96,7 @@ import {
   validarTextoOpcional,
   validarUuid,
   validarUuidOpcional,
+  validarWhatsappOpcional,
 } from '../fretes/validacao.js';
 import {
   validarPayloadCorrelacionarWhatsapp,
@@ -143,6 +153,32 @@ function exigirSegredoWebhookFretes(req: Request, _res: Response, next: NextFunc
     return;
   }
   next();
+}
+
+/** Lista de embalagens (cubagem Braspress) — até 50 itens, cada campo numérico validado. */
+function validarCubagemOpcional(bruto: unknown): ItemCubagemBraspress[] | null {
+  if (bruto === undefined || bruto === null) return null;
+  if (!Array.isArray(bruto) || bruto.length > 50) throw new ErroValidacao('O campo "cubagem" deve ser uma lista de até 50 itens.');
+  return bruto.map((item: Record<string, unknown>, i: number) => ({
+    altura: validarNumeroNaoNegativoObrigatorio(item?.altura, `cubagem[${i}].altura`),
+    largura: validarNumeroNaoNegativoObrigatorio(item?.largura, `cubagem[${i}].largura`),
+    comprimento: validarNumeroNaoNegativoObrigatorio(item?.comprimento, `cubagem[${i}].comprimento`),
+    volumes: validarNumeroNaoNegativoObrigatorio(item?.volumes, `cubagem[${i}].volumes`),
+  }));
+}
+
+function validarCanalEnvio(valor: unknown, campo: string): CanalEnvio {
+  if (typeof valor !== 'string' || !CANAIS_ENVIO.includes(valor as CanalEnvio)) {
+    throw new ErroValidacao(`O campo "${campo}" deve ser um dos: ${CANAIS_ENVIO.join(', ')}.`);
+  }
+  return valor as CanalEnvio;
+}
+
+function validarTipoDocumentoOmie(valor: unknown): TipoDocumento {
+  if (valor !== 'ORCAMENTO' && valor !== 'PEDIDO') {
+    throw new ErroValidacao('O campo "tipoDocumento" deve ser ORCAMENTO ou PEDIDO (o tipo conferido na consulta).');
+  }
+  return valor;
 }
 
 function validarCanalOpcional(valor: unknown): CanalOrigemProposta {
@@ -226,6 +262,41 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     }),
   );
 
+  // Documento Omie único (Nova cotação): o operador informa só o número; a Omie diz se é
+  // Orçamento ou Pedido (classificação pela etapa). Ao confirmar, o tipo conferido na tela
+  // volta obrigatório e o backend reconsulta a Omie — se o tipo mudou, rejeita (nunca mistura).
+  rotas.get(
+    '/api/fretes/omie/documentos/:numero/preparar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const numero = validarTextoObrigatorio(req.params.numero, 'numero');
+      res.json(await servicoPrepararCotacaoDeOmie(cliente, numero, null));
+    }),
+  );
+
+  rotas.post(
+    '/api/fretes/omie/documentos/:numero/confirmar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const numero = validarTextoObrigatorio(req.params.numero, 'numero');
+      const tipoDocumento = validarTipoDocumentoOmie(req.body?.tipoDocumento);
+      const destinoOverride = validarDestinoManualOpcional(req.body?.destinoOverride);
+      const dadosComplementares = {
+        modalidade: validarModalidade(req.body?.modalidade),
+        modalidadeExecucao: validarModalidadeExecucao(req.body?.modalidadeExecucao ?? 'TRANSPORTADORA'),
+        veiculoId: validarUuidOpcional(req.body?.veiculoId, 'veiculoId'),
+        motoristaNome: validarTextoOpcional(req.body?.motoristaNome, 'motoristaNome'),
+        custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
+        valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
+        observacoes: aplicarObservacaoTde(validarTextoOpcional(req.body?.observacoes, 'observacoes'), req.body?.entregaProgramadaTde === true),
+        peso: validarNumeroNaoNegativoOpcional(req.body?.peso, 'peso'),
+        volumes: validarInteiroNaoNegativoOpcional(req.body?.volumes, 'volumes'),
+      };
+      const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, tipoDocumento, destinoOverride, dadosComplementares, req.usuario!.id);
+      res.status(201).json(cotacao);
+    }),
+  );
+
   rotas.get(
     '/api/fretes/omie/orcamentos/:numero/preparar',
     ...protegida,
@@ -268,6 +339,42 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     }),
   );
 
+  // Busca somente-leitura no cadastro local (nome/CNPJ) para o detalhe da cotação — limitada,
+  // só ativas, sem duplicidade por CNPJ, com os canais realmente disponíveis.
+  rotas.get(
+    '/api/fretes/transportadoras/buscar',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const termo = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+      if (termo.length < 2 || termo.length > 100) throw new ErroValidacao('Informe de 2 a 100 caracteres para buscar.');
+      res.json({ transportadoras: await servicoBuscarTransportadorasParaSolicitacao(termo) });
+    }),
+  );
+
+  // "Confirmar cadastro" (a partir da cotação, depois da conferência dos dados vindos da Omie):
+  // único ponto desse fluxo que grava. Mesmo CNPJ normalizado já cadastrado → usa o existente.
+  rotas.post(
+    '/api/fretes/transportadoras/confirmar-cadastro',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const dados = {
+        nomeRazaoSocial: validarTextoObrigatorio(req.body?.nomeRazaoSocial, 'nomeRazaoSocial'),
+        nomeFantasia: validarTextoOpcional(req.body?.nomeFantasia, 'nomeFantasia'),
+        cnpj: validarCnpjOpcional(req.body?.cnpj),
+        email: validarEmailOpcional(req.body?.email),
+        telefone: validarTextoOpcional(req.body?.telefone, 'telefone'),
+        contato: validarTextoOpcional(req.body?.contato, 'contato'),
+        observacoes: null,
+        codigoClienteOmie: validarIdOmieOpcional(req.body?.codigoClienteOmie, 'codigoClienteOmie'),
+        canalPrincipal: validarCanalPrincipalOpcional(req.body?.canalPrincipal),
+        urlPortal: validarTextoComTamanhoMaximo(req.body?.urlPortal, 'urlPortal', 500),
+        whatsappCotacao: validarWhatsappOpcional(req.body?.whatsappCotacao),
+      };
+      const resultado = await servicoConfirmarCadastroTransportadora(dados, req.usuario!.id);
+      res.status(resultado.existente ? 200 : 201).json(resultado);
+    }),
+  );
+
   // Busca somente-leitura na Omie (CNPJ > razão social > nome fantasia). Nunca cria nada.
   rotas.post(
     '/api/fretes/transportadoras/buscar-omie',
@@ -298,6 +405,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         codigoClienteOmie: validarIdOmieOpcional(req.body?.codigoClienteOmie, 'codigoClienteOmie'),
         canalPrincipal: validarCanalPrincipalOpcional(req.body?.canalPrincipal),
         urlPortal: validarTextoComTamanhoMaximo(req.body?.urlPortal, 'urlPortal', 500),
+        whatsappCotacao: validarWhatsappOpcional(req.body?.whatsappCotacao),
       };
       const transportadora = await servicoCriarTransportadora(dados, req.usuario!.id);
       res.status(201).json(transportadora);
@@ -320,6 +428,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       if (req.body?.codigoClienteOmie !== undefined) dados.codigoClienteOmie = validarIdOmieOpcional(req.body.codigoClienteOmie, 'codigoClienteOmie');
       if (req.body?.canalPrincipal !== undefined) dados.canalPrincipal = validarCanalPrincipalOpcional(req.body.canalPrincipal);
       if (req.body?.urlPortal !== undefined) dados.urlPortal = validarTextoComTamanhoMaximo(req.body.urlPortal, 'urlPortal', 500);
+      if (req.body?.whatsappCotacao !== undefined) dados.whatsappCotacao = validarWhatsappOpcional(req.body.whatsappCotacao);
       const transportadora = await servicoAtualizarTransportadora(id, dados, req.usuario!.id);
       res.json(transportadora);
     }),
@@ -500,20 +609,9 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     ...protegida,
     assincrono(async (req, res) => {
       const cotacaoId = validarUuid(req.params.id, 'id');
-      const bruto = req.body?.cubagem;
-      let cubagem: ItemCubagemBraspress[] | null = null;
-      if (bruto !== undefined && bruto !== null) {
-        if (!Array.isArray(bruto) || bruto.length > 50) throw new ErroValidacao('O campo "cubagem" deve ser uma lista de até 50 itens.');
-        cubagem = bruto.map((item: Record<string, unknown>, i: number) => ({
-          altura: validarNumeroNaoNegativoObrigatorio(item?.altura, `cubagem[${i}].altura`),
-          largura: validarNumeroNaoNegativoObrigatorio(item?.largura, `cubagem[${i}].largura`),
-          comprimento: validarNumeroNaoNegativoObrigatorio(item?.comprimento, `cubagem[${i}].comprimento`),
-          volumes: validarNumeroNaoNegativoObrigatorio(item?.volumes, `cubagem[${i}].volumes`),
-        }));
-      }
       const dados = {
         cepOrigem: validarTextoOpcional(req.body?.cepOrigem, 'cepOrigem'),
-        cubagem,
+        cubagem: validarCubagemOpcional(req.body?.cubagem),
       };
       try {
         const resultado = await servicoCotarBraspress(cliente, cotacaoId, dados, req.usuario!.id);
@@ -889,6 +987,31 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       // nunca SSRF via URL escolhida pelo cliente).
       const solicitacoes = await servicoSolicitarCotacoes(cliente, cotacaoId, itens, canal, req.usuario!.id);
       res.status(201).json({ solicitacoes });
+    }),
+  );
+
+  // Envio único do detalhe da cotação: até 7 transportadoras, um canal cada (EMAIL/WHATSAPP/API).
+  // Só despacha para os serviços existentes; cadastro e canal são revalidados no servidor.
+  rotas.post(
+    '/api/fretes/cotacoes/:id/enviar-solicitacoes',
+    ...protegida,
+    assincrono(async (req, res) => {
+      const cotacaoId = validarUuid(req.params.id, 'id');
+      const bruto = req.body?.transportadoras;
+      if (!Array.isArray(bruto) || bruto.length === 0 || bruto.length > LIMITE_TRANSPORTADORAS_POR_ENVIO) {
+        throw new ErroValidacao(`Informe "transportadoras" com 1 a ${LIMITE_TRANSPORTADORAS_POR_ENVIO} itens.`);
+      }
+      const itens = bruto.map((v: unknown, i: number) => {
+        const item = v as Record<string, unknown>;
+        const canal = validarCanalEnvio(item?.canal, `transportadoras[${i}].canal`);
+        return {
+          transportadoraId: validarUuid(item?.id, `transportadoras[${i}].id`),
+          canal,
+          emailManual: canal === 'EMAIL' ? validarEmailOpcional(item?.emailManual) : null,
+        };
+      });
+      const cubagem = validarCubagemOpcional(req.body?.cubagem);
+      res.json({ resultados: await servicoEnviarSolicitacoes(cliente, cotacaoId, itens, cubagem, req.usuario!.id) });
     }),
   );
 

@@ -148,6 +148,10 @@ export function garantirEsquemaFretes(): Promise<void> {
     // URL do portal da transportadora (usada futuramente quando canal_principal = SITE) —
     // nullable, sem validação rígida de formato nesta fase, só cadastro/exibição.
     await executarDdlIdempotente(`ALTER TABLE ${transportadoras} ADD COLUMN IF NOT EXISTS url_portal TEXT`);
+    // Número explicitamente cadastrado como WhatsApp para cotação (nunca inferido de
+    // `telefone`). Aditivo/nullable. Nesta fase é só cadastro/exibição: o envio por
+    // WhatsApp segue indisponível até o payload do n8n levar este número.
+    await executarDdlIdempotente(`ALTER TABLE ${transportadoras} ADD COLUMN IF NOT EXISTS whatsapp_cotacao TEXT`);
 
     // Veículos próprios (Fase 2, seção 4) — só `descricao` é obrigatória; placa/tipo/
     // capacidade são opcionais para não travar o cadastro por falta de dado secundário.
@@ -388,6 +392,27 @@ export function garantirEsquemaFretes(): Promise<void> {
     await executarDdlIdempotente(
       `ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS email_origem TEXT CHECK (email_origem IN ('OMIE','MANUAL'))`,
     );
+    // E-mail para cotação do cadastro ETK: amplia o CHECK de `email_origem` para admitir
+    // 'CADASTRO' (regra MANUAL > CADASTRO > OMIE > BLOQUEIO) — só ADICIONA uma opção, nenhum
+    // valor já gravado fica inválido. Mesmo padrão do CHECK de `propostas.status`: descobre o
+    // nome real da constraint; idempotente (rodar de novo recria de forma idêntica).
+    await executarDdlIdempotente(`
+      DO $$
+      DECLARE
+        nome_constraint text;
+      BEGIN
+        SELECT con.conname INTO nome_constraint
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
+        WHERE rel.relname = '${solicitacoes}' AND con.contype = 'c' AND att.attname = 'email_origem';
+        IF nome_constraint IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE ${solicitacoes} DROP CONSTRAINT %I', nome_constraint);
+        END IF;
+        EXECUTE 'ALTER TABLE ${solicitacoes} ADD CONSTRAINT ${solicitacoes}_email_origem_check
+          CHECK (email_origem IN (''OMIE'',''MANUAL'',''CADASTRO''))';
+      END $$;
+    `);
 
     // Fase WhatsApp — Etapa 3: persistência definitiva do WAMID outbound (antes só em memória
     // no workflow do n8n). `wamid_outbound` é UNIQUE — chave de idempotência/correlação com o

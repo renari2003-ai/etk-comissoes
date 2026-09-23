@@ -87,8 +87,8 @@ function montarPayloadN8n(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao
 
 /**
  * Resolução do e-mail de destino (Fase 4A.4.1, seção 6) — regra fixa, sempre nesta ordem:
- * MANUAL (só para esta solicitação) > OMIE (cadastro na Omie, via `codigoClienteOmie` já
- * vinculado à transportadora) > BLOQUEIO. Nunca inventa e-mail, nunca usa fallback
+ * MANUAL (só para esta solicitação) > CADASTRO (e-mail para cotação salvo no cadastro ETK) >
+ * OMIE (cadastro na Omie, via `codigoClienteOmie` já vinculado à transportadora) > BLOQUEIO. Nunca inventa e-mail, nunca usa fallback
  * genérico/silencioso. `ClienteOmie.consultarCliente` já existe (mesmo cache/limitador/
  * tratamento de erro da Fase 3.2) — nenhum método ou endpoint novo na Omie.
  */
@@ -105,6 +105,10 @@ async function resolverEmailDestino(
   if (emailValido(emailManual)) {
     return { emailDestino: emailManual, emailOrigem: 'MANUAL' };
   }
+  // E-mail para cotação conferido/salvo no cadastro ETK (ex.: "Confirmar cadastro").
+  if (emailValido(transportadora.email)) {
+    return { emailDestino: transportadora.email.trim(), emailOrigem: 'CADASTRO' };
+  }
   if (transportadora.codigoClienteOmie !== null) {
     const registro = await cliente.consultarCliente(transportadora.codigoClienteOmie);
     if (registro !== null && emailValido(registro.email)) {
@@ -112,7 +116,7 @@ async function resolverEmailDestino(
     }
   }
   throw new ErroValidacao(
-    `EMAIL_TRANSPORTADORA_NAO_CADASTRADO: nenhum e-mail disponível para "${transportadora.nomeRazaoSocial}" — informe um e-mail manual para esta solicitação ou cadastre o código Omie da transportadora com um e-mail válido.`,
+    `EMAIL_TRANSPORTADORA_NAO_CADASTRADO: nenhum e-mail disponível para "${transportadora.nomeRazaoSocial}" — informe um e-mail manual para esta solicitação, cadastre o e-mail para cotação da transportadora ou o código Omie com um e-mail válido.`,
   );
 }
 
