@@ -199,21 +199,21 @@
           <input id="fretes-cotacao-orcamento" name="orcamentoOmieNumero" type="text" inputmode="numeric" />
         </div>
         <p id="fretes-cotacao-orcamento-info" class="filtro-data-legenda campo-filtro-checkbox" hidden aria-live="polite"></p>
-        <div id="fretes-cotacao-orcamento-resumo" class="painel-fechamento" hidden>
-          <h4>Orçamento localizado na Omie — confira antes de criar</h4>
-          <div id="fretes-cotacao-orcamento-resumo-info"></div>
-        </div>
-        <div class="campo-filtro">
+        <div class="campo-filtro" id="fretes-cotacao-cliente-manual-campo">
           <label for="fretes-cotacao-cliente">Cliente Omie (código)</label>
           <input id="fretes-cotacao-cliente" name="clienteOmieId" type="number" min="1" />
         </div>
-        <div class="campo-filtro">
+        <div class="campo-filtro" id="fretes-cotacao-cliente-nome-campo" hidden>
+          <label for="fretes-cotacao-cliente-nome">Cliente</label>
+          <input id="fretes-cotacao-cliente-nome" type="text" readonly />
+        </div>
+        <div class="campo-filtro" id="fretes-cotacao-vendedor-manual-campo">
           <label for="fretes-cotacao-vendedor">Vendedor Omie (código)</label>
           <input id="fretes-cotacao-vendedor" name="vendedorOmieId" type="number" min="1" />
         </div>
-        <div class="campo-filtro">
-          <label for="fretes-cotacao-origem">Origem</label>
-          <input id="fretes-cotacao-origem" name="origem" type="text" />
+        <div class="campo-filtro" id="fretes-cotacao-vendedor-nome-campo" hidden>
+          <label for="fretes-cotacao-vendedor-nome">Vendedor</label>
+          <input id="fretes-cotacao-vendedor-nome" type="text" readonly />
         </div>
         <div class="campo-filtro">
           <label for="fretes-cotacao-destino">Destino</label>

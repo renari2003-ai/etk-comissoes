@@ -47,10 +47,10 @@ describe('nome do vendedor na conferência', () => {
     expect(quebrado.vendedorOmieId).toBe(42);
   });
 
-  it('as duas telas de conferência exibem "Vendedor" (nome) e nunca o código', () => {
+  it('as telas de conferência e o formulário de Nova cotação exibem "Vendedor" (nome) e nunca o código', () => {
     const codigo = readFileSync('public-src/fretes.ts', 'utf8');
     expect(codigo).not.toContain('Vendedor (código Omie)');
     expect(codigo).toContain("linhaInfo(infoPedido, 'Vendedor', preparacao.vendedorNome ?? 'Vendedor não identificado')");
-    expect(codigo).toContain("linhaInfo(resumoOrcamentoInfo, 'Vendedor', p.vendedorNome ?? 'Vendedor não identificado')");
+    expect(codigo).toContain("inputVendedorNome.value = p.vendedorNome ?? 'Vendedor não identificado'");
   });
 });

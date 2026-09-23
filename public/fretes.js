@@ -1149,20 +1149,39 @@ export function inicializarFretes() {
     // Consultar NÃO cria cotação: só preenche a tela. A criação acontece apenas no botão "Criar cotação".
     const inputOrcamento = el('fretes-cotacao-orcamento');
     const infoOrcamento = el('fretes-cotacao-orcamento-info');
-    const resumoOrcamento = el('fretes-cotacao-orcamento-resumo');
-    const resumoOrcamentoInfo = el('fretes-cotacao-orcamento-resumo-info');
+    const campoClienteManual = el('fretes-cotacao-cliente-manual-campo');
+    const campoClienteNome = el('fretes-cotacao-cliente-nome-campo');
+    const inputClienteNome = el('fretes-cotacao-cliente-nome');
+    const campoVendedorManual = el('fretes-cotacao-vendedor-manual-campo');
+    const campoVendedorNome = el('fretes-cotacao-vendedor-nome-campo');
+    const inputVendedorNome = el('fretes-cotacao-vendedor-nome');
     /** Orçamento já localizado na Omie e exibido para conferência — `null` até a consulta dar certo. */
     let orcamentoPreparado = null;
     let consultaOrcamentoEmAndamento = false;
     const CAMPOS_PREENCHIDOS_PELO_ORCAMENTO = [
-        'fretes-cotacao-cliente',
-        'fretes-cotacao-vendedor',
         'fretes-cotacao-valor-mercadoria',
         'fretes-cotacao-destino',
         'fretes-cotacao-cep-destino',
         'fretes-cotacao-peso',
         'fretes-cotacao-volumes',
     ];
+    /** Alterna entre o campo de código Omie (digitado à mão, cotação manual) e o de nome (preenchido pelo orçamento). */
+    function exibirClienteVendedorComoCodigo() {
+        campoClienteManual.hidden = false;
+        campoClienteNome.hidden = true;
+        inputClienteNome.value = '';
+        campoVendedorManual.hidden = false;
+        campoVendedorNome.hidden = true;
+        inputVendedorNome.value = '';
+    }
+    function exibirClienteVendedorComoNome(p) {
+        campoClienteManual.hidden = true;
+        campoClienteNome.hidden = false;
+        inputClienteNome.value = textoOuTraco(p.clienteNome);
+        campoVendedorManual.hidden = true;
+        campoVendedorNome.hidden = false;
+        inputVendedorNome.value = p.vendedorNome ?? 'Vendedor não identificado';
+    }
     function definirValorCampoCotacao(id, valor) {
         el(id).value = valor === null ? '' : String(valor);
     }
@@ -1175,31 +1194,11 @@ export function inicializarFretes() {
     function limparDadosOrcamento() {
         orcamentoPreparado = null;
         infoOrcamento.hidden = true;
-        resumoOrcamento.hidden = true;
-        resumoOrcamentoInfo.textContent = '';
+        exibirClienteVendedorComoCodigo();
+        el('fretes-cotacao-cliente').value = '';
+        el('fretes-cotacao-vendedor').value = '';
         for (const id of CAMPOS_PREENCHIDOS_PELO_ORCAMENTO)
             definirValorCampoCotacao(id, null);
-    }
-    function formatarCnpjResumo(cnpj) {
-        if (cnpj === null)
-            return 'Não disponível';
-        return cnpj.length === 14 ? cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
-    }
-    function exibirResumoOrcamento(p) {
-        resumoOrcamentoInfo.textContent = '';
-        linhaInfo(resumoOrcamentoInfo, 'Orçamento', p.pedidoOmieNumero);
-        linhaInfo(resumoOrcamentoInfo, 'Cliente', textoOuTraco(p.clienteNome));
-        linhaInfo(resumoOrcamentoInfo, 'CNPJ', formatarCnpjResumo(p.clienteCnpj));
-        linhaInfo(resumoOrcamentoInfo, 'Vendedor', p.vendedorNome ?? 'Vendedor não identificado');
-        linhaInfo(resumoOrcamentoInfo, 'Valor total', formatarMoeda(p.valorTotalPedido));
-        linhaInfo(resumoOrcamentoInfo, 'Destino', p.destino === null ? 'Não encontrado na Omie — informe abaixo' : textoOuTraco(resumoDestinoOrcamento(p.destino)));
-        linhaInfo(resumoOrcamentoInfo, 'CEP destino', textoOuTraco(p.destino?.cep ?? null));
-        linhaInfo(resumoOrcamentoInfo, 'Peso bruto', p.logistica.pesoBruto !== null ? `${p.logistica.pesoBruto} kg` : 'Não informado');
-        linhaInfo(resumoOrcamentoInfo, 'Volumes', p.logistica.quantidadeVolumes !== null ? String(p.logistica.quantidadeVolumes) : 'Não informado');
-        linhaInfo(resumoOrcamentoInfo, 'Espécie', p.logistica.especieVolumes ?? 'Não informado');
-        linhaInfo(resumoOrcamentoInfo, 'CIF/FOB (Omie)', p.logistica.cifFobOmie ?? 'Não informado');
-        linhaInfo(resumoOrcamentoInfo, 'Etapa na Omie', p.rotuloEtapaOmie);
-        resumoOrcamento.hidden = false;
     }
     /** Só consulta e preenche a tela — nunca cria cotação. Devolve true se o orçamento está localizado. */
     async function consultarOrcamentoNaOmie() {
@@ -1227,14 +1226,12 @@ export function inicializarFretes() {
             }
             const p = (await resposta.json());
             orcamentoPreparado = { numero, preparacao: p };
-            definirValorCampoCotacao('fretes-cotacao-cliente', p.clienteOmieId);
-            definirValorCampoCotacao('fretes-cotacao-vendedor', p.vendedorOmieId);
+            exibirClienteVendedorComoNome(p);
             definirValorCampoCotacao('fretes-cotacao-valor-mercadoria', p.valorTotalPedido || null);
             definirValorCampoCotacao('fretes-cotacao-destino', p.destino === null ? null : resumoDestinoOrcamento(p.destino));
             definirValorCampoCotacao('fretes-cotacao-cep-destino', p.destino?.cep ?? null);
             definirValorCampoCotacao('fretes-cotacao-peso', p.logistica.pesoBruto);
             definirValorCampoCotacao('fretes-cotacao-volumes', p.logistica.quantidadeVolumes);
-            exibirResumoOrcamento(p);
             infoOrcamento.textContent = 'Orçamento localizado. Confira os dados e clique em "Criar cotação" para confirmar.';
             return true;
         }

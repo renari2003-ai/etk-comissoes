@@ -40,11 +40,14 @@ describe('tela Nova cotação', () => {
     expect(form).toContain('name="entregaProgramadaTde"');
   });
 
-  it('sem botão novo: só o "Criar cotação" existente; consulta ao sair do campo/Enter e resumo de conferência presente', () => {
+  it('sem botão novo: só o "Criar cotação" existente; consulta ao sair do campo/Enter preenche o formulário direto, sem card de resumo duplicado', () => {
     expect(form).not.toContain('buscar-orcamento');
     expect((form.match(/<button/g) ?? []).length).toBe(1);
     expect(form).toContain('Criar cotação');
-    expect(form).toContain('fretes-cotacao-orcamento-resumo');
+    expect(form).not.toContain('fretes-cotacao-orcamento-resumo');
+    expect(form).not.toContain('Orçamento localizado na Omie — confira antes de criar');
+    expect(form).toContain('fretes-cotacao-cliente-nome-campo');
+    expect(form).toContain('fretes-cotacao-vendedor-nome-campo');
     const bloco = codigo.slice(codigo.indexOf('Orçamento (proposta) da Omie'), codigo.indexOf('formNovaCotacao.addEventListener'));
     expect(bloco).toContain("addEventListener('change'");
     expect(bloco).toMatch(/Enter[\s\S]*preventDefault/);
