@@ -609,6 +609,20 @@
           <label for="fretes-transportadora-contato">Contato</label>
           <input id="fretes-transportadora-contato" name="contato" type="text" />
         </div>
+        <div class="campo-filtro">
+          <label for="fretes-transportadora-canal-principal">Canal principal</label>
+          <select id="fretes-transportadora-canal-principal" name="canalPrincipal">
+            <option value="" selected>Selecione...</option>
+            <option value="EMAIL">E-mail</option>
+            <option value="WHATSAPP">WhatsApp</option>
+            <option value="SITE">Site</option>
+            <option value="API">API</option>
+          </select>
+        </div>
+        <div class="campo-filtro" id="fretes-transportadora-campo-url-portal">
+          <label for="fretes-transportadora-url-portal">URL do portal</label>
+          <input id="fretes-transportadora-url-portal" name="urlPortal" type="text" />
+        </div>
         <input id="fretes-transportadora-codigo-omie" name="codigoClienteOmie" type="hidden" />
         <button type="button" id="fretes-transportadora-botao-buscar-omie" class="botao-secundario">Buscar na Omie</button>
         <button type="submit" class="botao-secundario botao-aplicar-filtro">Criar transportadora</button>
@@ -639,6 +653,7 @@
               <th scope="col">Razão social</th>
               <th scope="col">CNPJ</th>
               <th scope="col">Contato</th>
+              <th scope="col">Canal</th>
               <th scope="col">Status</th>
               <th scope="col">Ações</th>
             </tr>

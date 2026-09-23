@@ -217,9 +217,19 @@ export interface Transportadora {
    * não tem vínculo Omie — nesse caso, canal EMAIL depende de e-mail manual por solicitação.
    */
   codigoClienteOmie: number | null;
+  /**
+   * Arquitetura de canais — Fase 1: canal principal usado para direcionar a solicitação de
+   * cotação (Fase 2/3, ainda não implementada). Nullable — `null` = não definido, nenhum
+   * canal é inferido automaticamente e a transportadora continua funcionando normalmente.
+   */
+  canalPrincipal: CanalPrincipalTransportadora | null;
+  /** URL do portal da transportadora — usada futuramente quando `canalPrincipal = 'SITE'`. Nullable, sem validação de formato nesta fase. */
+  urlPortal: string | null;
   criadoEm: string;
   atualizadoEm: string;
 }
+
+export type CanalPrincipalTransportadora = 'EMAIL' | 'WHATSAPP' | 'SITE' | 'API';
 
 /**
  * Cadastro simples de veículo próprio da ETK (Fase 2, seção 4) — nenhum campo é

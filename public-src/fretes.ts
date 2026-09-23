@@ -23,6 +23,8 @@ const ROTULOS_STATUS_REVISAO: Record<StatusRevisaoProposta, string> = {
 };
 type CanalOrigemProposta = 'EMAIL' | 'WHATSAPP' | 'MANUAL' | 'API' | 'OUTRO';
 type StatusSolicitacaoCotacao = 'PENDENTE_ENVIO' | 'ENVIADA' | 'ENTREGUE' | 'RESPONDIDA' | 'ERRO' | 'CANCELADA';
+/** Arquitetura de canais — Fase 1 (só cadastro/exibição). */
+type CanalPrincipalTransportadora = 'EMAIL' | 'WHATSAPP' | 'SITE' | 'API';
 
 const ROTULOS_CANAL: Record<CanalOrigemProposta, string> = {
   EMAIL: 'E-mail',
@@ -30,6 +32,14 @@ const ROTULOS_CANAL: Record<CanalOrigemProposta, string> = {
   MANUAL: 'Manual',
   API: 'API',
   OUTRO: 'Outro',
+};
+
+/** Arquitetura de canais — Fase 1 (só cadastro/exibição, ver `Transportadora.canalPrincipal`). */
+const ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA: Record<CanalPrincipalTransportadora, string> = {
+  EMAIL: 'E-mail',
+  WHATSAPP: 'WhatsApp',
+  SITE: 'Site',
+  API: 'API',
 };
 
 const ROTULOS_STATUS_SOLICITACAO: Record<StatusSolicitacaoCotacao, string> = {
@@ -61,6 +71,10 @@ interface Transportadora {
   ativo: boolean;
   /** Fase 4A.4.1 — código do cadastro na Omie; `null` quando não vinculado (canal EMAIL exige e-mail manual nesse caso). */
   codigoClienteOmie: number | null;
+  /** Arquitetura de canais — Fase 1; `null` = não definido. */
+  canalPrincipal: CanalPrincipalTransportadora | null;
+  /** Arquitetura de canais — Fase 1; usada futuramente quando `canalPrincipal = 'SITE'`. */
+  urlPortal: string | null;
 }
 
 interface Veiculo {
@@ -1115,6 +1129,7 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(t.nomeFantasia ? `${t.nomeRazaoSocial} (${t.nomeFantasia})` : t.nomeRazaoSocial));
       tr.appendChild(celula(t.cnpj ?? '—'));
       tr.appendChild(celula(t.contato ?? t.telefone ?? t.email ?? '—'));
+      tr.appendChild(celula(t.canalPrincipal === null ? 'Não definido' : ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA[t.canalPrincipal]));
       tr.appendChild(celula(t.ativo ? 'Ativa' : 'Inativa'));
 
       const tdAcoes = document.createElement('td');
@@ -1158,6 +1173,13 @@ export function inicializarFretes(): { ativar: () => void } {
 
   const formNovaTransportadora = el<HTMLFormElement>('fretes-form-nova-transportadora');
   const erroTransportadora = el<HTMLElement>('fretes-transportadora-erro');
+
+  // Arquitetura de canais — Fase 1: só destaque visual discreto, nenhuma lógica de navegação/obrigatoriedade ainda.
+  const selectCanalPrincipal = el<HTMLSelectElement>('fretes-transportadora-canal-principal');
+  const campoUrlPortal = el<HTMLElement>('fretes-transportadora-campo-url-portal');
+  selectCanalPrincipal.addEventListener('change', () => {
+    campoUrlPortal.classList.toggle('campo-filtro-destaque', selectCanalPrincipal.value === 'SITE');
+  });
 
   // --- Busca da transportadora na Omie (somente leitura; CNPJ é o critério definitivo) ---
   interface OpcaoTransportadoraOmie {
@@ -1289,6 +1311,8 @@ export function inicializarFretes(): { ativar: () => void } {
           telefone: textoOuNulo(dadosForm.get('telefone')),
           contato: textoOuNulo(dadosForm.get('contato')),
           codigoClienteOmie: numeroOuNulo(dadosForm.get('codigoClienteOmie')),
+          canalPrincipal: textoOuNulo(dadosForm.get('canalPrincipal')),
+          urlPortal: textoOuNulo(dadosForm.get('urlPortal')),
         }),
       });
       if (!resposta.ok) {

@@ -1,7 +1,7 @@
 /** Validações específicas do módulo de Fretes (seção 11) — nunca confia só no frontend. */
 
 import { ErroValidacao } from '../validacao.js';
-import type { CanalOrigemProposta, Modalidade, ModalidadeExecucao } from './tipos.js';
+import type { CanalOrigemProposta, CanalPrincipalTransportadora, Modalidade, ModalidadeExecucao } from './tipos.js';
 
 export function validarTextoObrigatorio(valor: unknown, campo: string): string {
   if (typeof valor !== 'string' || valor.trim() === '') {
@@ -167,6 +167,19 @@ export function validarTextoComTamanhoMaximo(valor: unknown, campo: string, tama
     throw new ErroValidacao(`O campo "${campo}" excede o tamanho máximo de ${tamanhoMaximo} caracteres.`);
   }
   return texto;
+}
+
+// --- Arquitetura de canais — Fase 1 (só cadastro/exibição de transportadora) -----------
+
+const CANAIS_PRINCIPAIS_TRANSPORTADORA: readonly CanalPrincipalTransportadora[] = ['EMAIL', 'WHATSAPP', 'SITE', 'API'];
+
+/** `null`/ausente = canal não definido (permitido nesta fase) — qualquer valor fora da lista falha explicitamente. */
+export function validarCanalPrincipalOpcional(valor: unknown): CanalPrincipalTransportadora | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  if (typeof valor !== 'string' || !CANAIS_PRINCIPAIS_TRANSPORTADORA.includes(valor as CanalPrincipalTransportadora)) {
+    throw new ErroValidacao(`O campo "canalPrincipal" deve ser um dos: ${CANAIS_PRINCIPAIS_TRANSPORTADORA.join(', ')}.`);
+  }
+  return valor as CanalPrincipalTransportadora;
 }
 
 /** Confiança da extração (seção 38) — só um número entre 0 e 1; NUNCA usado para decisão financeira, só para alerta/priorização visual. */

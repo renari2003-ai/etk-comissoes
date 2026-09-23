@@ -138,6 +138,17 @@ export function garantirEsquemaFretes(): Promise<void> {
     // cadastros Omie para referenciar) e nunca sincronizado automaticamente com a Omie.
     await executarDdlIdempotente(`ALTER TABLE ${transportadoras} ADD COLUMN IF NOT EXISTS codigo_cliente_omie BIGINT`);
 
+    // Arquitetura de canais — Fase 1 (só cadastro/exibição, seção "OBJETIVO DESTA FASE"):
+    // canal principal da transportadora, nullable — transportadoras existentes continuam
+    // funcionando sem quebra, sem canal padrão inferido automaticamente. Nenhuma lógica de
+    // cotação lê esta coluna ainda (isso é Fase 2/3, fora de escopo aqui).
+    await executarDdlIdempotente(
+      `ALTER TABLE ${transportadoras} ADD COLUMN IF NOT EXISTS canal_principal TEXT CHECK (canal_principal IN ('EMAIL','WHATSAPP','SITE','API'))`,
+    );
+    // URL do portal da transportadora (usada futuramente quando canal_principal = SITE) —
+    // nullable, sem validação rígida de formato nesta fase, só cadastro/exibição.
+    await executarDdlIdempotente(`ALTER TABLE ${transportadoras} ADD COLUMN IF NOT EXISTS url_portal TEXT`);
+
     // Veículos próprios (Fase 2, seção 4) — só `descricao` é obrigatória; placa/tipo/
     // capacidade são opcionais para não travar o cadastro por falta de dado secundário.
     await executarDdlIdempotente(`

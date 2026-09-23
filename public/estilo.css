@@ -312,6 +312,11 @@ input:focus-visible {
   min-width: 200px;
 }
 
+/* Arquitetura de canais — Fase 1: destaque discreto no campo "URL do portal" quando canalPrincipal = SITE. */
+.campo-filtro-destaque input {
+  border-color: var(--cor-primaria);
+}
+
 /* Campo de data digitável (com máscara automática) + botão de calendário ao lado. */
 .campo-data-com-calendario {
   display: flex;

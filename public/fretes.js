@@ -20,6 +20,13 @@ const ROTULOS_CANAL = {
     API: 'API',
     OUTRO: 'Outro',
 };
+/** Arquitetura de canais — Fase 1 (só cadastro/exibição, ver `Transportadora.canalPrincipal`). */
+const ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA = {
+    EMAIL: 'E-mail',
+    WHATSAPP: 'WhatsApp',
+    SITE: 'Site',
+    API: 'API',
+};
 const ROTULOS_STATUS_SOLICITACAO = {
     PENDENTE_ENVIO: 'Pendente de envio',
     ENVIADA: 'Enviada',
@@ -798,6 +805,7 @@ export function inicializarFretes() {
             tr.appendChild(celula(t.nomeFantasia ? `${t.nomeRazaoSocial} (${t.nomeFantasia})` : t.nomeRazaoSocial));
             tr.appendChild(celula(t.cnpj ?? '—'));
             tr.appendChild(celula(t.contato ?? t.telefone ?? t.email ?? '—'));
+            tr.appendChild(celula(t.canalPrincipal === null ? 'Não definido' : ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA[t.canalPrincipal]));
             tr.appendChild(celula(t.ativo ? 'Ativa' : 'Inativa'));
             const tdAcoes = document.createElement('td');
             const botao = document.createElement('button');
@@ -839,6 +847,12 @@ export function inicializarFretes() {
     }
     const formNovaTransportadora = el('fretes-form-nova-transportadora');
     const erroTransportadora = el('fretes-transportadora-erro');
+    // Arquitetura de canais — Fase 1: só destaque visual discreto, nenhuma lógica de navegação/obrigatoriedade ainda.
+    const selectCanalPrincipal = el('fretes-transportadora-canal-principal');
+    const campoUrlPortal = el('fretes-transportadora-campo-url-portal');
+    selectCanalPrincipal.addEventListener('change', () => {
+        campoUrlPortal.classList.toggle('campo-filtro-destaque', selectCanalPrincipal.value === 'SITE');
+    });
     const campoCodigoOmieOculto = el('fretes-transportadora-codigo-omie');
     const statusBuscaOmie = el('fretes-transportadora-omie-status');
     const areaOpcoesOmie = el('fretes-transportadora-omie-opcoes');
@@ -955,6 +969,8 @@ export function inicializarFretes() {
                     telefone: textoOuNulo(dadosForm.get('telefone')),
                     contato: textoOuNulo(dadosForm.get('contato')),
                     codigoClienteOmie: numeroOuNulo(dadosForm.get('codigoClienteOmie')),
+                    canalPrincipal: textoOuNulo(dadosForm.get('canalPrincipal')),
+                    urlPortal: textoOuNulo(dadosForm.get('urlPortal')),
                 }),
             });
             if (!resposta.ok) {

@@ -72,6 +72,7 @@ import {
 import type { CanalOrigemProposta, ModalidadeExecucao, StatusCotacao } from '../fretes/tipos.js';
 import {
   validarCanalOrigem,
+  validarCanalPrincipalOpcional,
   validarCnpjOpcional,
   validarDestinoManualOpcional,
   validarEmailOpcional,
@@ -81,6 +82,7 @@ import {
   validarModalidadeExecucao,
   validarNumeroNaoNegativoObrigatorio,
   validarNumeroNaoNegativoOpcional,
+  validarTextoComTamanhoMaximo,
   validarTextoObrigatorio,
   validarTextoOpcional,
   validarUuid,
@@ -294,6 +296,8 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         contato: validarTextoOpcional(req.body?.contato, 'contato'),
         observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
         codigoClienteOmie: validarIdOmieOpcional(req.body?.codigoClienteOmie, 'codigoClienteOmie'),
+        canalPrincipal: validarCanalPrincipalOpcional(req.body?.canalPrincipal),
+        urlPortal: validarTextoComTamanhoMaximo(req.body?.urlPortal, 'urlPortal', 500),
       };
       const transportadora = await servicoCriarTransportadora(dados, req.usuario!.id);
       res.status(201).json(transportadora);
@@ -314,6 +318,8 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       if (req.body?.contato !== undefined) dados.contato = validarTextoOpcional(req.body.contato, 'contato');
       if (req.body?.observacoes !== undefined) dados.observacoes = validarTextoOpcional(req.body.observacoes, 'observacoes');
       if (req.body?.codigoClienteOmie !== undefined) dados.codigoClienteOmie = validarIdOmieOpcional(req.body.codigoClienteOmie, 'codigoClienteOmie');
+      if (req.body?.canalPrincipal !== undefined) dados.canalPrincipal = validarCanalPrincipalOpcional(req.body.canalPrincipal);
+      if (req.body?.urlPortal !== undefined) dados.urlPortal = validarTextoComTamanhoMaximo(req.body.urlPortal, 'urlPortal', 500);
       const transportadora = await servicoAtualizarTransportadora(id, dados, req.usuario!.id);
       res.json(transportadora);
     }),
