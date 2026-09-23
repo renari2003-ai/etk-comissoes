@@ -120,3 +120,53 @@ describe('Ajuste Braspress 1 — CNPJ do destinatário via Omie (somente leitura
     expect(await servico.servicoListarPropostas(cotacao.id)).toHaveLength(0);
   });
 });
+
+describe('Várias embalagens — volumes enviados à Braspress', () => {
+  async function volumesEnviados(cubagem: { altura: number; largura: number; comprimento: number; volumes: number }[]) {
+    const { bp, cotacao, omie } = await preparar();
+    let corpo: { volumes: number; cubagem: unknown } | null = null;
+    const opcoes = {
+      cnpj: '11222333000181', senha: 'senha-de-teste-nao-e-real', url: 'https://exemplo.invalido/x', timeoutMs: 1000,
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        corpo = JSON.parse(init.body as string);
+        return new Response(JSON.stringify({ id: 950, prazo: 2, totalFrete: 50 }), { status: 200 });
+      }) as unknown as typeof fetch,
+    };
+    const r = await bp.servicoCotarBraspress(omie('11222333000181'), cotacao.id, { cepOrigem: null, cubagem }, USUARIO_TESTE, opcoes);
+    return Object.assign(corpo as unknown as { volumes: number; cubagem: unknown }, { resultado: r, cotacaoId: cotacao.id });
+  }
+
+  it('envia a soma das quantidades das linhas (5 + 2 = 7), não cotacao.volumes, com todas as dimensões', async () => {
+    const cubagem = [
+      { altura: 0.5, largura: 0.4, comprimento: 0.6, volumes: 5 },
+      { altura: 1.2, largura: 0.8, comprimento: 1, volumes: 2 },
+    ];
+    const corpo = await volumesEnviados(cubagem);
+    expect(corpo.volumes).toBe(7);
+    expect(corpo.cubagem).toEqual(cubagem);
+  });
+
+  it('proposta e auditoria registram os 7 volumes enviados; cotação original continua com 5', async () => {
+    const cubagem = [
+      { altura: 0.5, largura: 0.4, comprimento: 0.6, volumes: 5 },
+      { altura: 1.2, largura: 0.8, comprimento: 1, volumes: 2 },
+    ];
+    const { resultado, cotacaoId } = await volumesEnviados(cubagem);
+    expect(resultado.proposta.volumes).toBe(7);
+    const servico = await import('../../src/fretes/fretesServico.js');
+    expect((await servico.servicoListarPropostas(cotacaoId))[0]?.volumes).toBe(7);
+    expect((await servico.servicoBuscarCotacao(cotacaoId)).volumes).toBe(5);
+    const { obterPool } = await import('../../src/db.js');
+    const { rows } = await obterPool().query(
+      `SELECT valor_novo FROM ${process.env.AUDITORIA_FRETES_TABELA} WHERE acao = 'PROPOSTA_API_BRASPRESS_CRIADA'`,
+    );
+    expect(rows).toHaveLength(1);
+    const valorNovo = typeof rows[0].valor_novo === 'string' ? JSON.parse(rows[0].valor_novo) : rows[0].valor_novo;
+    expect(valorNovo).toMatchObject({ volumes: 7, cubagem });
+  });
+
+  it('uma única linha: volumes = quantidade da linha (equivalente ao comportamento anterior)', async () => {
+    const corpo = await volumesEnviados([{ altura: 0.5, largura: 0.4, comprimento: 0.6, volumes: 5 }]);
+    expect(corpo.volumes).toBe(5);
+  });
+});

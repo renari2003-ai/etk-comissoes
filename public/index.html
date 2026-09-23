@@ -421,11 +421,10 @@
 
       <section id="fretes-detalhe-bloco-transportadora">
         <section id="fretes-detalhe-solicitacoes-secao">
-          <h3 class="titulo-secao">Solicitar cotação</h3>
+          <h3 class="titulo-secao">Transportadoras para solicitar cotação</h3>
           <p class="filtro-data-legenda">
-            Registra uma solicitação rastreável por transportadora selecionada (referência única para reconciliar a
-            resposta). O envio real por e-mail/WhatsApp é uma fase futura — aqui a solicitação fica registrada,
-            aguardando envio.
+            Marque as transportadoras que devem receber o pedido de cotação. O e-mail ao lado é opcional: em branco,
+            usa o cadastro do Omie; preenchido, vale só para esta solicitação.
           </p>
           <div id="fretes-solicitacoes-checkboxes" class="filtros-relatorio"></div>
           <button type="button" id="fretes-botao-solicitar-cotacao" class="botao-secundario">Solicitar cotação</button>
@@ -452,25 +451,13 @@
         <section id="fretes-braspress-secao">
           <h3 class="titulo-secao">Cotar Braspress</h3>
           <p class="filtro-data-legenda">
-            Consulta a API oficial da Braspress e registra o retorno como proposta. Cubagem em metros por volume.
+            Consulta a API oficial da Braspress e registra o retorno como proposta. Informe uma linha por tipo de
+            embalagem (medidas em metros, por volume).
           </p>
+          <div id="fretes-braspress-embalagens" class="fretes-embalagens"></div>
           <div class="filtros-relatorio">
-            <div class="campo-filtro">
-              <label for="fretes-braspress-altura">Altura (m)</label>
-              <input id="fretes-braspress-altura" type="number" min="0" step="0.01" />
-            </div>
-            <div class="campo-filtro">
-              <label for="fretes-braspress-largura">Largura (m)</label>
-              <input id="fretes-braspress-largura" type="number" min="0" step="0.01" />
-            </div>
-            <div class="campo-filtro">
-              <label for="fretes-braspress-comprimento">Comprimento (m)</label>
-              <input id="fretes-braspress-comprimento" type="number" min="0" step="0.01" />
-            </div>
-            <div class="campo-filtro">
-              <label for="fretes-braspress-volumes">Volumes</label>
-              <input id="fretes-braspress-volumes" type="number" min="1" step="1" />
-            </div>
+            <button type="button" id="fretes-braspress-adicionar-embalagem" class="botao-secundario">+ Adicionar embalagem</button>
+            <p class="fretes-embalagens-total">Total de volumes: <strong id="fretes-braspress-total-volumes">0</strong></p>
             <button type="button" id="fretes-botao-cotar-braspress" class="botao-secundario botao-aplicar-filtro">Cotar Braspress</button>
           </div>
           <p id="fretes-braspress-resultado" class="filtro-data-legenda" hidden></p>

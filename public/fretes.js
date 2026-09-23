@@ -1511,7 +1511,7 @@ export function inicializarFretes() {
         container.textContent = '';
         for (const t of transportadorasCache.filter((t) => t.ativo)) {
             const linha = document.createElement('div');
-            linha.className = 'campo-filtro';
+            linha.className = 'campo-filtro fretes-solicitacao-linha';
             const label = document.createElement('label');
             const input = document.createElement('input');
             input.type = 'checkbox';
@@ -1616,6 +1616,80 @@ export function inicializarFretes() {
         })();
     });
     // --- Fase Braspress 1: cotação via API oficial ---
+    // Várias embalagens: cada linha vira um item de `cubagem` (formato já aceito pela rota,
+    // até 50 itens). Linhas totalmente em branco são ignoradas.
+    const CAMPOS_EMBALAGEM = [
+        { campo: 'altura', rotulo: 'Altura (m)', step: '0.01' },
+        { campo: 'largura', rotulo: 'Largura (m)', step: '0.01' },
+        { campo: 'comprimento', rotulo: 'Comprimento (m)', step: '0.01' },
+        { campo: 'volumes', rotulo: 'Quantidade', step: '1' },
+    ];
+    const containerEmbalagens = el('fretes-braspress-embalagens');
+    const totalVolumesEmbalagens = el('fretes-braspress-total-volumes');
+    function linhasEmbalagem() {
+        return Array.from(containerEmbalagens.querySelectorAll('.fretes-embalagem-linha'));
+    }
+    function valorEmbalagem(linha, campo) {
+        return linha.querySelector(`input[data-campo="${campo}"]`)?.value.trim() ?? '';
+    }
+    function atualizarTotalVolumes() {
+        const total = linhasEmbalagem().reduce((soma, linha) => {
+            const quantidade = Number(valorEmbalagem(linha, 'volumes'));
+            return Number.isInteger(quantidade) && quantidade > 0 ? soma + quantidade : soma;
+        }, 0);
+        totalVolumesEmbalagens.textContent = String(total);
+    }
+    function adicionarLinhaEmbalagem() {
+        const linha = document.createElement('div');
+        linha.className = 'filtros-relatorio fretes-embalagem-linha';
+        for (const { campo, rotulo, step } of CAMPOS_EMBALAGEM) {
+            const div = document.createElement('div');
+            div.className = 'campo-filtro';
+            const label = document.createElement('label');
+            label.textContent = rotulo;
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.min = campo === 'volumes' ? '1' : '0';
+            input.step = step;
+            input.dataset.campo = campo;
+            input.addEventListener('input', atualizarTotalVolumes);
+            label.appendChild(input);
+            div.appendChild(label);
+            linha.appendChild(div);
+        }
+        const botaoRemover = document.createElement('button');
+        botaoRemover.type = 'button';
+        botaoRemover.className = 'botao-secundario';
+        botaoRemover.textContent = 'Remover';
+        botaoRemover.addEventListener('click', () => {
+            linha.remove();
+            if (linhasEmbalagem().length === 0)
+                adicionarLinhaEmbalagem();
+            atualizarTotalVolumes();
+        });
+        linha.appendChild(botaoRemover);
+        containerEmbalagens.appendChild(linha);
+    }
+    /** Lê as linhas preenchidas; lança Error com mensagem amigável se alguma for inválida. */
+    function lerEmbalagens() {
+        const itens = [];
+        linhasEmbalagem().forEach((linha, i) => {
+            const brutos = CAMPOS_EMBALAGEM.map(({ campo }) => valorEmbalagem(linha, campo));
+            if (brutos.every((v) => v === ''))
+                return;
+            const [altura, largura, comprimento, volumes] = brutos.map(Number);
+            if (![altura, largura, comprimento].every((v) => Number.isFinite(v) && v > 0)) {
+                throw new Error(`Embalagem ${i + 1}: altura, largura e comprimento devem ser maiores que zero.`);
+            }
+            if (!Number.isInteger(volumes) || volumes < 1) {
+                throw new Error(`Embalagem ${i + 1}: quantidade deve ser um número inteiro maior ou igual a 1.`);
+            }
+            itens.push({ altura, largura, comprimento, volumes });
+        });
+        return itens;
+    }
+    el('fretes-braspress-adicionar-embalagem').addEventListener('click', adicionarLinhaEmbalagem);
+    adicionarLinhaEmbalagem();
     const botaoCotarBraspress = el('fretes-botao-cotar-braspress');
     const erroBraspress = el('fretes-braspress-erro');
     const resultadoBraspress = el('fretes-braspress-resultado');
@@ -1625,20 +1699,16 @@ export function inicializarFretes() {
                 return;
             erroBraspress.hidden = true;
             resultadoBraspress.hidden = true;
-            const numero = (id) => Number(el(id).value);
-            const temCubagem = ['altura', 'largura', 'comprimento', 'volumes'].some((c) => el(`fretes-braspress-${c}`).value.trim() !== '');
-            const corpo = {
-                cubagem: temCubagem
-                    ? [
-                        {
-                            altura: numero('fretes-braspress-altura'),
-                            largura: numero('fretes-braspress-largura'),
-                            comprimento: numero('fretes-braspress-comprimento'),
-                            volumes: numero('fretes-braspress-volumes'),
-                        },
-                    ]
-                    : null,
-            };
+            let embalagens;
+            try {
+                embalagens = lerEmbalagens();
+            }
+            catch (erro) {
+                erroBraspress.textContent = erro.message;
+                erroBraspress.hidden = false;
+                return;
+            }
+            const corpo = { cubagem: embalagens.length > 0 ? embalagens : null };
             botaoCotarBraspress.disabled = true;
             try {
                 const resposta = await fetch(`/api/fretes/cotacoes/${cotacaoAtualId}/cotar-braspress`, {

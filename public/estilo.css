@@ -1672,3 +1672,20 @@ tfoot tr td:first-child {
   flex-basis: 100%;
   font-size: 14px;
 }
+
+/* Detalhe da cotação — transportadoras para solicitar cotação e várias embalagens (Braspress). */
+.fretes-solicitacao-linha {
+  flex-basis: 100%;
+}
+
+.fretes-embalagens {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.fretes-embalagens-total {
+  margin: 0;
+  font-size: 14px;
+}

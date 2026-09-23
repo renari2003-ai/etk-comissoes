@@ -116,6 +116,10 @@ export async function servicoCotarBraspress(
 
   const cnpjDestinatario = await obterCnpjDestinatario(cliente, cotacao.clienteOmieId);
   const cepOrigem = cotacao.cepOrigem ?? dados.cepOrigem;
+  // Com lista de embalagens, o total enviado à Braspress é a soma das quantidades das linhas
+  // (ex.: 5 + 2 = 7); sem lista, mantém `cotacao.volumes`.
+  const volumes =
+    dados.cubagem !== null && dados.cubagem.length > 0 ? dados.cubagem.reduce((soma, item) => soma + item.volumes, 0) : cotacao.volumes;
   let cotacaoExterna: CotacaoBraspressNormalizada;
   try {
     cotacaoExterna = await cotarNaBraspress(
@@ -125,7 +129,7 @@ export async function servicoCotarBraspress(
         cepDestino: cotacao.cepDestino,
         valorMercadoria: cotacao.valorMercadoria,
         peso: cotacao.peso,
-        volumes: cotacao.volumes,
+        volumes,
         tipoFrete: cotacao.modalidade,
         cubagem: dados.cubagem,
       },
@@ -153,7 +157,7 @@ export async function servicoCotarBraspress(
     prazoDias: cotacaoExterna.prazoDias,
     validade: cotacaoExterna.validade,
     peso: cotacao.peso,
-    volumes: cotacao.volumes,
+    volumes,
     origem: cotacao.origem,
     destino: cotacao.destino,
     origemProposta: ORIGEM_PROPOSTA_API_BRASPRESS,
@@ -167,7 +171,13 @@ export async function servicoCotarBraspress(
     acao: 'PROPOSTA_API_BRASPRESS_CRIADA',
     entidade: 'proposta_frete',
     entidadeId: proposta.id,
-    valorNovo: { idCotacaoExterna: cotacaoExterna.idCotacaoExterna, valorFrete: cotacaoExterna.valorFrete, prazoDias: cotacaoExterna.prazoDias },
+    valorNovo: {
+      idCotacaoExterna: cotacaoExterna.idCotacaoExterna,
+      valorFrete: cotacaoExterna.valorFrete,
+      prazoDias: cotacaoExterna.prazoDias,
+      volumes,
+      cubagem: dados.cubagem,
+    },
   });
   return { cotacaoExterna, proposta, duplicada: false };
 }
