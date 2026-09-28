@@ -46,7 +46,7 @@ export function exigirAutenticacao(req: Request, _res: Response, next: NextFunct
 }
 
 /**
- * Exige a permissão `chave` para o papel "convidado" — "administrador"
+ * Exige a permissão `chave` para os papéis "usuario"/"vendedor"/"convidado" — "administrador"
  * sempre passa, ignorando `permissoes` por completo (regra de negócio:
  * administrador tem acesso total, sempre). Deve vir DEPOIS de
  * `exigirAutenticacao` na cadeia de middlewares.

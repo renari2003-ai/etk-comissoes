@@ -1,6 +1,6 @@
-/** Painel "Usuários" — só carregado/ativado para administrador (ver `auth.ts`). CRUD simples de contas e permissões de convidado. */
+/** Painel "Usuários" — só carregado/ativado para administrador (ver `auth.ts`). CRUD simples de contas e permissões dos papéis não-administradores. */
 
-import { obterUsuarioLogado, type Papel, type Permissoes } from './auth.js';
+import { obterUsuarioLogado, ROTULOS_PAPEL, type Papel, type Permissoes } from './auth.js';
 
 interface UsuarioListado {
   id: string;
@@ -79,7 +79,40 @@ export function inicializarUsuarios(): { ativar: () => void } {
     const tr = document.createElement('tr');
     tr.appendChild(celula(usuarioListado.nome));
     tr.appendChild(celula(usuarioListado.usuario));
-    tr.appendChild(celula(usuarioListado.papel === 'administrador' ? 'Administrador' : 'Convidado'));
+    // Troca de papel sempre explícita (nunca conversão automática) — o backend valida o valor e
+    // impede rebaixar o último administrador.
+    const tdPapel = document.createElement('td');
+    const seletorPapel = document.createElement('select');
+    seletorPapel.setAttribute('aria-label', `Papel de ${usuarioListado.usuario}`);
+    for (const [valor, rotulo] of Object.entries(ROTULOS_PAPEL) as Array<[Papel, string]>) {
+      const opcao = document.createElement('option');
+      opcao.value = valor;
+      opcao.textContent = rotulo;
+      opcao.selected = valor === usuarioListado.papel;
+      seletorPapel.appendChild(opcao);
+    }
+    seletorPapel.addEventListener('change', () => {
+      void (async () => {
+        const novoPapel = seletorPapel.value as Papel;
+        if (!window.confirm(`Alterar o papel de "${usuarioListado.usuario}" para ${ROTULOS_PAPEL[novoPapel]}?`)) {
+          seletorPapel.value = usuarioListado.papel;
+          return;
+        }
+        const resposta = await fetch(`/api/auth/usuarios/${usuarioListado.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ papel: novoPapel }),
+        });
+        if (!resposta.ok) {
+          window.alert(await extrairMensagemErro(resposta));
+          seletorPapel.value = usuarioListado.papel;
+          return;
+        }
+        void carregarUsuarios();
+      })();
+    });
+    tdPapel.appendChild(seletorPapel);
+    tr.appendChild(tdPapel);
 
     const tdPermissoes = document.createElement('td');
     if (usuarioListado.papel === 'administrador') {
@@ -255,6 +288,20 @@ export function inicializarUsuarios(): { ativar: () => void } {
 
   return {
     ativar(): void {
+      // Defesa extra no cliente (o backend já responde 403): quem não é administrador nunca
+      // carrega a lista de usuários, mesmo que a aba seja aberta por fora do menu.
+      if (obterUsuarioLogado()?.papel !== 'administrador') {
+        formNovoUsuario.hidden = true;
+        corpoTabela.textContent = '';
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 5;
+        td.textContent = 'Acesso não autorizado.';
+        tr.appendChild(td);
+        corpoTabela.appendChild(tr);
+        return;
+      }
+      formNovoUsuario.hidden = false;
       if (ativado) return;
       ativado = true;
       void carregarUsuarios();

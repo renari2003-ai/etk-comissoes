@@ -81,7 +81,7 @@ async function garantirTabela(): Promise<void> {
         id UUID PRIMARY KEY,
         usuario TEXT NOT NULL,
         nome TEXT NOT NULL,
-        papel TEXT NOT NULL CHECK (papel IN ('administrador', 'convidado')),
+        papel TEXT NOT NULL CHECK (papel IN ('administrador', 'usuario', 'vendedor', 'convidado')),
         senha_hash TEXT NOT NULL,
         permissoes JSONB NOT NULL,
         senha_provisoria BOOLEAN NOT NULL DEFAULT true,
@@ -92,6 +92,26 @@ async function garantirTabela(): Promise<void> {
     // Fase 4A.6 — vínculo opcional login↔vendedor Omie (ver comentário completo em `auth/tipos.ts`).
     // Aditivo/nullable: contas já existentes simplesmente começam sem vínculo (`null`).
     await executarDdlIdempotente(`ALTER TABLE ${tabela} ADD COLUMN IF NOT EXISTS vendedor_omie_id BIGINT`);
+    // Papéis "usuario"/"vendedor" (2026-09-28): amplia o CHECK de `papel` — só ADICIONA opções,
+    // nenhum valor já gravado fica inválido e nenhum usuário é convertido. Mesmo padrão do CHECK
+    // de `email_origem` (`fretes/schema.ts`): descobre o nome real da constraint; idempotente.
+    await executarDdlIdempotente(`
+      DO $$
+      DECLARE
+        nome_constraint text;
+      BEGIN
+        SELECT con.conname INTO nome_constraint
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(con.conkey)
+        WHERE rel.relname = '${tabela}' AND con.contype = 'c' AND att.attname = 'papel';
+        IF nome_constraint IS NOT NULL THEN
+          EXECUTE format('ALTER TABLE ${tabela} DROP CONSTRAINT %I', nome_constraint);
+        END IF;
+        EXECUTE 'ALTER TABLE ${tabela} ADD CONSTRAINT ${tabela}_papel_check
+          CHECK (papel IN (''administrador'',''usuario'',''vendedor'',''convidado''))';
+      END $$;
+    `);
 
     const { rows: contagem } = await pool.query<{ total: string }>(`SELECT COUNT(*)::text AS total FROM ${tabela}`);
     if (Number(contagem[0]?.total ?? '0') > 0) return;
@@ -233,9 +253,9 @@ export async function atualizarUsuario(id: string, atualizacao: DadosAtualizacao
     usuario.nome = atualizacao.nome.trim();
   }
   if (atualizacao.papel !== undefined) {
-    if (atualizacao.papel === 'convidado' && usuario.papel === 'administrador') {
+    if (atualizacao.papel !== 'administrador' && usuario.papel === 'administrador') {
       const outrosAdministradores = await contarOutrosAdministradores(id);
-      garantirNaoUltimoAdministrador(outrosAdministradores, 'rebaixar o último administrador para convidado');
+      garantirNaoUltimoAdministrador(outrosAdministradores, 'rebaixar o último administrador');
     }
     usuario.papel = atualizacao.papel;
     if (atualizacao.papel === 'administrador') {
@@ -245,7 +265,7 @@ export async function atualizarUsuario(id: string, atualizacao: DadosAtualizacao
       usuario.mestre = false;
     }
   }
-  if (atualizacao.permissoes !== undefined && usuario.papel === 'convidado') {
+  if (atualizacao.permissoes !== undefined && usuario.papel !== 'administrador') {
     usuario.permissoes = atualizacao.permissoes;
   }
   if (atualizacao.vendedorOmieId !== undefined) {

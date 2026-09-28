@@ -3,7 +3,7 @@ import { lerCookie, NOME_COOKIE_SESSAO } from '../auth/cookies.js';
 import { exigirAdministrador, exigirAdministradorMestre, exigirAutenticacao } from '../auth/middleware.js';
 import { criarSessao, destruirSessao } from '../auth/sessoes.js';
 import { verificarSenha } from '../auth/senhas.js';
-import { PERMISSOES_VAZIAS, type Papel, type Permissoes } from '../auth/tipos.js';
+import { PAPEIS, PERMISSOES_VAZIAS, type Papel, type Permissoes } from '../auth/tipos.js';
 import {
   atualizarUsuario,
   buscarPorNomeDeUsuario,
@@ -26,10 +26,10 @@ function validarTextoNaoVazio(valor: unknown, campo: string): string {
 }
 
 function validarPapel(valor: unknown): Papel {
-  if (valor !== 'administrador' && valor !== 'convidado') {
-    throw new ErroValidacao('O campo "papel" deve ser "administrador" ou "convidado".');
+  if (typeof valor !== 'string' || !(PAPEIS as readonly string[]).includes(valor)) {
+    throw new ErroValidacao('O campo "papel" deve ser "administrador", "usuario", "vendedor" ou "convidado".');
   }
-  return valor;
+  return valor as Papel;
 }
 
 /** Fase 4A.6 — mesmo padrão de `validarIdOmieOpcional` (`fretes/validacao.ts`): inteiro positivo ou ausente/`null`, nunca inferido. */

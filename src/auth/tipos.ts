@@ -1,4 +1,12 @@
-export type Papel = 'administrador' | 'convidado';
+/**
+ * "usuario" (interno comum) e "vendedor" (comercial, vinculado via `vendedorOmieId`) foram
+ * adicionados em 2026-09-28 — ambos, assim como "convidado" (preservado por compatibilidade),
+ * só acessam o que estiver marcado em `permissoes`. Só "administrador" tem acesso total e é o
+ * único que gerencia usuários (`exigirAdministrador`).
+ */
+export type Papel = 'administrador' | 'usuario' | 'vendedor' | 'convidado';
+
+export const PAPEIS: readonly Papel[] = ['administrador', 'usuario', 'vendedor', 'convidado'];
 
 /**
  * Uma chave por seção liberável da tela ao papel "convidado" — o

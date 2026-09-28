@@ -8,7 +8,14 @@
  * precisa reordenar a inicialização deles: só bloquear visualmente até logar.
  */
 
-export type Papel = 'administrador' | 'convidado';
+export type Papel = 'administrador' | 'usuario' | 'vendedor' | 'convidado';
+
+export const ROTULOS_PAPEL: Record<Papel, string> = {
+  administrador: 'Administrador',
+  usuario: 'Usuário',
+  vendedor: 'Vendedor',
+  convidado: 'Convidado',
+};
 
 export interface Permissoes {
   consultaPedidos: boolean;
@@ -120,7 +127,7 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
   formLogin.hidden = false;
   formDefinirSenha.hidden = true;
   usuarioLogadoBox.hidden = false;
-  usuarioLogadoNome.textContent = `${usuarioLogado.nome} — ${usuarioLogado.papel === 'administrador' ? 'Administrador' : 'Convidado'}`;
+  usuarioLogadoNome.textContent = `${usuarioLogado.nome} — ${ROTULOS_PAPEL[usuarioLogado.papel] ?? usuarioLogado.papel}`;
   semAcesso.hidden = true;
   modoConsultaSecao.hidden = false; // pode ter sido escondida por um mostrarSemAcesso() de uma sessão anterior (ex.: admin trocou permissões e a página recarregou)
 
@@ -130,6 +137,7 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
     return; // acesso total — nada pra esconder
   }
 
+  modoUsuariosBotao.hidden = true; // administração de usuários é exclusiva do administrador
   const p = usuarioLogado.permissoes;
   modoFretesBotao.hidden = !p.fretes;
   const secoesPorId: Array<[string, boolean]> = [

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PERMISSOES_VAZIAS, type Permissoes, type UsuarioPublico } from '../../src/auth/tipos.js';
+import { PERMISSOES_VAZIAS, type Papel, type Permissoes, type UsuarioPublico } from '../../src/auth/tipos.js';
 
 // Fase 4A.8 — Histórico de Fretes por Cliente. Mesmo padrão de isolamento das demais suítes
 // de Fretes: Postgres real, tabelas descartáveis por teste, todas as 10 tabelas que
@@ -69,7 +69,7 @@ const VENDEDOR_B = 902;
 const CLIENTE_A = 5001;
 const CLIENTE_B = 5002;
 
-function usuarioFake(opts: { papel?: 'administrador' | 'convidado'; permissoes?: Partial<Permissoes>; vendedorOmieId?: number | null } = {}): UsuarioPublico {
+function usuarioFake(opts: { papel?: Papel; permissoes?: Partial<Permissoes>; vendedorOmieId?: number | null } = {}): UsuarioPublico {
   return {
     id: randomUUID(),
     usuario: 'teste',
@@ -347,6 +347,28 @@ describe('Fase 4A.8 — permissões (regra da Fase 4A.6 preservada)', () => {
     expect(resultado.linhas).toEqual([]);
     const clientes = await servico.servicoBuscarClientesHistorico('Cliente', semVinculo);
     expect(clientes).toEqual([]);
+  });
+
+  it('papel "vendedor" (2026-09-28) usa o mesmo vendedorOmieId: vê só o próprio histórico, nunca o de outro vendedor', async () => {
+    const servico = await importarServico();
+    const transportadora = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'Transportadora S', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    await criarCotacaoComProposta(servico, transportadora.id, {
+      clienteOmieId: CLIENTE_A,
+      clienteNomeSnapshot: 'Cliente A',
+      vendedorOmieId: VENDEDOR_A,
+      valorCusto: 100,
+      prazoDias: 1,
+    });
+    const vendedorDono = usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vendedorOmieId: VENDEDOR_A });
+    const vendedorOutro = usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vendedorOmieId: VENDEDOR_B });
+
+    const doDono = await servico.servicoListarHistoricoCliente({ clienteOmieId: CLIENTE_A }, vendedorDono);
+    expect(doDono.linhas.length).toBe(1);
+    const doOutro = await servico.servicoListarHistoricoCliente({ clienteOmieId: CLIENTE_A }, vendedorOutro);
+    expect(doOutro.linhas).toEqual([]);
   });
 });
 

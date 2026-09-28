@@ -7,6 +7,12 @@
  * chamada de API sozinhos ao carregar a página (só reagem a clique), não
  * precisa reordenar a inicialização deles: só bloquear visualmente até logar.
  */
+export const ROTULOS_PAPEL = {
+    administrador: 'Administrador',
+    usuario: 'Usuário',
+    vendedor: 'Vendedor',
+    convidado: 'Convidado',
+};
 let usuarioLogadoAtual = null;
 /** Usado por `usuarios.ts` pra saber se o usuário atual pode redefinir a senha de outra pessoa (`mestre`), sem precisar buscar `/api/auth/eu` de novo. */
 export function obterUsuarioLogado() {
@@ -77,7 +83,7 @@ function aplicarPermissoes(usuarioLogado) {
     formLogin.hidden = false;
     formDefinirSenha.hidden = true;
     usuarioLogadoBox.hidden = false;
-    usuarioLogadoNome.textContent = `${usuarioLogado.nome} — ${usuarioLogado.papel === 'administrador' ? 'Administrador' : 'Convidado'}`;
+    usuarioLogadoNome.textContent = `${usuarioLogado.nome} — ${ROTULOS_PAPEL[usuarioLogado.papel] ?? usuarioLogado.papel}`;
     semAcesso.hidden = true;
     modoConsultaSecao.hidden = false; // pode ter sido escondida por um mostrarSemAcesso() de uma sessão anterior (ex.: admin trocou permissões e a página recarregou)
     if (usuarioLogado.papel === 'administrador') {
@@ -85,6 +91,7 @@ function aplicarPermissoes(usuarioLogado) {
         modoFretesBotao.hidden = false;
         return; // acesso total — nada pra esconder
     }
+    modoUsuariosBotao.hidden = true; // administração de usuários é exclusiva do administrador
     const p = usuarioLogado.permissoes;
     modoFretesBotao.hidden = !p.fretes;
     const secoesPorId = [
