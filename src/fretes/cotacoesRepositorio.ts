@@ -276,8 +276,8 @@ export interface FiltrosCotacao {
   modalidade?: Modalidade;
   modalidadeExecucao?: ModalidadeExecucao;
   codigo?: string;
-  /** Restringe às cotações do vendedor (dashboard do papel "vendedor", sem visão geral). */
-  vendedorOmieId?: number;
+  /** Restringe às cotações desses códigos de vendedor (dashboard sem visão geral). Lista vazia = nenhuma cotação. */
+  vendedoresOmieIds?: number[];
 }
 
 export async function listarCotacoes(filtros: FiltrosCotacao): Promise<CotacaoFrete[]> {
@@ -301,9 +301,9 @@ export async function listarCotacoes(filtros: FiltrosCotacao): Promise<CotacaoFr
     valores.push(`%${filtros.codigo}%`);
     condicoes.push(`codigo ILIKE $${valores.length}`);
   }
-  if (filtros.vendedorOmieId !== undefined) {
-    valores.push(filtros.vendedorOmieId);
-    condicoes.push(`vendedor_omie_id = $${valores.length}`);
+  if (filtros.vendedoresOmieIds !== undefined) {
+    valores.push(filtros.vendedoresOmieIds);
+    condicoes.push(`vendedor_omie_id = ANY($${valores.length}::bigint[])`);
   }
   const whereSql = condicoes.length > 0 ? `WHERE ${condicoes.join(' AND ')}` : '';
   const { rows } = await pool.query<LinhaCotacao>(

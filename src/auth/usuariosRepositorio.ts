@@ -47,6 +47,7 @@ interface LinhaUsuario {
   senha_provisoria: boolean;
   mestre: boolean;
   vendedor_omie_id: string | null;
+  vendedor_omie_nome: string | null;
 }
 
 function linhaParaUsuario(linha: LinhaUsuario): Usuario {
@@ -60,6 +61,7 @@ function linhaParaUsuario(linha: LinhaUsuario): Usuario {
     senhaProvisoria: linha.senha_provisoria,
     mestre: linha.mestre,
     vendedorOmieId: linha.vendedor_omie_id === null ? null : Number(linha.vendedor_omie_id),
+    vendedorOmieNome: linha.vendedor_omie_nome ?? null,
   };
 }
 
@@ -92,6 +94,10 @@ async function garantirTabela(): Promise<void> {
     // Fase 4A.6 — vínculo opcional login↔vendedor Omie (ver comentário completo em `auth/tipos.ts`).
     // Aditivo/nullable: contas já existentes simplesmente começam sem vínculo (`null`).
     await executarDdlIdempotente(`ALTER TABLE ${tabela} ADD COLUMN IF NOT EXISTS vendedor_omie_id BIGINT`);
+    // Vínculo por NOME do vendedor Omie (2026-09-28, ver `auth/tipos.ts`). Aditivo/nullable:
+    // ninguém é convertido — contas existentes começam sem nome vinculado; `vendedor_omie_id`
+    // continua lá como legado.
+    await executarDdlIdempotente(`ALTER TABLE ${tabela} ADD COLUMN IF NOT EXISTS vendedor_omie_nome TEXT`);
     // Papéis "usuario"/"vendedor" (2026-09-28): amplia o CHECK de `papel` — só ADICIONA opções,
     // nenhum valor já gravado fica inválido e nenhum usuário é convertido. Mesmo padrão do CHECK
     // de `email_origem` (`fretes/schema.ts`): descobre o nome real da constraint; idempotente.
@@ -144,6 +150,7 @@ async function garantirTabela(): Promise<void> {
       senhaProvisoria: true,
       mestre: ehAdministradorMasterPorNome(config.adminUsuario),
       vendedorOmieId: null,
+      vendedorOmieNome: null,
     };
     await inserirUsuario(admin);
     console.log(`Primeiro administrador criado: "${admin.usuario}".`);
@@ -154,8 +161,8 @@ async function garantirTabela(): Promise<void> {
 async function inserirUsuario(usuario: Usuario): Promise<void> {
   const pool = obterPool();
   await pool.query(
-    `INSERT INTO ${nomeTabela()} (id, usuario, nome, papel, senha_hash, permissoes, senha_provisoria, mestre, vendedor_omie_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    `INSERT INTO ${nomeTabela()} (id, usuario, nome, papel, senha_hash, permissoes, senha_provisoria, mestre, vendedor_omie_id, vendedor_omie_nome)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
       usuario.id,
       usuario.usuario,
@@ -166,6 +173,8 @@ async function inserirUsuario(usuario: Usuario): Promise<void> {
       usuario.senhaProvisoria,
       usuario.mestre,
       usuario.vendedorOmieId ?? null,
+      // `?? null`: usuários migrados do data/usuarios.json antigo não têm este campo.
+      usuario.vendedorOmieNome ?? null,
     ],
   );
 }
@@ -201,6 +210,8 @@ export interface DadosNovoUsuario {
   permissoes: Permissoes;
   /** Fase 4A.6 — ver comentário completo em `auth/tipos.ts`. */
   vendedorOmieId?: number | null;
+  /** Vínculo por nome (2026-09-28) — ver `auth/tipos.ts`. */
+  vendedorOmieNome?: string | null;
 }
 
 export async function criarUsuario(dadosNovos: DadosNovoUsuario): Promise<UsuarioPublico> {
@@ -224,6 +235,7 @@ export async function criarUsuario(dadosNovos: DadosNovoUsuario): Promise<Usuari
     senhaProvisoria: true,
     mestre: dadosNovos.papel === 'administrador' && ehAdministradorMasterPorNome(dadosNovos.usuario),
     vendedorOmieId: dadosNovos.vendedorOmieId ?? null,
+    vendedorOmieNome: dadosNovos.vendedorOmieNome ?? null,
   };
   await inserirUsuario(novo);
   return paraPublico(novo);
@@ -235,6 +247,8 @@ export interface DadosAtualizacaoUsuario {
   permissoes?: Permissoes;
   /** Fase 4A.6 — ver comentário completo em `auth/tipos.ts`. `null` remove o vínculo. */
   vendedorOmieId?: number | null;
+  /** Vínculo por nome (2026-09-28). `null` remove o vínculo. */
+  vendedorOmieNome?: string | null;
 }
 
 function garantirNaoUltimoAdministrador(administradoresRestantes: number, acao: string): void {
@@ -271,11 +285,14 @@ export async function atualizarUsuario(id: string, atualizacao: DadosAtualizacao
   if (atualizacao.vendedorOmieId !== undefined) {
     usuario.vendedorOmieId = atualizacao.vendedorOmieId;
   }
+  if (atualizacao.vendedorOmieNome !== undefined) {
+    usuario.vendedorOmieNome = atualizacao.vendedorOmieNome;
+  }
 
   const pool = obterPool();
   await pool.query(
-    `UPDATE ${nomeTabela()} SET nome = $1, papel = $2, permissoes = $3, mestre = $4, vendedor_omie_id = $5 WHERE id = $6`,
-    [usuario.nome, usuario.papel, JSON.stringify(usuario.permissoes), usuario.mestre, usuario.vendedorOmieId, usuario.id],
+    `UPDATE ${nomeTabela()} SET nome = $1, papel = $2, permissoes = $3, mestre = $4, vendedor_omie_id = $5, vendedor_omie_nome = $6 WHERE id = $7`,
+    [usuario.nome, usuario.papel, JSON.stringify(usuario.permissoes), usuario.mestre, usuario.vendedorOmieId, usuario.vendedorOmieNome, usuario.id],
   );
   return paraPublico(usuario);
 }

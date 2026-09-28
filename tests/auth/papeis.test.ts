@@ -125,6 +125,35 @@ describe('administração de usuários — só administrador', () => {
     }
   });
 
+  it('vínculo por nome: admin cria/edita/remove vendedorOmieNome, sem exigir vendedorOmieId', async () => {
+    const { servidor, admin, repositorio, cookiePara, chamar } = await montarServidor();
+    try {
+      const cookie = await cookiePara(admin.id);
+      const criar = await chamar(cookie, 'POST', '/api/auth/usuarios', {
+        usuario: 'alice',
+        nome: 'Alice',
+        senha: 'senha123',
+        papel: 'vendedor',
+        permissoes: { ...PERMISSOES_VAZIAS, relatorioComissionamento: true },
+        vendedorOmieNome: '  Alice Silva ',
+      });
+      expect(criar.status).toBe(201);
+      const alice = (await criar.json()) as { id: string; vendedorOmieNome: string | null; vendedorOmieId: number | null };
+      expect(alice.vendedorOmieNome).toBe('Alice Silva');
+      expect(alice.vendedorOmieId).toBeNull();
+
+      expect((await chamar(cookie, 'PUT', `/api/auth/usuarios/${alice.id}`, { vendedorOmieNome: 'Alice Souza' })).status).toBe(200);
+      expect((await repositorio.buscarPorId(alice.id))?.vendedorOmieNome).toBe('Alice Souza');
+
+      expect((await chamar(cookie, 'PUT', `/api/auth/usuarios/${alice.id}`, { vendedorOmieNome: 123 })).status).toBe(400);
+
+      expect((await chamar(cookie, 'PUT', `/api/auth/usuarios/${alice.id}`, { vendedorOmieNome: null })).status).toBe(200);
+      expect((await repositorio.buscarPorId(alice.id))?.vendedorOmieNome).toBeNull();
+    } finally {
+      servidor.close();
+    }
+  });
+
   it('rejeita papel desconhecido (400)', async () => {
     const { servidor, admin, cookiePara, chamar } = await montarServidor();
     try {

@@ -25,13 +25,53 @@ async function extrairMensagemErro(resposta) {
     }
     return 'Não foi possível completar a operação.';
 }
+/** Nomes únicos (comparação por trim/maiúsculas-minúsculas, igual ao backend), ordenados — um mesmo nome com mais de um código na Omie aparece uma vez só. */
+export function nomesDistintosOrdenados(nomes) {
+    const porChave = new Map();
+    for (const nome of nomes) {
+        const limpo = nome.trim();
+        if (limpo === '')
+            continue;
+        const chave = limpo.toLocaleLowerCase('pt-BR');
+        if (!porChave.has(chave))
+            porChave.set(chave, limpo);
+    }
+    return [...porChave.values()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+/** "Sem vínculo" + nomes da Omie. Um nome já vinculado que sumiu da Omie continua visível (marcado), nunca trocado em silêncio. */
+export function preencherSelectVendedor(select, nomes, atual) {
+    select.textContent = '';
+    const semVinculo = document.createElement('option');
+    semVinculo.value = '';
+    semVinculo.textContent = 'Sem vínculo';
+    select.appendChild(semVinculo);
+    const lista = atual !== null && !nomes.some((n) => n.toLocaleLowerCase('pt-BR') === atual.trim().toLocaleLowerCase('pt-BR')) ? [atual, ...nomes] : nomes;
+    for (const nome of lista) {
+        const opcao = document.createElement('option');
+        opcao.value = nome;
+        opcao.textContent = nome === atual && lista !== nomes ? `${nome} (não encontrado na Omie)` : nome;
+        select.appendChild(opcao);
+    }
+    select.value = atual ?? '';
+}
 export function inicializarUsuarios() {
     const formNovoUsuario = el('form-novo-usuario');
     const campoPapel = el('novo-usuario-papel');
     const fieldsetPermissoes = el('novo-usuario-permissoes');
     const erroNovoUsuario = el('novo-usuario-erro');
     const corpoTabela = el('tabela-usuarios-corpo');
+    const campoVendedorOmieNome = el('novo-usuario-vendedor-omie');
     let ativado = false;
+    /** Nomes de vendedores conhecidos pela integração Omie (mesma lista dos relatórios, somente leitura). */
+    let nomesVendedoresOmie = [];
+    async function carregarNomesVendedoresOmie() {
+        const resposta = await fetch('/api/vendedores');
+        if (!resposta.ok)
+            return;
+        const corpo = (await resposta.json());
+        nomesVendedoresOmie = nomesDistintosOrdenados(corpo.vendedores.map((v) => v.nome));
+        preencherSelectVendedor(campoVendedorOmieNome, nomesVendedoresOmie, null);
+    }
     function permissoesVazias() {
         return {
             consultaPedidos: false,
@@ -136,22 +176,41 @@ export function inicializarUsuarios() {
         }
         tr.appendChild(tdPermissoes);
         const tdAcoes = document.createElement('td');
-        // Fase 4A.6 — vínculo login↔vendedor Omie (Central do Vendedor: cada vendedor só vê as
-        // próprias cotações). Disponível pra qualquer papel — não é uma "permissão", é um dado.
+        // Vínculo login↔vendedor Omie por NOME (2026-09-28): o administrador escolhe o nome numa
+        // lista vinda da própria Omie — nunca digita código. Disponível pra qualquer papel.
         const botaoVendedor = document.createElement('button');
         botaoVendedor.type = 'button';
         botaoVendedor.className = 'botao-secundario';
-        botaoVendedor.textContent = usuarioListado.vendedorOmieId !== null ? `Vendedor Omie: ${usuarioListado.vendedorOmieId}` : 'Vincular vendedor Omie';
+        botaoVendedor.textContent = usuarioListado.vendedorOmieNome !== null ? `Vendedor Omie: ${usuarioListado.vendedorOmieNome}` : 'Vincular vendedor Omie';
+        const editorVendedor = document.createElement('span');
+        editorVendedor.hidden = true;
+        const seletorVendedor = document.createElement('select');
+        seletorVendedor.setAttribute('aria-label', `Vendedor Omie de ${usuarioListado.usuario}`);
+        const botaoSalvarVendedor = document.createElement('button');
+        botaoSalvarVendedor.type = 'button';
+        botaoSalvarVendedor.className = 'botao-secundario';
+        botaoSalvarVendedor.textContent = 'Salvar vínculo';
+        const botaoCancelarVendedor = document.createElement('button');
+        botaoCancelarVendedor.type = 'button';
+        botaoCancelarVendedor.className = 'botao-secundario';
+        botaoCancelarVendedor.textContent = 'Cancelar';
+        editorVendedor.append(seletorVendedor, botaoSalvarVendedor, botaoCancelarVendedor);
         botaoVendedor.addEventListener('click', () => {
+            preencherSelectVendedor(seletorVendedor, nomesVendedoresOmie, usuarioListado.vendedorOmieNome);
+            botaoVendedor.hidden = true;
+            editorVendedor.hidden = false;
+        });
+        botaoCancelarVendedor.addEventListener('click', () => {
+            editorVendedor.hidden = true;
+            botaoVendedor.hidden = false;
+        });
+        botaoSalvarVendedor.addEventListener('click', () => {
             void (async () => {
-                const digitado = window.prompt('Código do vendedor na Omie vinculado a este login (vazio para remover o vínculo):', usuarioListado.vendedorOmieId !== null ? String(usuarioListado.vendedorOmieId) : '');
-                if (digitado === null)
-                    return;
-                const vendedorOmieId = digitado.trim() === '' ? null : Number(digitado.trim());
+                const vendedorOmieNome = seletorVendedor.value === '' ? null : seletorVendedor.value;
                 const resposta = await fetch(`/api/auth/usuarios/${usuarioListado.id}`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ vendedorOmieId }),
+                    body: JSON.stringify({ vendedorOmieNome }),
                 });
                 if (!resposta.ok) {
                     window.alert(await extrairMensagemErro(resposta));
@@ -160,6 +219,7 @@ export function inicializarUsuarios() {
                 void carregarUsuarios();
             })();
         });
+        tdAcoes.appendChild(editorVendedor);
         tdAcoes.appendChild(botaoVendedor);
         // Recuperação de acesso é restrita ao administrador master (regra de 2026-09-11: só Ricardo e
         // Wendell) — o backend já bloqueia (403) um admin comum, mas nem mostrar o botão evita o clique
@@ -240,7 +300,7 @@ export function inicializarUsuarios() {
             const permissoes = permissoesVazias();
             for (const { chave } of CHAVES_PERMISSAO)
                 permissoes[chave] = dadosForm.get(chave) !== null;
-            const vendedorOmieIdDigitado = String(dadosForm.get('vendedorOmieId') ?? '').trim();
+            const vendedorOmieNome = String(dadosForm.get('vendedorOmieNome') ?? '').trim();
             const resposta = await fetch('/api/auth/usuarios', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -250,7 +310,7 @@ export function inicializarUsuarios() {
                     senha: dadosForm.get('senha'),
                     papel,
                     permissoes,
-                    vendedorOmieId: vendedorOmieIdDigitado === '' ? null : Number(vendedorOmieIdDigitado),
+                    vendedorOmieNome: vendedorOmieNome === '' ? null : vendedorOmieNome,
                 }),
             });
             if (!resposta.ok) {
@@ -282,7 +342,11 @@ export function inicializarUsuarios() {
             if (ativado)
                 return;
             ativado = true;
-            void carregarUsuarios();
+            // Nomes primeiro: as linhas usam a lista ao abrir "Vincular vendedor Omie". Falha na Omie
+            // não impede a lista de usuários — o seletor só fica com "Sem vínculo" (e o nome atual).
+            void carregarNomesVendedoresOmie()
+                .catch(() => undefined)
+                .then(() => carregarUsuarios());
         },
     };
 }

@@ -69,7 +69,15 @@ const VENDEDOR_B = 902;
 const CLIENTE_A = 5001;
 const CLIENTE_B = 5002;
 
-function usuarioFake(opts: { papel?: Papel; permissoes?: Partial<Permissoes>; vendedorOmieId?: number | null } = {}): UsuarioPublico {
+function usuarioFake(
+  opts: {
+    papel?: Papel;
+    permissoes?: Partial<Permissoes>;
+    vendedorOmieId?: number | null;
+    /** Vínculo por nome (2026-09-28) + os códigos que `resolverVinculoVendedor` resolveria para ele. */
+    vinculoNome?: { nome: string; codigos: number[] };
+  } = {},
+): UsuarioPublico {
   return {
     id: randomUUID(),
     usuario: 'teste',
@@ -79,8 +87,13 @@ function usuarioFake(opts: { papel?: Papel; permissoes?: Partial<Permissoes>; ve
     senhaProvisoria: false,
     mestre: false,
     vendedorOmieId: opts.vendedorOmieId ?? null,
+    vendedorOmieNome: opts.vinculoNome?.nome ?? null,
+    ...(opts.vinculoNome !== undefined ? { codigosVendedorOmie: opts.vinculoNome.codigos } : {}),
   };
 }
+
+const ALICE = { nome: 'Alice Silva', codigos: [VENDEDOR_A] };
+const BRUNO = { nome: 'Bruno Souza', codigos: [VENDEDOR_B] };
 
 async function criarCotacaoComProposta(
   servico: Awaited<ReturnType<typeof importarServico>>,
@@ -362,8 +375,8 @@ describe('Fase 4A.8 — permissões (regra da Fase 4A.6 preservada)', () => {
       valorCusto: 100,
       prazoDias: 1,
     });
-    const vendedorDono = usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vendedorOmieId: VENDEDOR_A });
-    const vendedorOutro = usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vendedorOmieId: VENDEDOR_B });
+    const vendedorDono = usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vinculoNome: ALICE });
+    const vendedorOutro = usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vinculoNome: BRUNO });
 
     const doDono = await servico.servicoListarHistoricoCliente({ clienteOmieId: CLIENTE_A }, vendedorDono);
     expect(doDono.linhas.length).toBe(1);
@@ -404,7 +417,7 @@ describe('Dashboard de fretes — escopo por papel (regra de 2026-09-28)', () =>
   it('vendedor vê só os próprios dados — mesmo com fretesGerencia, nunca o geral', async () => {
     const servico = await importarServico();
     await montarCenario(servico);
-    const doA = await servico.servicoDashboard(usuarioFake({ papel: 'vendedor', vendedorOmieId: VENDEDOR_A }));
+    const doA = await servico.servicoDashboard(usuarioFake({ papel: 'vendedor', vinculoNome: ALICE }));
     expect(doA.escopo).toBe('PROPRIO');
     expect(totalCotacoes(doA)).toBe(1);
     expect(doA.resumoFechamentos.quantidade).toBe(1);
@@ -412,15 +425,49 @@ describe('Dashboard de fretes — escopo por papel (regra de 2026-09-28)', () =>
     expect(doA.resumoFechamentosPorModalidadeExecucao.TRANSPORTADORA.quantidade).toBe(1);
 
     const doBComGerencia = await servico.servicoDashboard(
-      usuarioFake({ papel: 'vendedor', permissoes: { fretesGerencia: true }, vendedorOmieId: VENDEDOR_B }),
+      usuarioFake({ papel: 'vendedor', permissoes: { fretesGerencia: true }, vinculoNome: BRUNO }),
     );
     expect(doBComGerencia.escopo).toBe('PROPRIO');
     expect(totalCotacoes(doBComGerencia)).toBe(1);
     expect(doBComGerencia.resumoFechamentos.quantidade).toBe(0);
 
-    const semVinculo = await servico.servicoDashboard(usuarioFake({ papel: 'vendedor', permissoes: { fretesGerencia: true } }));
+    const semVinculo = await servico.servicoDashboard(usuarioFake({ papel: 'vendedor', permissoes: { fretesGerencia: true }, vendedorOmieId: VENDEDOR_A }));
     expect(totalCotacoes(semVinculo)).toBe(0);
     expect(semVinculo.resumoFechamentos.quantidade).toBe(0);
+  }, 60_000);
+
+  it('Central do Vendedor por nome: Alice vê só as próprias; vínculo só por código legado não vale para vendedor; admin vê todas', async () => {
+    const servico = await importarServico();
+    const transportadora = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'Transportadora C', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const deA = await criarCotacaoComProposta(servico, transportadora.id, {
+      clienteOmieId: CLIENTE_A,
+      clienteNomeSnapshot: 'Cliente A',
+      vendedorOmieId: VENDEDOR_A,
+      valorCusto: 100,
+      prazoDias: 1,
+    });
+    const deB = await criarCotacaoComProposta(servico, transportadora.id, {
+      clienteOmieId: CLIENTE_B,
+      clienteNomeSnapshot: 'Cliente B',
+      vendedorOmieId: VENDEDOR_B,
+      valorCusto: 300,
+      prazoDias: 1,
+    });
+    const admin = usuarioFake({ papel: 'administrador' });
+    await servico.servicoLiberarPropostaLogistica(deA.propostaId, admin);
+    await servico.servicoLiberarPropostaLogistica(deB.propostaId, admin);
+
+    const alice = await servico.servicoListarCentralVendedor(usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vinculoNome: ALICE }));
+    expect(alice.map((l) => l.cotacao.vendedorOmieId)).toEqual([VENDEDOR_A]);
+
+    const soLegado = await servico.servicoListarCentralVendedor(usuarioFake({ papel: 'vendedor', permissoes: { fretesComercial: true }, vendedorOmieId: VENDEDOR_A }));
+    expect(soLegado).toEqual([]);
+
+    const todas = await servico.servicoListarCentralVendedor(admin);
+    expect(todas.map((l) => l.cotacao.vendedorOmieId).sort()).toEqual([VENDEDOR_A, VENDEDOR_B]);
   }, 60_000);
 
   it('administrador vê o consolidado geral', async () => {

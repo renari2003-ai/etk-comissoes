@@ -77,12 +77,29 @@ export interface Usuario {
    * fretes das próprias cotações) — nunca sincronizado com a Omie, nunca escreve lá, definido
    * manualmente pelo administrador ao cadastrar/editar a conta. `null` = sem vínculo (conta
    * de logística/gerência/administração, ou vendedor ainda não configurado).
+   * LEGADO desde 2026-09-28: o vínculo operacional passou a ser `vendedorOmieNome`; este campo
+   * só é considerado para papéis que não sejam "vendedor" e não tenham nome vinculado.
    */
   vendedorOmieId: number | null;
+  /**
+   * Vínculo operacional (2026-09-28): nome do vendedor exatamente como aparece na Omie,
+   * escolhido pelo administrador numa lista vinda da própria Omie (somente leitura). Na hora
+   * da consulta, o servidor converte esse nome em TODOS os códigos Omie com o mesmo nome
+   * (comparação só com trim/maiúsculas-minúsculas, nunca aproximada) — ver `vinculoVendedor.ts`.
+   * `null` = sem vínculo. Obrigatório para o papel "vendedor" ver qualquer dado próprio.
+   */
+  vendedorOmieNome: string | null;
 }
 
 /** `Usuario` sem `senhaHash` — nunca devolver o hash pela API, mesmo para o próprio admin. */
-export type UsuarioPublico = Omit<Usuario, 'senhaHash'>;
+export type UsuarioPublico = Omit<Usuario, 'senhaHash'> & {
+  /**
+   * Códigos Omie resolvidos a partir de `vendedorOmieNome` para ESTA requisição, preenchidos
+   * por `resolverVinculoVendedor` (nunca persistidos, nunca vindos do navegador). Ausente =
+   * middleware não rodou; nesse caso `codigosVendedorVinculados` nunca usa o nome sem resolver.
+   */
+  codigosVendedorOmie?: number[];
+};
 
 export function paraPublico(usuario: Usuario): UsuarioPublico {
   const { senhaHash: _senhaHash, ...publico } = usuario;

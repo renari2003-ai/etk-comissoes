@@ -25,7 +25,8 @@ vi.mock('../../src/auth/middleware.js', () => ({
       permissoes: { ...PERMISSOES_VAZIAS, relatorioComissionamento: true },
       senhaProvisoria: false,
       mestre: false,
-      vendedorOmieId: papel === 'vendedor' ? 42 : null,
+      vendedorOmieId: null,
+      vendedorOmieNome: papel === 'vendedor' ? 'Maria' : null,
     };
     req.usuario = usuario;
     next();
@@ -112,7 +113,7 @@ beforeAll(async () => {
   const { criarRotaComissionamento } = await import('../../src/rotas/comissionamento.js');
   const { tratadorDeErros } = await import('../../src/rotas/erroHttp.js');
   const app = express();
-  app.use(criarRotaComissionamento({} as never));
+  app.use(criarRotaComissionamento({ listarVendedores: async () => [{ codigo: 42, nome: 'Maria', inativo: false }] } as never));
   app.use(tratadorDeErros);
   servidor = app.listen(0);
   baseUrl = `http://127.0.0.1:${(servidor.address() as AddressInfo).port}`;

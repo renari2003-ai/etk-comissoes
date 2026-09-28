@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import { exigirAdministrador, exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { ErroSemPermissao } from '../auth/erros.js';
+import { resolverVinculoVendedor } from '../auth/vinculoVendedor.js';
 import { config } from '../config.js';
 import type { ClienteOmie } from '../omie/cliente.js';
 import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
@@ -224,7 +225,10 @@ function validarPercentualFiscalOpcional(valor: unknown, campo: string): number 
  */
 export function criarRotaFretes(cliente: ClienteOmie): Router {
   const rotas = Router();
-  const protegida = [exigirAutenticacao, exigirPermissao('fretes')] as const;
+  // Vínculo vendedor por nome (2026-09-28): resolve os códigos Omie do usuário antes de qualquer
+  // serviço que restrinja por "próprio vendedor" (Central, Histórico, Dashboard).
+  const vinculo = resolverVinculoVendedor(cliente);
+  const protegida = [exigirAutenticacao, exigirPermissao('fretes'), vinculo] as const;
 
   // --- Importação de pedido Omie (Fase 3.2) ---------------------------------
 
@@ -703,8 +707,8 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   // checagem fina (dono da cotação/visão ampliada/substituição) mora inteiramente no
   // serviço (`fretesServico.ts`), nunca aqui — mesma separação já usada no resto do módulo.
 
-  const protegidaLogistica = [exigirAutenticacao, exigirPermissao('fretesLogistica')] as const;
-  const protegidaComercial = [exigirAutenticacao, exigirPermissao('fretesComercial')] as const;
+  const protegidaLogistica = [exigirAutenticacao, exigirPermissao('fretesLogistica'), vinculo] as const;
+  const protegidaComercial = [exigirAutenticacao, exigirPermissao('fretesComercial'), vinculo] as const;
 
   rotas.get(
     '/api/fretes/central-logistica',
@@ -842,7 +846,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
 
   // --- Fase 4A.7: aprovação gerencial (abaixo do mínimo) --------------------
 
-  const protegidaGerencia = [exigirAutenticacao, exigirPermissao('fretesGerencia')] as const;
+  const protegidaGerencia = [exigirAutenticacao, exigirPermissao('fretesGerencia'), vinculo] as const;
 
   rotas.get(
     '/api/fretes/aprovacoes-valor-minimo',
@@ -875,7 +879,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   // --- Fase 4A.8: Histórico de fretes por cliente (só leitura) --------------
   // A restrição fina por vendedor (Fase 4A.6) mora inteiramente no serviço, nunca aqui.
 
-  const protegidaHistorico = [exigirAutenticacao, exigirAcessoHistorico] as const;
+  const protegidaHistorico = [exigirAutenticacao, exigirAcessoHistorico, vinculo] as const;
 
   rotas.get(
     '/api/fretes/historico/clientes',

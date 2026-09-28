@@ -43,6 +43,17 @@ function validarVendedorOmieIdOpcional(valor: unknown): number | null | undefine
   return numero;
 }
 
+/** Vínculo por nome (2026-09-28): texto não vazio de até 120 caracteres, ou ausente/`null`/vazio para remover. Nunca normalizado além do trim — o nome é gravado como veio da lista Omie. */
+function validarVendedorOmieNomeOpcional(valor: unknown): string | null | undefined {
+  if (valor === undefined) return undefined;
+  if (valor === null) return null;
+  if (typeof valor !== 'string') throw new ErroValidacao('O campo "vendedorOmieNome" deve ser um texto.');
+  const nome = valor.trim();
+  if (nome === '') return null;
+  if (nome.length > 120) throw new ErroValidacao('O campo "vendedorOmieNome" deve ter no máximo 120 caracteres.');
+  return nome;
+}
+
 function validarPermissoes(valor: unknown): Permissoes {
   if (valor === undefined) return { ...PERMISSOES_VAZIAS };
   if (typeof valor !== 'object' || valor === null) {
@@ -88,6 +99,7 @@ export function criarRotaAuth(): Router {
         senhaProvisoria: usuario.senhaProvisoria,
         mestre: usuario.mestre,
         vendedorOmieId: usuario.vendedorOmieId,
+        vendedorOmieNome: usuario.vendedorOmieNome,
       });
     }),
   );
@@ -126,8 +138,9 @@ export function criarRotaAuth(): Router {
       const papel = validarPapel(req.body?.papel);
       const permissoes = validarPermissoes(req.body?.permissoes);
       const vendedorOmieId = validarVendedorOmieIdOpcional(req.body?.vendedorOmieId);
+      const vendedorOmieNome = validarVendedorOmieNomeOpcional(req.body?.vendedorOmieNome);
 
-      const criado = await criarUsuario({ usuario, nome, senha, papel, permissoes, vendedorOmieId });
+      const criado = await criarUsuario({ usuario, nome, senha, papel, permissoes, vendedorOmieId, vendedorOmieNome });
       res.status(201).json(criado);
     }),
   );
@@ -139,7 +152,9 @@ export function criarRotaAuth(): Router {
     assincrono(async (req, res) => {
       const id = validarTextoNaoVazio(req.params.id, 'id');
       const vendedorOmieId = validarVendedorOmieIdOpcional(req.body?.vendedorOmieId);
+      const vendedorOmieNome = validarVendedorOmieNomeOpcional(req.body?.vendedorOmieNome);
       const atualizado = await atualizarUsuario(id, {
+        ...(vendedorOmieNome !== undefined ? { vendedorOmieNome } : {}),
         ...(req.body?.nome !== undefined ? { nome: validarTextoNaoVazio(req.body.nome, 'nome') } : {}),
         ...(req.body?.papel !== undefined ? { papel: validarPapel(req.body.papel) } : {}),
         ...(req.body?.permissoes !== undefined ? { permissoes: validarPermissoes(req.body.permissoes) } : {}),

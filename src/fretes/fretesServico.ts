@@ -8,6 +8,7 @@
 import type { ClienteOmie } from '../omie/cliente.js';
 import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
 import type { UsuarioPublico } from '../auth/tipos.js';
+import { codigosVendedorVinculados } from '../auth/vinculoVendedor.js';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { listarAuditoriaPorEntidade, registrarAuditoria } from './auditoriaRepositorio.js';
@@ -469,9 +470,13 @@ export async function servicoListarCentralLogistica(): Promise<LinhaCentralFrete
   return montarLinhasCentral(propostas);
 }
 
-/** true quando `usuario` é o vendedor "dono" da cotação (mesmo `vendedorOmieId`) — nunca true se a cotação não tiver vendedor definido. */
+/**
+ * true quando `usuario` é o vendedor "dono" da cotação — o código gravado na cotação está entre
+ * os códigos do vendedor vinculado ao usuário (pelo nome Omie, ver `auth/vinculoVendedor.ts`).
+ * Nunca true se a cotação não tiver vendedor definido nem se o usuário não tiver vínculo.
+ */
 function ehVendedorResponsavel(usuario: UsuarioPublico, cotacao: CotacaoFrete): boolean {
-  return cotacao.vendedorOmieId !== null && usuario.vendedorOmieId !== null && usuario.vendedorOmieId === cotacao.vendedorOmieId;
+  return cotacao.vendedorOmieId !== null && codigosVendedorVinculados(usuario).includes(cotacao.vendedorOmieId);
 }
 
 /** Administrador ou permissão `fretesGerencia` — visão ampliada (seção 5 do relatório: "Gerente/Admin pode ter visão ampliada"). */
@@ -842,11 +847,15 @@ export async function servicoBuscarAprovacaoPorId(id: string): Promise<Aprovacao
 // vinculado nunca vê nada (mesmo comportamento de `ehVendedorResponsavel`), em vez de vazar
 // tudo por engano.
 
-/** `undefined` = sem restrição (visão ampliada); `número` = força esse vendedor; `'nenhum'` = usuário nunca pode ver nada (sem vínculo). */
-function resolverRestricaoVendedorHistorico(usuario: UsuarioPublico, filtroVendedorOmieId?: number): number | undefined | 'nenhum' {
-  if (temVisaoAmpliadaFrete(usuario)) return filtroVendedorOmieId;
-  if (usuario.vendedorOmieId === null) return 'nenhum';
-  return usuario.vendedorOmieId;
+/**
+ * `undefined` = sem restrição (visão ampliada); lista = força esses códigos (os do próprio
+ * vendedor, resolvidos pelo nome vinculado — `codigosVendedorVinculados`); `'nenhum'` = usuário
+ * nunca pode ver nada (sem vínculo, ou nome vinculado sem correspondência na Omie).
+ */
+function resolverRestricaoVendedorHistorico(usuario: UsuarioPublico, filtroVendedorOmieId?: number): number[] | undefined | 'nenhum' {
+  if (temVisaoAmpliadaFrete(usuario)) return filtroVendedorOmieId === undefined ? undefined : [filtroVendedorOmieId];
+  const codigos = codigosVendedorVinculados(usuario);
+  return codigos.length === 0 ? 'nenhum' : codigos;
 }
 
 export async function servicoBuscarClientesHistorico(termo: string, usuario: UsuarioPublico): Promise<ClienteHistoricoResultado[]> {
@@ -879,7 +888,7 @@ export async function servicoListarHistoricoCliente(
   if (restricao === 'nenhum') return { linhas: [], total: 0, pagina, tamanhoPagina };
   const resultado = await listarHistoricoFretes({
     clienteOmieId: filtros.clienteOmieId,
-    vendedorOmieId: restricao,
+    vendedoresOmieIds: restricao,
     transportadoraId: filtros.transportadoraId,
     documentoOmieTipo: filtros.documentoOmieTipo,
     statusRevisao: filtros.statusRevisao,
@@ -906,7 +915,7 @@ export interface DetalheHistoricoFreteComAuditoria extends LinhaHistoricoDetalhe
 export async function servicoDetalheHistoricoFrete(propostaId: string, usuario: UsuarioPublico): Promise<DetalheHistoricoFreteComAuditoria | null> {
   const restricao = resolverRestricaoVendedorHistorico(usuario);
   if (restricao === 'nenhum') return null;
-  const detalhe = await buscarDetalheHistorico(propostaId, restricao === undefined ? undefined : restricao);
+  const detalhe = await buscarDetalheHistorico(propostaId, restricao);
   if (detalhe === null) return null;
 
   const [auditoriaProposta, auditoriaCotacao] = await Promise.all([
@@ -1107,22 +1116,23 @@ export interface DashboardFretes {
   resumoFechamentos: ResumoFechamentos;
   /** Seção 19: "Total de fretes com transportadora/veículo próprio/retira" — só sobre cotações já FECHADAS. */
   resumoFechamentosPorModalidadeExecucao: Record<ModalidadeExecucao, ResumoFechamentos>;
-  /** `GERAL` = consolidado de todos os vendedores; `PROPRIO` = só as cotações do vendedorOmieId do usuário. */
+  /** `GERAL` = consolidado de todos os vendedores; `PROPRIO` = só as cotações do vendedor vinculado ao usuário. */
   escopo: 'GERAL' | 'PROPRIO';
 }
 
 /**
  * Escopo do dashboard (regra de 2026-09-28), sempre decidido no servidor pelo usuário autenticado:
- * - papel "vendedor": SEMPRE só os próprios dados (vendedorOmieId), mesmo com `fretesGerencia`;
+ * - papel "vendedor": SEMPRE só os próprios dados (vendedor vinculado pelo nome), mesmo com `fretesGerencia`;
  * - "administrador": visão geral;
  * - "usuario"/"convidado": visão geral só com `fretesGerencia`; sem ela, nunca a geral — ficam
- *   restritos ao próprio vendedorOmieId, como na Central do Vendedor/Histórico.
- * Sem vínculo Omie (e sem visão geral) = `'nenhum'`: dashboard zerado, nunca o geral por engano.
+ *   restritos ao próprio vendedor vinculado, como na Central do Vendedor/Histórico.
+ * Sem vínculo (e sem visão geral) = `'nenhum'`: dashboard zerado, nunca o geral por engano.
  * Não altera `temVisaoAmpliadaFrete` (Central do Vendedor/Histórico continuam como estavam).
  */
-function resolverEscopoDashboard(usuario: UsuarioPublico): 'geral' | number | 'nenhum' {
+function resolverEscopoDashboard(usuario: UsuarioPublico): 'geral' | number[] | 'nenhum' {
   if (usuario.papel !== 'vendedor' && temVisaoAmpliadaFrete(usuario)) return 'geral';
-  return usuario.vendedorOmieId ?? 'nenhum';
+  const codigos = codigosVendedorVinculados(usuario);
+  return codigos.length === 0 ? 'nenhum' : codigos;
 }
 
 function resumoFechamentosVazio(): ResumoFechamentos {
@@ -1132,7 +1142,7 @@ function resumoFechamentosVazio(): ResumoFechamentos {
 export async function servicoDashboard(usuario: UsuarioPublico): Promise<DashboardFretes> {
   const escopoResolvido = resolverEscopoDashboard(usuario);
   const escopo = escopoResolvido === 'geral' ? 'GERAL' : 'PROPRIO';
-  const vendedorOmieId = typeof escopoResolvido === 'number' ? escopoResolvido : undefined;
+  const vendedoresOmieIds = Array.isArray(escopoResolvido) ? escopoResolvido : undefined;
   const [cotacoes, resumo, resumoPorModalidade] =
     escopoResolvido === 'nenhum'
       ? [
@@ -1141,9 +1151,9 @@ export async function servicoDashboard(usuario: UsuarioPublico): Promise<Dashboa
           { TRANSPORTADORA: resumoFechamentosVazio(), VEICULO_PROPRIO: resumoFechamentosVazio(), RETIRA: resumoFechamentosVazio() },
         ]
       : await Promise.all([
-          listarCotacoes(vendedorOmieId === undefined ? {} : { vendedorOmieId }),
-          resumirFechamentos(vendedorOmieId),
-          resumirFechamentosPorModalidade(vendedorOmieId),
+          listarCotacoes(vendedoresOmieIds === undefined ? {} : { vendedoresOmieIds }),
+          resumirFechamentos(vendedoresOmieIds),
+          resumirFechamentosPorModalidade(vendedoresOmieIds),
         ]);
   const cotacoesPorStatus: Record<string, number> = {
     RASCUNHO: 0,

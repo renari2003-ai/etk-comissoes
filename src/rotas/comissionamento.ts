@@ -1,12 +1,58 @@
 import { Router } from 'express';
 import type { ClienteOmie } from '../omie/cliente.js';
-import { gerarRelatorioComissionamento } from '../comissionamento/relatorioComissionamento.js';
-import { resolverVendedorDoRelatorio } from '../comissionamento/restricaoVendedor.js';
+import {
+  gerarRelatorioComissionamento,
+  type FiltrosComissionamento,
+  type ResultadoComissionamento,
+} from '../comissionamento/relatorioComissionamento.js';
+import { resolverVendedoresDoRelatorio } from '../comissionamento/restricaoVendedor.js';
 import { ocultarMargem, podeVerMargemComissionamento } from '../comissionamento/visibilidadeMargem.js';
 import { filtrarLinhasPorBusca } from '../relatorio/relatorioVendas.js';
 import { validarBusca, validarCodigoVendedor, validarData } from '../validacao.js';
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
+import { resolverVinculoVendedor } from '../auth/vinculoVendedor.js';
 import { assincrono } from './erroHttp.js';
+
+function resultadoVazio(): ResultadoComissionamento {
+  return {
+    linhas: [],
+    resumo: {
+      quantidadePedidos: 0,
+      valorVendaTotal: 0,
+      comissaoTotalCalculada: 0,
+      comissaoLiberada: 0,
+      comissaoPendente: 0,
+      quantidadeParcelasTotal: 0,
+      quantidadeParcelasBaixadas: 0,
+      quantidadeParcelasPendentes: 0,
+    },
+    documentosAmbiguosExcluidos: 0,
+    pedidosSemVendedorExcluidos: 0,
+    numerosPedidosSemVendedor: [],
+  };
+}
+
+/**
+ * Um mesmo nome de vendedor pode ter mais de um código na Omie (cadastro duplicado) — gera o
+ * relatório de cada código com o MESMO cálculo de sempre e soma os totais (todos aditivos).
+ * Sequencial de propósito, para respeitar o limitador de chamadas da Omie.
+ */
+async function gerarParaCodigos(
+  cliente: ClienteOmie,
+  filtros: Omit<FiltrosComissionamento, 'codigoVendedor'>,
+  codigos: number[] | undefined,
+): Promise<ResultadoComissionamento> {
+  if (codigos === undefined) return gerarRelatorioComissionamento(cliente, filtros);
+  if (codigos.length === 1) return gerarRelatorioComissionamento(cliente, { ...filtros, codigoVendedor: codigos[0] });
+  const total = resultadoVazio();
+  for (const codigoVendedor of codigos) {
+    const parcial = await gerarRelatorioComissionamento(cliente, { ...filtros, codigoVendedor });
+    total.linhas.push(...parcial.linhas);
+    for (const chave of Object.keys(total.resumo) as Array<keyof typeof total.resumo>) total.resumo[chave] += parcial.resumo[chave];
+    total.documentosAmbiguosExcluidos = Math.max(total.documentosAmbiguosExcluidos, parcial.documentosAmbiguosExcluidos);
+  }
+  return total;
+}
 
 /**
  * Rota de Comissionamento — exclusivamente sobre Pedidos (compra concreta).
@@ -19,6 +65,7 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
     '/api/relatorios/comissionamento',
     exigirAutenticacao,
     exigirPermissao('relatorioComissionamento'),
+    resolverVinculoVendedor(cliente),
     assincrono(async (req, res) => {
       const dataDe = validarData(req.query.data_de, 'data_de');
       const dataAte = validarData(req.query.data_ate, 'data_ate');
@@ -26,18 +73,20 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
       const usuario = req.usuario!;
       const ehVendedor = usuario.papel === 'vendedor';
       // Papel "vendedor": o `vendedor` da query é ignorado por completo (nem validado) — o filtro
-      // é sempre o vendedorOmieId do usuário autenticado (ver `restricaoVendedor.ts`).
-      const codigoVendedor = resolverVendedorDoRelatorio(usuario, ehVendedor ? undefined : validarCodigoVendedor(req.query.vendedor));
+      // é sempre o vendedor vinculado ao usuário autenticado pelo nome (ver `restricaoVendedor.ts`).
+      const codigos = resolverVendedoresDoRelatorio(usuario, ehVendedor ? undefined : validarCodigoVendedor(req.query.vendedor));
       const busca = validarBusca(req.query.busca);
 
-      const resultado = await gerarRelatorioComissionamento(cliente, { dataDe, dataAte, codigoVendedor });
+      const resultado = ehVendedor && codigos?.length === 0 ? resultadoVazio() : await gerarParaCodigos(cliente, { dataDe, dataAte }, codigos);
       // Margem só para administrador — decidido pelo usuário autenticado, nunca por parâmetro
       // do navegador (ver `visibilidadeMargem.ts`).
       const margemVisivel = podeVerMargemComissionamento(usuario);
       const linhasFiltradas = filtrarLinhasPorBusca(resultado.linhas, busca);
       // Defesa extra para o vendedor: nunca devolver linha de outro vendedor, mesmo que o filtro
       // na origem falhe; pedidos sem vendedor (de ninguém) também não são dele.
-      const linhas = ehVendedor ? linhasFiltradas.filter((linha) => linha.codigoVendedor === codigoVendedor) : linhasFiltradas;
+      const linhas = ehVendedor
+        ? linhasFiltradas.filter((linha) => linha.codigoVendedor !== null && (codigos ?? []).includes(linha.codigoVendedor))
+        : linhasFiltradas;
 
       res.json({
         margemVisivel,

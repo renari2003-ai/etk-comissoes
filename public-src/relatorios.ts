@@ -192,11 +192,13 @@ export function titulosTabelaComissionamento(margemVisivel: boolean): string[] {
  */
 export function preencherFiltroVendedor(campo: HTMLSelectElement, vendedores: Vendedor[], restritoAoProprioVendedor: boolean): void {
   if (restritoAoProprioVendedor) {
+    // Todos os itens têm o mesmo nome (vínculo por nome, ver `/api/vendedores`) — mostra uma vez só.
     campo.textContent = '';
-    for (const vendedor of vendedores) {
+    const proprio = vendedores[0];
+    if (proprio !== undefined) {
       const option = document.createElement('option');
-      option.value = String(vendedor.codigo);
-      option.textContent = vendedor.nome;
+      option.value = String(proprio.codigo);
+      option.textContent = proprio.nome;
       campo.appendChild(option);
     }
     campo.disabled = true;

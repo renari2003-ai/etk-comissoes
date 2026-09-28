@@ -47,6 +47,8 @@ export interface UsuarioLogado {
   mestre: boolean;
   /** Fase 4A.6 — código de vendedor na Omie vinculado a este login (`null` = sem vínculo). */
   vendedorOmieId: number | null;
+  /** Vínculo operacional por nome do vendedor na Omie (2026-09-28) — `null` = sem vínculo. */
+  vendedorOmieNome: string | null;
 }
 
 let usuarioLogadoAtual: UsuarioLogado | null = null;

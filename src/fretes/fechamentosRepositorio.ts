@@ -109,19 +109,19 @@ export interface ResumoFechamentos {
   acrescimoTotal: number;
 }
 
-/** `vendedorOmieId` presente = só fechamentos de cotações desse vendedor (dashboard sem visão geral). */
-function filtroVendedor(vendedorOmieId: number | undefined): { whereSql: string; valores: unknown[] } {
-  if (vendedorOmieId === undefined) return { whereSql: '', valores: [] };
+/** `vendedoresOmieIds` presente = só fechamentos de cotações desses códigos de vendedor (dashboard sem visão geral). */
+function filtroVendedor(vendedoresOmieIds: number[] | undefined): { whereSql: string; valores: unknown[] } {
+  if (vendedoresOmieIds === undefined) return { whereSql: '', valores: [] };
   return {
-    whereSql: `WHERE cotacao_id IN (SELECT id FROM ${nomeTabelaCotacoes()} WHERE vendedor_omie_id = $1)`,
-    valores: [vendedorOmieId],
+    whereSql: `WHERE cotacao_id IN (SELECT id FROM ${nomeTabelaCotacoes()} WHERE vendedor_omie_id = ANY($1::bigint[]))`,
+    valores: [vendedoresOmieIds],
   };
 }
 
 /** Agregados usados pelo dashboard (seção 20) — deriva exclusivamente de dados do módulo Fretes, nunca de comissão/margem/Omie. */
-export async function resumirFechamentos(vendedorOmieId?: number): Promise<ResumoFechamentos> {
+export async function resumirFechamentos(vendedoresOmieIds?: number[]): Promise<ResumoFechamentos> {
   const pool = obterPool();
-  const { whereSql, valores } = filtroVendedor(vendedorOmieId);
+  const { whereSql, valores } = filtroVendedor(vendedoresOmieIds);
   const { rows } = await pool.query<{ quantidade: string; custo_total: string | null; cliente_total: string | null; acrescimo_total: string | null }>(
     `SELECT COUNT(*)::text AS quantidade,
             COALESCE(SUM(custo_frete), 0)::text AS custo_total,
@@ -141,9 +141,9 @@ export async function resumirFechamentos(vendedorOmieId?: number): Promise<Resum
 }
 
 /** Fechamentos agrupados por modalidade de execução (seção 19: "Total de fretes com transportadora/veículo próprio/retira") — só dados do próprio módulo. */
-export async function resumirFechamentosPorModalidade(vendedorOmieId?: number): Promise<Record<ModalidadeExecucao, ResumoFechamentos>> {
+export async function resumirFechamentosPorModalidade(vendedoresOmieIds?: number[]): Promise<Record<ModalidadeExecucao, ResumoFechamentos>> {
   const pool = obterPool();
-  const { whereSql, valores } = filtroVendedor(vendedorOmieId);
+  const { whereSql, valores } = filtroVendedor(vendedoresOmieIds);
   const { rows } = await pool.query<{
     modalidade_execucao: ModalidadeExecucao;
     quantidade: string;

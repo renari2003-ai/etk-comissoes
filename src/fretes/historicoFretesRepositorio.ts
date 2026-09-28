@@ -50,12 +50,13 @@ export interface LinhaHistoricoFrete {
 export interface FiltrosHistoricoFrete {
   clienteOmieId: number;
   /**
-   * Único parâmetro de vendedor — a camada de serviço decide o que passar aqui: o
-   * `vendedorOmieId` do próprio usuário (quando ele não tem visão ampliada, sempre forçado,
-   * nunca a escolha dele), o filtro que um admin/gerência escolheu na tela, ou `undefined`
-   * (sem restrição, visão ampliada sem filtro). Nunca dois valores concorrentes.
+   * Único parâmetro de vendedor — a camada de serviço decide o que passar aqui: os códigos
+   * Omie do próprio usuário (resolvidos pelo nome vinculado quando ele não tem visão ampliada,
+   * sempre forçados, nunca a escolha dele), o filtro que um admin/gerência escolheu na tela
+   * (lista de um código), ou `undefined` (sem restrição, visão ampliada sem filtro). Nunca dois
+   * valores concorrentes. Lista vazia = nenhum resultado.
    */
-  vendedorOmieId?: number;
+  vendedoresOmieIds?: number[];
   transportadoraId?: string;
   /** `null` mapeia para "MANUAL" (cotação sem `documento_omie_tipo`, ver `tipos.ts`). */
   documentoOmieTipo?: TipoDocumento | 'MANUAL';
@@ -139,9 +140,9 @@ function montarFiltros(filtros: FiltrosHistoricoFrete): { clausula: string; para
   const condicoes: string[] = ['c.cliente_omie_id = $1'];
   const params: unknown[] = [filtros.clienteOmieId];
 
-  if (filtros.vendedorOmieId !== undefined) {
-    params.push(filtros.vendedorOmieId);
-    condicoes.push(`c.vendedor_omie_id = $${params.length}`);
+  if (filtros.vendedoresOmieIds !== undefined) {
+    params.push(filtros.vendedoresOmieIds);
+    condicoes.push(`c.vendedor_omie_id = ANY($${params.length}::bigint[])`);
   }
   if (filtros.transportadoraId !== undefined) {
     params.push(filtros.transportadoraId);
@@ -224,18 +225,18 @@ export interface LinhaHistoricoDetalhe extends LinhaHistoricoFrete {
 }
 
 /**
- * Detalhe de uma linha específica. `vendedorOmieId`, quando informado (usuário sem visão
+ * Detalhe de uma linha específica. `vendedoresOmieIds`, quando informado (usuário sem visão
  * ampliada), garante a mesma regra de acesso da listagem — nunca destrava o detalhe de uma
  * cotação de outro vendedor.
  */
-export async function buscarDetalheHistorico(propostaId: string, vendedorOmieId: number | undefined): Promise<LinhaHistoricoDetalhe | null> {
+export async function buscarDetalheHistorico(propostaId: string, vendedoresOmieIds: number[] | undefined): Promise<LinhaHistoricoDetalhe | null> {
   await garantirEsquemaFretes();
   const pool = obterPool();
   const condicoes = ['p.id = $1'];
   const params: unknown[] = [propostaId];
-  if (vendedorOmieId !== undefined) {
-    params.push(vendedorOmieId);
-    condicoes.push(`c.vendedor_omie_id = $${params.length}`);
+  if (vendedoresOmieIds !== undefined) {
+    params.push(vendedoresOmieIds);
+    condicoes.push(`c.vendedor_omie_id = ANY($${params.length}::bigint[])`);
   }
   const { rows } = await pool.query<
     LinhaBruta & {
@@ -293,11 +294,11 @@ export interface ResumoClienteFrete {
 
 export async function buscarResumoClienteFrete(
   clienteOmieId: number,
-  vendedorOmieId: number | undefined,
+  vendedoresOmieIds: number[] | undefined,
 ): Promise<ResumoClienteFrete | null> {
   await garantirEsquemaFretes();
   const pool = obterPool();
-  const { clausula, params } = montarFiltros({ clienteOmieId, vendedorOmieId, pagina: 1, tamanhoPagina: 1 });
+  const { clausula, params } = montarFiltros({ clienteOmieId, vendedoresOmieIds, pagina: 1, tamanhoPagina: 1 });
 
   const { rows: agregados } = await pool.query<{
     cliente_nome_snapshot: string | null;
@@ -325,9 +326,9 @@ export async function buscarResumoClienteFrete(
     // existência de um cliente que este usuário não tem permissão de ver).
     const condicoesExiste = ['cliente_omie_id = $1'];
     const paramsExiste: unknown[] = [clienteOmieId];
-    if (vendedorOmieId !== undefined) {
-      paramsExiste.push(vendedorOmieId);
-      condicoesExiste.push(`vendedor_omie_id = $${paramsExiste.length}`);
+    if (vendedoresOmieIds !== undefined) {
+      paramsExiste.push(vendedoresOmieIds);
+      condicoesExiste.push(`vendedor_omie_id = ANY($${paramsExiste.length}::bigint[])`);
     }
     const { rows: existe } = await pool.query<{ cliente_nome_snapshot: string | null }>(
       `SELECT cliente_nome_snapshot FROM ${nomeTabelaCotacoes()} WHERE ${condicoesExiste.join(' AND ')} LIMIT 1`,
@@ -399,14 +400,14 @@ export interface ClienteHistoricoResultado {
 }
 
 /** Autocomplete de clientes (Fase 4A.8, seção 2) — só considera cotações com `cliente_omie_id` preenchido (cotações 100% manuais, sem vínculo Omie, não têm um "cliente" identificável para agrupar o histórico). */
-export async function buscarClientesHistorico(termo: string, vendedorOmieId: number | undefined): Promise<ClienteHistoricoResultado[]> {
+export async function buscarClientesHistorico(termo: string, vendedoresOmieIds: number[] | undefined): Promise<ClienteHistoricoResultado[]> {
   await garantirEsquemaFretes();
   const pool = obterPool();
   const condicoes = ['cliente_omie_id IS NOT NULL', '(cliente_nome_snapshot ILIKE $1 OR cliente_omie_id::text = $2)'];
   const params: unknown[] = [`%${termo}%`, termo];
-  if (vendedorOmieId !== undefined) {
-    params.push(vendedorOmieId);
-    condicoes.push(`vendedor_omie_id = $${params.length}`);
+  if (vendedoresOmieIds !== undefined) {
+    params.push(vendedoresOmieIds);
+    condicoes.push(`vendedor_omie_id = ANY($${params.length}::bigint[])`);
   }
   const { rows } = await pool.query<{ cliente_omie_id: string; cliente_nome_snapshot: string | null }>(
     `SELECT DISTINCT cliente_omie_id, cliente_nome_snapshot

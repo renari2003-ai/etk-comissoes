@@ -109,8 +109,10 @@
           <label><input type="checkbox" name="fretesGerencia" /> Fretes — Visão ampliada (gerência)</label>
         </fieldset>
         <div class="campo-filtro">
-          <label for="novo-usuario-vendedor-omie">Vendedor Omie (código, opcional)</label>
-          <input id="novo-usuario-vendedor-omie" name="vendedorOmieId" type="number" min="1" />
+          <label for="novo-usuario-vendedor-omie">Vendedor Omie (opcional)</label>
+          <select id="novo-usuario-vendedor-omie" name="vendedorOmieNome">
+            <option value="">Sem vínculo</option>
+          </select>
         </div>
         <button type="submit" class="botao-secundario">Criar usuário</button>
         <p id="novo-usuario-erro" class="painel-login-erro" hidden></p>
