@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClienteOmie, Cliente } from '../../src/omie/cliente.js';
 import type { PedidoOmie } from '../../src/calculo/tipos.js';
+import { PERMISSOES_VAZIAS, type UsuarioPublico } from '../../src/auth/tipos.js';
 import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
 
 // Este arquivo cria/derruba 5 tabelas novas por teste (Supabase real, sobre a rede) —
@@ -57,6 +58,18 @@ afterEach(async () => {
 }, 20000);
 
 const USUARIO_TESTE = '11111111-1111-1111-1111-111111111111';
+
+/** Dashboard com visão geral (regra de 2026-09-28: escopo decidido pelo usuário autenticado). */
+const ADMIN_DASHBOARD: UsuarioPublico = {
+  id: USUARIO_TESTE,
+  usuario: 'admin',
+  nome: 'Admin',
+  papel: 'administrador',
+  permissoes: { ...PERMISSOES_VAZIAS },
+  senhaProvisoria: false,
+  mestre: false,
+  vendedorOmieId: null,
+};
 
 async function criarCotacaoDeTeste(servico: Awaited<ReturnType<typeof importarServico>>) {
   return servico.servicoCriarCotacao(
@@ -334,7 +347,7 @@ describe('dashboard', () => {
     await servico.servicoSelecionarProposta(cotacao.id, proposta.id, USUARIO_TESTE);
     await servico.servicoFecharCotacao({ cotacaoId: cotacao.id, percentualAcrescimo: 10, observacoes: null }, USUARIO_TESTE);
 
-    const dashboard = await servico.servicoDashboard();
+    const dashboard = await servico.servicoDashboard(ADMIN_DASHBOARD);
     expect(dashboard.cotacoesPorStatus.FECHADA).toBe(1);
     expect(dashboard.resumoFechamentos.quantidade).toBe(1);
     expect(dashboard.resumoFechamentos.custoTotal).toBe(200);
@@ -577,7 +590,7 @@ describe('isolamento entre modalidades (Fase 2)', () => {
     await criarCotacaoComModalidade(servico, 'RETIRA');
     void transportadora;
 
-    const dashboard = await servico.servicoDashboard();
+    const dashboard = await servico.servicoDashboard(ADMIN_DASHBOARD);
     expect(dashboard.cotacoesPorModalidadeExecucao.TRANSPORTADORA).toBe(1);
     expect(dashboard.cotacoesPorModalidadeExecucao.VEICULO_PROPRIO).toBe(2);
     expect(dashboard.cotacoesPorModalidadeExecucao.RETIRA).toBe(1);

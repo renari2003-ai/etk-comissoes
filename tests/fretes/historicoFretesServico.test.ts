@@ -372,6 +372,85 @@ describe('Fase 4A.8 — permissões (regra da Fase 4A.6 preservada)', () => {
   });
 });
 
+describe('Dashboard de fretes — escopo por papel (regra de 2026-09-28)', () => {
+  /** Duas cotações (vendedor A e B), só a de A fechada — permite distinguir "geral" de "próprio". */
+  async function montarCenario(servico: Awaited<ReturnType<typeof importarServico>>) {
+    const transportadora = await servico.servicoCriarTransportadora(
+      { nomeRazaoSocial: 'Transportadora D', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null },
+      USUARIO_TESTE,
+    );
+    const deA = await criarCotacaoComProposta(servico, transportadora.id, {
+      clienteOmieId: CLIENTE_A,
+      clienteNomeSnapshot: 'Cliente A',
+      vendedorOmieId: VENDEDOR_A,
+      valorCusto: 100,
+      prazoDias: 1,
+    });
+    await criarCotacaoComProposta(servico, transportadora.id, {
+      clienteOmieId: CLIENTE_B,
+      clienteNomeSnapshot: 'Cliente B',
+      vendedorOmieId: VENDEDOR_B,
+      valorCusto: 300,
+      prazoDias: 1,
+    });
+    await servico.servicoSelecionarProposta(deA.cotacaoId, deA.propostaId, USUARIO_TESTE);
+    await servico.servicoFecharCotacao({ cotacaoId: deA.cotacaoId, percentualAcrescimo: 10, observacoes: null }, USUARIO_TESTE);
+  }
+
+  function totalCotacoes(dashboard: { cotacoesPorStatus: Record<string, number> }): number {
+    return Object.values(dashboard.cotacoesPorStatus).reduce((soma, n) => soma + n, 0);
+  }
+
+  it('vendedor vê só os próprios dados — mesmo com fretesGerencia, nunca o geral', async () => {
+    const servico = await importarServico();
+    await montarCenario(servico);
+    const doA = await servico.servicoDashboard(usuarioFake({ papel: 'vendedor', vendedorOmieId: VENDEDOR_A }));
+    expect(doA.escopo).toBe('PROPRIO');
+    expect(totalCotacoes(doA)).toBe(1);
+    expect(doA.resumoFechamentos.quantidade).toBe(1);
+    expect(doA.resumoFechamentos.custoTotal).toBe(100);
+    expect(doA.resumoFechamentosPorModalidadeExecucao.TRANSPORTADORA.quantidade).toBe(1);
+
+    const doBComGerencia = await servico.servicoDashboard(
+      usuarioFake({ papel: 'vendedor', permissoes: { fretesGerencia: true }, vendedorOmieId: VENDEDOR_B }),
+    );
+    expect(doBComGerencia.escopo).toBe('PROPRIO');
+    expect(totalCotacoes(doBComGerencia)).toBe(1);
+    expect(doBComGerencia.resumoFechamentos.quantidade).toBe(0);
+
+    const semVinculo = await servico.servicoDashboard(usuarioFake({ papel: 'vendedor', permissoes: { fretesGerencia: true } }));
+    expect(totalCotacoes(semVinculo)).toBe(0);
+    expect(semVinculo.resumoFechamentos.quantidade).toBe(0);
+  }, 60_000);
+
+  it('administrador vê o consolidado geral', async () => {
+    const servico = await importarServico();
+    await montarCenario(servico);
+    const geral = await servico.servicoDashboard(usuarioFake({ papel: 'administrador' }));
+    expect(geral.escopo).toBe('GERAL');
+    expect(totalCotacoes(geral)).toBe(2);
+    expect(geral.resumoFechamentos.quantidade).toBe(1);
+  }, 60_000);
+
+  it('usuario/convidado: geral só com fretesGerencia; sem ela, nunca o geral', async () => {
+    const servico = await importarServico();
+    await montarCenario(servico);
+    for (const papel of ['usuario', 'convidado'] as const) {
+      const comGerencia = await servico.servicoDashboard(usuarioFake({ papel, permissoes: { fretes: true, fretesGerencia: true } }));
+      expect(comGerencia.escopo, papel).toBe('GERAL');
+      expect(totalCotacoes(comGerencia), papel).toBe(2);
+
+      const semGerencia = await servico.servicoDashboard(usuarioFake({ papel, permissoes: { fretes: true, fretesLogistica: true, fretesComercial: true } }));
+      expect(semGerencia.escopo, papel).toBe('PROPRIO');
+      expect(totalCotacoes(semGerencia), papel).toBe(0);
+      expect(semGerencia.resumoFechamentos.quantidade, papel).toBe(0);
+
+      const semGerenciaComVinculo = await servico.servicoDashboard(usuarioFake({ papel, permissoes: { fretes: true }, vendedorOmieId: VENDEDOR_B }));
+      expect(totalCotacoes(semGerenciaComVinculo), papel).toBe(1);
+    }
+  }, 60_000);
+});
+
 describe('Fase 4A.8 — métricas e paginação', () => {
   it('calcula médias (frete base/prazo) corretamente a partir dos registros', async () => {
     const servico = await importarServico();

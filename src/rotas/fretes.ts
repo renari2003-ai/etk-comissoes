@@ -1170,8 +1170,10 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   rotas.get(
     '/api/fretes/dashboard',
     ...protegida,
-    assincrono(async (_req, res) => {
-      res.json(await servicoDashboard());
+    assincrono(async (req, res) => {
+      // Escopo (geral × só o próprio vendedor) decidido no servidor pelo usuário autenticado —
+      // nunca por parâmetro do navegador. req.usuario garantido por `protegida` (exigirAutenticacao).
+      res.json(await servicoDashboard(req.usuario!));
     }),
   );
 

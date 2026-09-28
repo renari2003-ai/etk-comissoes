@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { obterPool } from '../db.js';
-import { nomeTabelaFechamentos } from './schema.js';
+import { nomeTabelaCotacoes, nomeTabelaFechamentos } from './schema.js';
 import type { FechamentoFrete, ModalidadeExecucao, ModoCalculoFechamento } from './tipos.js';
 
 interface LinhaFechamento {
@@ -109,15 +109,27 @@ export interface ResumoFechamentos {
   acrescimoTotal: number;
 }
 
+/** `vendedorOmieId` presente = só fechamentos de cotações desse vendedor (dashboard sem visão geral). */
+function filtroVendedor(vendedorOmieId: number | undefined): { whereSql: string; valores: unknown[] } {
+  if (vendedorOmieId === undefined) return { whereSql: '', valores: [] };
+  return {
+    whereSql: `WHERE cotacao_id IN (SELECT id FROM ${nomeTabelaCotacoes()} WHERE vendedor_omie_id = $1)`,
+    valores: [vendedorOmieId],
+  };
+}
+
 /** Agregados usados pelo dashboard (seção 20) — deriva exclusivamente de dados do módulo Fretes, nunca de comissão/margem/Omie. */
-export async function resumirFechamentos(): Promise<ResumoFechamentos> {
+export async function resumirFechamentos(vendedorOmieId?: number): Promise<ResumoFechamentos> {
   const pool = obterPool();
+  const { whereSql, valores } = filtroVendedor(vendedorOmieId);
   const { rows } = await pool.query<{ quantidade: string; custo_total: string | null; cliente_total: string | null; acrescimo_total: string | null }>(
     `SELECT COUNT(*)::text AS quantidade,
             COALESCE(SUM(custo_frete), 0)::text AS custo_total,
             COALESCE(SUM(valor_frete_cliente), 0)::text AS cliente_total,
             COALESCE(SUM(valor_acrescimo), 0)::text AS acrescimo_total
-       FROM ${nomeTabelaFechamentos()}`,
+       FROM ${nomeTabelaFechamentos()}
+       ${whereSql}`,
+    valores,
   );
   const linha = rows[0];
   return {
@@ -129,8 +141,9 @@ export async function resumirFechamentos(): Promise<ResumoFechamentos> {
 }
 
 /** Fechamentos agrupados por modalidade de execução (seção 19: "Total de fretes com transportadora/veículo próprio/retira") — só dados do próprio módulo. */
-export async function resumirFechamentosPorModalidade(): Promise<Record<ModalidadeExecucao, ResumoFechamentos>> {
+export async function resumirFechamentosPorModalidade(vendedorOmieId?: number): Promise<Record<ModalidadeExecucao, ResumoFechamentos>> {
   const pool = obterPool();
+  const { whereSql, valores } = filtroVendedor(vendedorOmieId);
   const { rows } = await pool.query<{
     modalidade_execucao: ModalidadeExecucao;
     quantidade: string;
@@ -144,7 +157,9 @@ export async function resumirFechamentosPorModalidade(): Promise<Record<Modalida
             COALESCE(SUM(valor_frete_cliente), 0)::text AS cliente_total,
             COALESCE(SUM(valor_acrescimo), 0)::text AS acrescimo_total
        FROM ${nomeTabelaFechamentos()}
+       ${whereSql}
       GROUP BY modalidade_execucao`,
+    valores,
   );
   const vazio = (): ResumoFechamentos => ({ quantidade: 0, custoTotal: 0, valorClienteTotal: 0, acrescimoTotal: 0 });
   const resultado: Record<ModalidadeExecucao, ResumoFechamentos> = {

@@ -53,13 +53,25 @@ interface ParcelaComissao {
   numeroFaturaParcial?: string | null;
 }
 
-interface LinhaComissionamento extends LinhaRelatorio {
-  despesasIPI: number;
-  despesasIcmsSt: number;
-  despesasFreteSeguroOutras: number;
-  despesasTotal: number;
-  resultadoAposDespesas: number;
-  margemComissionamentoPercentual: number | null;
+/** Campos que o servidor omite para quem não é administrador (ver `src/comissionamento/visibilidadeMargem.ts`). */
+type CamposCustoRelatorio =
+  | 'custoTotal'
+  | 'margemTotal'
+  | 'margemVendaPercentual'
+  | 'markupCustoPercentual'
+  | 'valorIPI'
+  | 'valorIcmsSt'
+  | 'valorFrete'
+  | 'valorSeguro'
+  | 'outrasDespesasFrete';
+
+interface LinhaComissionamento extends Omit<LinhaRelatorio, CamposCustoRelatorio>, Partial<Pick<LinhaRelatorio, CamposCustoRelatorio>> {
+  despesasIPI?: number;
+  despesasIcmsSt?: number;
+  despesasFreteSeguroOutras?: number;
+  despesasTotal?: number;
+  resultadoAposDespesas?: number;
+  margemComissionamentoPercentual?: number | null;
   impostosEmbutidos: {
     icms: number;
     pis: number;
@@ -121,6 +133,8 @@ interface RespostaRelatorio {
 }
 
 interface RespostaComissionamento {
+  /** Só `true` para administrador — nos demais papéis o servidor já removeu margem/despesas das linhas. */
+  margemVisivel: boolean;
   linhas: LinhaComissionamento[];
   resumo: ResumoComissionamento;
   documentosAmbiguosExcluidos: number;
@@ -150,6 +164,51 @@ function el<T extends HTMLElement>(id: string): T {
   const elemento = document.getElementById(id);
   if (elemento === null) throw new Error(`Elemento #${id} não encontrado`);
   return elemento as T;
+}
+
+/**
+ * Colunas da tabela de Comissionamento. Sem "Margem" para quem não é administrador — a coluna
+ * some de verdade (tela e PDF, que é a impressão desta mesma tabela), em vez de ficar vazia.
+ */
+export function titulosTabelaComissionamento(margemVisivel: boolean): string[] {
+  return [
+    'Nº',
+    'Cliente',
+    'Vendedor',
+    ...(margemVisivel ? ['Margem'] : []),
+    'Comissão %',
+    'Valor da venda',
+    'Comissão total',
+    'Liberada',
+    'Pendente',
+    'Parcelas',
+  ];
+}
+
+/**
+ * Popula o filtro de vendedor. Papel "vendedor" (o servidor devolve `restritoAoProprioVendedor`
+ * e só o próprio vendedor na lista): sem "Todos os vendedores", só o próprio nome, campo travado.
+ * Apresentação apenas — o backend força o vendedor autenticado de qualquer forma.
+ */
+export function preencherFiltroVendedor(campo: HTMLSelectElement, vendedores: Vendedor[], restritoAoProprioVendedor: boolean): void {
+  if (restritoAoProprioVendedor) {
+    campo.textContent = '';
+    for (const vendedor of vendedores) {
+      const option = document.createElement('option');
+      option.value = String(vendedor.codigo);
+      option.textContent = vendedor.nome;
+      campo.appendChild(option);
+    }
+    campo.disabled = true;
+    return;
+  }
+  for (const vendedor of vendedores) {
+    if (vendedor.inativo) continue;
+    const option = document.createElement('option');
+    option.value = String(vendedor.codigo);
+    option.textContent = vendedor.nome;
+    campo.appendChild(option);
+  }
 }
 
 export function inicializarRelatorios(): { ativar: () => void } {
@@ -227,14 +286,8 @@ export function inicializarRelatorios(): { ativar: () => void } {
     if (vendedoresCarregados) return;
     try {
       const resposta = await fetch('/api/vendedores');
-      const corpo = (await resposta.json()) as { vendedores: Vendedor[] };
-      for (const vendedor of corpo.vendedores) {
-        if (vendedor.inativo) continue;
-        const option = document.createElement('option');
-        option.value = String(vendedor.codigo);
-        option.textContent = vendedor.nome;
-        campoVendedor.appendChild(option);
-      }
+      const corpo = (await resposta.json()) as { vendedores: Vendedor[]; restritoAoProprioVendedor?: boolean };
+      preencherFiltroVendedor(campoVendedor, corpo.vendedores, corpo.restritoAoProprioVendedor === true);
       vendedoresCarregados = true;
     } catch {
       // Filtro de vendedor fica apenas com "Todos" — não impede o uso do restante do relatório.
@@ -318,11 +371,11 @@ export function inicializarRelatorios(): { ativar: () => void } {
     }
   }
 
-  function renderizarLinhaParcelas(linha: LinhaComissionamento): HTMLTableRowElement {
+  function renderizarLinhaParcelas(linha: LinhaComissionamento, margemVisivel: boolean, totalColunas: number): HTMLTableRowElement {
     const tr = document.createElement('tr');
     tr.className = 'linha-parcelas';
     const td = document.createElement('td');
-    td.colSpan = 10;
+    td.colSpan = totalColunas;
 
     const detalheCalculo = document.createElement('div');
     detalheCalculo.className = 'detalhe-calculo-comissao';
@@ -348,14 +401,15 @@ export function inicializarRelatorios(): { ativar: () => void } {
 
     par('Valor da venda (nota)', formatarMoeda(linha.valorBruto));
     par('Valor dos produtos', formatarMoeda(linha.receitaTotal));
-    if (linha.vendedorComissaoFixaPercentual === undefined) {
-      par('Despesas — IPI', formatarMoeda(linha.despesasIPI));
-      par('Despesas — ICMS-ST', formatarMoeda(linha.despesasIcmsSt));
-      par('Despesas — frete/seguro/outras', formatarMoeda(linha.despesasFreteSeguroOutras));
-      par('Resultado após despesas', formatarMoeda(linha.resultadoAposDespesas));
+    // Despesas/resultado/margem só para administrador (o servidor nem envia esses campos aos demais papéis).
+    if (margemVisivel && linha.vendedorComissaoFixaPercentual === undefined) {
+      par('Despesas — IPI', formatarMoeda(linha.despesasIPI ?? 0));
+      par('Despesas — ICMS-ST', formatarMoeda(linha.despesasIcmsSt ?? 0));
+      par('Despesas — frete/seguro/outras', formatarMoeda(linha.despesasFreteSeguroOutras ?? 0));
+      par('Resultado após despesas', formatarMoeda(linha.resultadoAposDespesas ?? 0));
       par(
         linha.segregacaoComissaoFixa ? 'Margem de comissionamento (parte normal)' : 'Margem de comissionamento',
-        formatarPercentual(linha.margemComissionamentoPercentual),
+        formatarPercentual(linha.margemComissionamentoPercentual ?? null),
       );
     }
     par(linha.segregacaoComissaoFixa ? 'Comissão normal (parte normal)' : 'Comissão normal', formatarPercentual(linha.comissaoNormalPercentual));
@@ -494,21 +548,11 @@ export function inicializarRelatorios(): { ativar: () => void } {
     return tr;
   }
 
-  function renderizarTabelaComissionamento(linhas: LinhaComissionamento[]): void {
+  function renderizarTabelaComissionamento(linhas: LinhaComissionamento[], margemVisivel: boolean): void {
     cabecalhoTabela.textContent = '';
     const trCabecalho = document.createElement('tr');
-    for (const titulo of [
-      'Nº',
-      'Cliente',
-      'Vendedor',
-      'Margem',
-      'Comissão %',
-      'Valor da venda',
-      'Comissão total',
-      'Liberada',
-      'Pendente',
-      'Parcelas',
-    ]) {
+    const titulos = titulosTabelaComissionamento(margemVisivel);
+    for (const titulo of titulos) {
       const th = document.createElement('th');
       th.scope = 'col';
       th.textContent = titulo;
@@ -537,7 +581,7 @@ export function inicializarRelatorios(): { ativar: () => void } {
       const tdVendedor = celula(linha.nomeVendedor ?? 'Não identificado', 'col-nome');
       tdVendedor.title = linha.nomeVendedor ?? 'Não identificado';
       tr.appendChild(tdVendedor);
-      tr.appendChild(celula(formatarPercentual(linha.margemComissionamentoPercentual), 'col-num'));
+      if (margemVisivel) tr.appendChild(celula(formatarPercentual(linha.margemComissionamentoPercentual ?? null), 'col-num'));
       // Em pedidos mistos (comissão fixa numa família + regra normal no resto), mostra a taxa EFETIVA
       // (comissão total ÷ receita) na coluna — comissaoFinalPercentual sozinho só reflete a parte normal.
       const percentualExibido = linha.segregacaoComissaoFixa
@@ -569,7 +613,7 @@ export function inicializarRelatorios(): { ativar: () => void } {
       );
       corpoTabela.appendChild(tr);
 
-      const linhaDetalhe = renderizarLinhaParcelas(linha);
+      const linhaDetalhe = renderizarLinhaParcelas(linha, margemVisivel, titulos.length);
       linhaDetalhe.hidden = true;
       corpoTabela.appendChild(linhaDetalhe);
 
@@ -620,7 +664,9 @@ export function inicializarRelatorios(): { ativar: () => void } {
           return;
         }
         renderizarIndicadoresComissionamento(dados.resumo);
-        renderizarTabelaComissionamento(dados.linhas);
+        // `margemVisivel` vem do servidor (decidido pelo papel autenticado) — para quem não é
+        // administrador a margem nem chega no payload; aqui só se ajusta o layout (tela e PDF).
+        renderizarTabelaComissionamento(dados.linhas, dados.margemVisivel === true);
         areaTabela.hidden = false;
         botaoBaixarPdf.hidden = false;
       } else {

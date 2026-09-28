@@ -313,7 +313,7 @@ function normalizarTextoBusca(texto: string): string {
  * linhas já calculadas do relatório — número/código do pedido, cliente ou
  * vendedor —, sem nenhuma consulta adicional à Omie.
  */
-export function filtrarLinhasPorBusca(linhas: LinhaRelatorio[], busca: string | undefined): LinhaRelatorio[] {
+export function filtrarLinhasPorBusca<T extends LinhaRelatorio>(linhas: T[], busca: string | undefined): T[] {
   if (busca === undefined || busca.trim() === '') return linhas;
   const termo = normalizarTextoBusca(busca);
   return linhas.filter((linha) => {

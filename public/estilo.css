@@ -2028,3 +2028,39 @@ tfoot tr td:first-child {
   overflow-wrap: anywhere;
   color: var(--cor-negativo);
 }
+
+/* Dashboard de Fretes — bloco "Parâmetros fiscais": respiro em relação aos cards de indicadores
+   acima, mesma largura dos cards (é bloco irmão no mesmo contêiner) e sem "caixa dentro de caixa"
+   (o formulário reaproveita .filtros-relatorio, que já tem fundo/borda/sombra próprios). */
+#fretes-secao-parametros-fiscais {
+  margin-top: 24px;
+  padding: 18px 20px;
+}
+#fretes-secao-parametros-fiscais .titulo-secao {
+  margin-bottom: 4px;
+}
+#fretes-secao-parametros-fiscais .filtro-data-legenda {
+  margin-bottom: 14px;
+}
+#fretes-secao-parametros-fiscais .filtros-relatorio {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  gap: 14px 16px;
+}
+#fretes-secao-parametros-fiscais .painel-login-erro {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  #fretes-secao-parametros-fiscais {
+    margin-top: 18px;
+    padding: 14px;
+  }
+  #fretes-secao-parametros-fiscais .campo-filtro,
+  #fretes-secao-parametros-fiscais .filtros-relatorio > button {
+    flex: 1 1 100%;
+  }
+}

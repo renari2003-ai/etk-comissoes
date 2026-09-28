@@ -1107,14 +1107,44 @@ export interface DashboardFretes {
   resumoFechamentos: ResumoFechamentos;
   /** Seção 19: "Total de fretes com transportadora/veículo próprio/retira" — só sobre cotações já FECHADAS. */
   resumoFechamentosPorModalidadeExecucao: Record<ModalidadeExecucao, ResumoFechamentos>;
+  /** `GERAL` = consolidado de todos os vendedores; `PROPRIO` = só as cotações do vendedorOmieId do usuário. */
+  escopo: 'GERAL' | 'PROPRIO';
 }
 
-export async function servicoDashboard(): Promise<DashboardFretes> {
-  const [cotacoes, resumo, resumoPorModalidade] = await Promise.all([
-    listarCotacoes({}),
-    resumirFechamentos(),
-    resumirFechamentosPorModalidade(),
-  ]);
+/**
+ * Escopo do dashboard (regra de 2026-09-28), sempre decidido no servidor pelo usuário autenticado:
+ * - papel "vendedor": SEMPRE só os próprios dados (vendedorOmieId), mesmo com `fretesGerencia`;
+ * - "administrador": visão geral;
+ * - "usuario"/"convidado": visão geral só com `fretesGerencia`; sem ela, nunca a geral — ficam
+ *   restritos ao próprio vendedorOmieId, como na Central do Vendedor/Histórico.
+ * Sem vínculo Omie (e sem visão geral) = `'nenhum'`: dashboard zerado, nunca o geral por engano.
+ * Não altera `temVisaoAmpliadaFrete` (Central do Vendedor/Histórico continuam como estavam).
+ */
+function resolverEscopoDashboard(usuario: UsuarioPublico): 'geral' | number | 'nenhum' {
+  if (usuario.papel !== 'vendedor' && temVisaoAmpliadaFrete(usuario)) return 'geral';
+  return usuario.vendedorOmieId ?? 'nenhum';
+}
+
+function resumoFechamentosVazio(): ResumoFechamentos {
+  return { quantidade: 0, custoTotal: 0, valorClienteTotal: 0, acrescimoTotal: 0 };
+}
+
+export async function servicoDashboard(usuario: UsuarioPublico): Promise<DashboardFretes> {
+  const escopoResolvido = resolverEscopoDashboard(usuario);
+  const escopo = escopoResolvido === 'geral' ? 'GERAL' : 'PROPRIO';
+  const vendedorOmieId = typeof escopoResolvido === 'number' ? escopoResolvido : undefined;
+  const [cotacoes, resumo, resumoPorModalidade] =
+    escopoResolvido === 'nenhum'
+      ? [
+          [],
+          resumoFechamentosVazio(),
+          { TRANSPORTADORA: resumoFechamentosVazio(), VEICULO_PROPRIO: resumoFechamentosVazio(), RETIRA: resumoFechamentosVazio() },
+        ]
+      : await Promise.all([
+          listarCotacoes(vendedorOmieId === undefined ? {} : { vendedorOmieId }),
+          resumirFechamentos(vendedorOmieId),
+          resumirFechamentosPorModalidade(vendedorOmieId),
+        ]);
   const cotacoesPorStatus: Record<string, number> = {
     RASCUNHO: 0,
     AGUARDANDO_PROPOSTAS: 0,
@@ -1132,5 +1162,11 @@ export async function servicoDashboard(): Promise<DashboardFretes> {
     cotacoesPorStatus[cotacao.status] = (cotacoesPorStatus[cotacao.status] ?? 0) + 1;
     cotacoesPorModalidadeExecucao[cotacao.modalidadeExecucao] += 1;
   }
-  return { cotacoesPorStatus, cotacoesPorModalidadeExecucao, resumoFechamentos: resumo, resumoFechamentosPorModalidadeExecucao: resumoPorModalidade };
+  return {
+    cotacoesPorStatus,
+    cotacoesPorModalidadeExecucao,
+    resumoFechamentos: resumo,
+    resumoFechamentosPorModalidadeExecucao: resumoPorModalidade,
+    escopo,
+  };
 }

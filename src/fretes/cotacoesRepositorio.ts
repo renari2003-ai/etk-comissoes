@@ -276,6 +276,8 @@ export interface FiltrosCotacao {
   modalidade?: Modalidade;
   modalidadeExecucao?: ModalidadeExecucao;
   codigo?: string;
+  /** Restringe às cotações do vendedor (dashboard do papel "vendedor", sem visão geral). */
+  vendedorOmieId?: number;
 }
 
 export async function listarCotacoes(filtros: FiltrosCotacao): Promise<CotacaoFrete[]> {
@@ -298,6 +300,10 @@ export async function listarCotacoes(filtros: FiltrosCotacao): Promise<CotacaoFr
   if (filtros.codigo !== undefined) {
     valores.push(`%${filtros.codigo}%`);
     condicoes.push(`codigo ILIKE $${valores.length}`);
+  }
+  if (filtros.vendedorOmieId !== undefined) {
+    valores.push(filtros.vendedorOmieId);
+    condicoes.push(`vendedor_omie_id = $${valores.length}`);
   }
   const whereSql = condicoes.length > 0 ? `WHERE ${condicoes.join(' AND ')}` : '';
   const { rows } = await pool.query<LinhaCotacao>(
