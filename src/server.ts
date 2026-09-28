@@ -42,7 +42,7 @@ app.use(express.json({ limit: '100kb' }));
 // QUALQUER requisição que chegasse até este `app.use`, incluindo `GET /` e os arquivos estáticos,
 // mesmo sem nenhuma rota do router bater (bug real encontrado e corrigido em 2026-09-11: o site
 // inteiro, HTML/CSS/JS incluídos, respondia 401 sem sessão).
-app.use(criarRotaAuth());
+app.use(criarRotaAuth(cliente));
 app.use(criarRotaSaude());
 app.use(criarRotaCache(cliente));
 app.use(criarRotaVendedores(cliente));

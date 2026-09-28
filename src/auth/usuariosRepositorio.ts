@@ -4,7 +4,9 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { ErroValidacao } from '../validacao.js';
 import { executarDdlIdempotente, obterPool } from '../db.js';
+import type { Vendedor } from '../omie/cliente.js';
 import { hashSenha } from './senhas.js';
+import { sugerirVendedorPorLogin } from './vinculoVendedor.js';
 import { PERMISSOES_VAZIAS, paraPublico, type Papel, type Permissoes, type Usuario, type UsuarioPublico } from './tipos.js';
 
 /**
@@ -295,6 +297,49 @@ export async function atualizarUsuario(id: string, atualizacao: DadosAtualizacao
     [usuario.nome, usuario.papel, JSON.stringify(usuario.permissoes), usuario.mestre, usuario.vendedorOmieId, usuario.vendedorOmieNome, usuario.id],
   );
   return paraPublico(usuario);
+}
+
+export interface RelatorioVinculoPorLogin {
+  vinculados: Array<{ usuario: string; vendedorOmieNome: string }>;
+  naoEncontrados: string[];
+  ambiguos: string[];
+}
+
+/**
+ * Migração segura (regra de 2026-09-28), disparada pelo administrador: para cada usuário com
+ * papel "vendedor" SEM `vendedor_omie_nome`, tenta o nome Omie idêntico ao login (trim/caixa,
+ * nunca fuzzy). Só grava quando há exatamente um nome; não encontrado ou ambíguo fica como está.
+ * O `WHERE` do UPDATE repete a condição "vazio + vendedor" — um vínculo gravado no meio do
+ * caminho nunca é sobrescrito. Idempotente: rodar de novo não mexe em quem já tem vínculo.
+ */
+export async function vincularVendedoresPorLogin(vendedores: Vendedor[]): Promise<RelatorioVinculoPorLogin> {
+  await garantirTabela();
+  const pool = obterPool();
+  const tabela = nomeTabela();
+  const { rows } = await pool.query<{ id: string; usuario: string }>(
+    `SELECT id, usuario FROM ${tabela}
+     WHERE papel = 'vendedor' AND (vendedor_omie_nome IS NULL OR btrim(vendedor_omie_nome) = '')
+     ORDER BY usuario`,
+  );
+  const relatorio: RelatorioVinculoPorLogin = { vinculados: [], naoEncontrados: [], ambiguos: [] };
+  for (const linha of rows) {
+    const sugestao = sugerirVendedorPorLogin(linha.usuario, vendedores);
+    if (sugestao.status === 'NAO_ENCONTRADO') {
+      relatorio.naoEncontrados.push(linha.usuario);
+      continue;
+    }
+    if (sugestao.status === 'AMBIGUO') {
+      relatorio.ambiguos.push(linha.usuario);
+      continue;
+    }
+    const { rowCount } = await pool.query(
+      `UPDATE ${tabela} SET vendedor_omie_nome = $1
+       WHERE id = $2 AND papel = 'vendedor' AND (vendedor_omie_nome IS NULL OR btrim(vendedor_omie_nome) = '')`,
+      [sugestao.nome, linha.id],
+    );
+    if (rowCount === 1) relatorio.vinculados.push({ usuario: linha.usuario, vendedorOmieNome: sugestao.nome });
+  }
+  return relatorio;
 }
 
 /** Usado pelo administrador master pra destravar quem perdeu a senha (`exigirAdministradorMestre`, ver `middleware.ts`) — a nova senha foi escolhida por OUTRA pessoa, então força a troca de novo no próximo login. */

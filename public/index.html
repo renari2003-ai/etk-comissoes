@@ -108,21 +108,22 @@
           <label><input type="checkbox" name="fretesSubstituicao" /> Fretes — Aprovar em substituição</label>
           <label><input type="checkbox" name="fretesGerencia" /> Fretes — Visão ampliada (gerência)</label>
         </fieldset>
-        <div class="campo-filtro">
-          <label for="novo-usuario-vendedor-omie">Vendedor Omie (opcional)</label>
-          <select id="novo-usuario-vendedor-omie" name="vendedorOmieNome">
-            <option value="">Sem vínculo</option>
-          </select>
-        </div>
+        <p id="novo-usuario-dica-vendedor" class="filtro-data-legenda" hidden>
+          Vendedor: o login é comparado com os nomes de vendedores da Omie (nome exato, sem diferenciar maiúsculas/minúsculas).
+          Se não houver correspondência, o usuário é criado sem vínculo — ajuste depois em "Alterar vendedor Omie".
+        </p>
         <button type="submit" class="botao-secundario">Criar usuário</button>
         <p id="novo-usuario-erro" class="painel-login-erro" hidden></p>
+        <p id="novo-usuario-aviso" class="filtro-data-legenda" hidden></p>
       </form>
     </section>
 
     <section class="area-tabela">
       <div class="area-tabela-cabecalho">
         <h2 class="titulo-secao">Usuários cadastrados</h2>
+        <button type="button" id="botao-vincular-vendedores-login" class="botao-secundario">Vincular vendedores pelo login</button>
       </div>
+      <p id="vincular-vendedores-resultado" class="filtro-data-legenda" hidden></p>
       <div class="tabela-rolagem">
         <table id="tabela-usuarios">
           <thead>

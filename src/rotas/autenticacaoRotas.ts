@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { ClienteOmie, Vendedor } from '../omie/cliente.js';
 import { lerCookie, NOME_COOKIE_SESSAO } from '../auth/cookies.js';
 import { exigirAdministrador, exigirAdministradorMestre, exigirAutenticacao } from '../auth/middleware.js';
 import { criarSessao, destruirSessao } from '../auth/sessoes.js';
@@ -12,7 +13,9 @@ import {
   excluirUsuario,
   listarUsuarios,
   redefinirSenha,
+  vincularVendedoresPorLogin,
 } from '../auth/usuariosRepositorio.js';
+import { sugerirVendedorPorLogin } from '../auth/vinculoVendedor.js';
 import { ErroValidacao } from '../validacao.js';
 import { assincrono } from './erroHttp.js';
 
@@ -67,8 +70,29 @@ function validarPermissoes(valor: unknown): Permissoes {
   return permissoes;
 }
 
-export function criarRotaAuth(): Router {
+/** Resultado do vínculo automático na criação — devolvido ao administrador para ele saber se precisa corrigir à mão. */
+type VinculoNaCriacao =
+  | { status: 'NAO_APLICAVEL' }
+  | { status: 'INFORMADO'; nome: string }
+  | { status: 'VINCULADO'; nome: string }
+  | { status: 'NAO_ENCONTRADO' | 'AMBIGUO' | 'OMIE_INDISPONIVEL'; mensagem: string };
+
+/**
+ * `cliente` (consulta somente leitura `listarVendedores`) alimenta a sugestão automática do vínculo
+ * por login na criação de vendedores e a migração dos vendedores existentes. Opcional: sem ele,
+ * nada é vinculado automaticamente (nunca inventa vínculo).
+ */
+export function criarRotaAuth(cliente?: Pick<ClienteOmie, 'listarVendedores'>): Router {
   const rotas = Router();
+
+  async function listarVendedoresOmie(): Promise<Vendedor[] | null> {
+    if (cliente === undefined) return null;
+    try {
+      return await cliente.listarVendedores();
+    } catch {
+      return null;
+    }
+  }
 
   rotas.post(
     '/api/auth/login',
@@ -140,8 +164,59 @@ export function criarRotaAuth(): Router {
       const vendedorOmieId = validarVendedorOmieIdOpcional(req.body?.vendedorOmieId);
       const vendedorOmieNome = validarVendedorOmieNomeOpcional(req.body?.vendedorOmieNome);
 
-      const criado = await criarUsuario({ usuario, nome, senha, papel, permissoes, vendedorOmieId, vendedorOmieNome });
-      res.status(201).json(criado);
+      // Regra de 2026-09-28: só para papel "vendedor", o LOGIN é a tentativa automática inicial do
+      // nome Omie (igualdade após trim/caixa, nunca fuzzy). O nome encontrado é gravado à parte em
+      // `vendedorOmieNome` — mudar o login depois não mexe nele. Sem correspondência única, o
+      // usuário é criado sem vínculo e o administrador é avisado. Nome explícito enviado pelo
+      // administrador (API) tem precedência.
+      let vinculo: VinculoNaCriacao = { status: 'NAO_APLICAVEL' };
+      let nomeVinculado = vendedorOmieNome;
+      if (vendedorOmieNome !== undefined && vendedorOmieNome !== null) {
+        vinculo = { status: 'INFORMADO', nome: vendedorOmieNome };
+      } else if (papel === 'vendedor') {
+        const vendedores = await listarVendedoresOmie();
+        const loginLimpo = usuario.trim();
+        if (vendedores === null) {
+          vinculo = {
+            status: 'OMIE_INDISPONIVEL',
+            mensagem: 'Não foi possível consultar os vendedores da Omie agora — usuário criado sem vínculo. Use "Alterar vendedor Omie".',
+          };
+        } else {
+          const sugestao = sugerirVendedorPorLogin(loginLimpo, vendedores);
+          if (sugestao.status === 'ENCONTRADO') {
+            nomeVinculado = sugestao.nome;
+            vinculo = { status: 'VINCULADO', nome: sugestao.nome };
+          } else if (sugestao.status === 'AMBIGUO') {
+            vinculo = {
+              status: 'AMBIGUO',
+              mensagem: `Há mais de um vendedor na Omie com o nome "${loginLimpo}" — usuário criado sem vínculo. Escolha o nome correto em "Alterar vendedor Omie".`,
+            };
+          } else {
+            vinculo = {
+              status: 'NAO_ENCONTRADO',
+              mensagem: `Não foi encontrado vendedor Omie com o nome "${loginLimpo}" — usuário criado sem vínculo. Escolha o nome correto em "Alterar vendedor Omie".`,
+            };
+          }
+        }
+      }
+
+      const criado = await criarUsuario({ usuario, nome, senha, papel, permissoes, vendedorOmieId, vendedorOmieNome: nomeVinculado });
+      res.status(201).json({ ...criado, vinculoVendedorOmie: vinculo });
+    }),
+  );
+
+  // Migração segura dos vendedores já existentes (2026-09-28): só papel "vendedor" sem nome
+  // vinculado, só igualdade exata com o login, nunca sobrescreve. Disparada pelo administrador.
+  rotas.post(
+    '/api/auth/usuarios/vincular-vendedores-por-login',
+    exigirAutenticacao,
+    exigirAdministrador,
+    assincrono(async (_req, res) => {
+      const vendedores = await listarVendedoresOmie();
+      if (vendedores === null) {
+        throw new ErroValidacao('Não foi possível consultar os vendedores da Omie agora — nenhum vínculo foi alterado.');
+      }
+      res.json(await vincularVendedoresPorLogin(vendedores));
     }),
   );
 

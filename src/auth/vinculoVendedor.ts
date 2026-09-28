@@ -30,6 +30,27 @@ export function codigosPorNome(vendedores: Vendedor[], nome: string): number[] {
   return vendedores.filter((vendedor) => mesmoNomeVendedor(vendedor.nome, nome)).map((vendedor) => vendedor.codigo);
 }
 
+export type ResultadoSugestaoVendedor =
+  | { status: 'ENCONTRADO'; nome: string }
+  | { status: 'NAO_ENCONTRADO' }
+  | { status: 'AMBIGUO'; nomes: string[] };
+
+/**
+ * Sugestão automática inicial do vínculo (regra de 2026-09-28): o LOGIN do usuário comparado aos
+ * nomes reais da Omie — só trim e maiúsculas/minúsculas, nunca fuzzy, nunca primeiro nome. Vários
+ * códigos com a mesma grafia contam como UM nome (todos os códigos valem depois, ver
+ * `codigosPorNome`); grafias diferentes que só casam após normalizar ("Bruna Pinto" vs
+ * "BRUNA PINTO" como cadastros distintos) são ambíguas e não vinculam. Devolve o nome exatamente
+ * como está na Omie.
+ */
+export function sugerirVendedorPorLogin(login: string, vendedores: Vendedor[]): ResultadoSugestaoVendedor {
+  if (login.trim() === '') return { status: 'NAO_ENCONTRADO' };
+  const grafias = [...new Set(vendedores.filter((vendedor) => mesmoNomeVendedor(vendedor.nome, login)).map((vendedor) => vendedor.nome.trim()))];
+  if (grafias.length === 0) return { status: 'NAO_ENCONTRADO' };
+  if (grafias.length > 1) return { status: 'AMBIGUO', nomes: grafias };
+  return { status: 'ENCONTRADO', nome: grafias[0]! };
+}
+
 /**
  * Códigos Omie que representam "o próprio vendedor" deste usuário:
  * - com `vendedorOmieNome`: os códigos resolvidos pelo middleware (nunca o nome sem resolver);
