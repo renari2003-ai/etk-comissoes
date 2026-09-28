@@ -511,12 +511,12 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
           peso: 100,
           volumes: 5,
           valorMercadoria: 5000,
-          modalidade: 'CIF',
+          modalidade: 'FOB',
           modalidadeExecucao: 'TRANSPORTADORA',
           veiculoId: null,
           motoristaNome: null,
           custoManual: null,
-          observacoes: null,
+          observacoes: 'Entrega somente pela manhã',
         },
         USUARIO_TESTE,
       );
@@ -537,6 +537,9 @@ describe('integração real ETK ↔ n8n (Fase 4A.2)', () => {
       expect(corpos[0]?.logistica).toMatchObject({ cnpjOrigem: '11222333000181', cnpjDestino: '11444777000161' });
       expect(corpos[1]?.logistica).toMatchObject({ cnpjOrigem: '11222333000181', cnpjDestino: null });
       expect(consultas).toEqual([777]);
+      // Aditivos (versao 1): modalidade/observacoes vêm da própria cotação; observações vazias → null.
+      expect(corpos[0]?.logistica).toMatchObject({ modalidade: 'FOB', observacoes: 'Entrega somente pela manhã' });
+      expect(corpos[1]?.logistica).toMatchObject({ modalidade: 'CIF', observacoes: null });
 
       // CPF no cadastro Omie e CNPJ de origem inválido → ambos null (config relida após reset).
       process.env.FRETES_CNPJ_ORIGEM = '123';

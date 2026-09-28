@@ -91,6 +91,8 @@ function montarPayloadN8n(
       especie: cotacao.especieVolumes,
       cnpjOrigem: cnpjs.cnpjOrigem,
       cnpjDestino: cnpjs.cnpjDestino,
+      modalidade: cotacao.modalidade,
+      observacoes: cotacao.observacoes && cotacao.observacoes.trim() !== '' ? cotacao.observacoes : null,
     },
   };
 }

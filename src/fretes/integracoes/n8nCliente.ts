@@ -45,6 +45,9 @@ export interface PayloadSolicitacaoN8n {
      */
     cnpjOrigem: string | null;
     cnpjDestino: string | null;
+    /** Aditivos (compatível com `versao: 1`): CIF/FOB comercial da cotação e observações da cotação (vazio → `null`). */
+    modalidade: 'CIF' | 'FOB';
+    observacoes: string | null;
   };
 }
 
