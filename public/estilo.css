@@ -405,6 +405,28 @@ input:focus-visible {
   vertical-align: middle;
 }
 
+/* Comissionamento — pedido de período anterior incluído só por parcela no período (2026-09-28). */
+.badge-periodo-anterior {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--cor-borda);
+  color: var(--cor-texto-fraco);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+/* Venda/comissão total de pedido anterior: só referência — não somam no período. */
+.valor-fora-do-total {
+  color: var(--cor-texto-fraco);
+  font-style: italic;
+}
+.col-data {
+  white-space: nowrap;
+}
+
 .col-fatura-parcial {
   font-weight: 700;
   color: var(--cor-primaria);
@@ -1551,6 +1573,26 @@ tfoot tr td:first-child {
   .area-tabela {
     box-shadow: none !important;
     border: none !important;
+  }
+
+  /* PDF do Comissionamento: com a coluna "Data de faturamento" a tabela ganhou uma coluna —
+     fonte e espaçamento menores e sem largura mínima, para caber legível na página. */
+  #relatorio-tabela {
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 9.5px;
+  }
+  #relatorio-tabela th,
+  #relatorio-tabela td {
+    padding: 4px 5px !important;
+  }
+  #relatorio-tabela .col-nome {
+    max-width: 140px;
+    white-space: normal;
+  }
+  .badge-periodo-anterior,
+  .badge-faturamento-parcial {
+    font-size: 8px;
   }
 }
 

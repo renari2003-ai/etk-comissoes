@@ -77,6 +77,8 @@ function linha(numeroPedido: string, codigoVendedor: number | null, nomeVendedor
     semTitulosLocalizados: true,
     valorFaturado: 0,
     saldoAFaturar: 0,
+    origem: 'PERIODO',
+    datasFaturamento: [],
   };
 }
 
@@ -112,6 +114,7 @@ const gerarRelatorioMock = vi.fn(async (_cliente: unknown, filtros: { codigoVend
     documentosAmbiguosExcluidos: 0,
     pedidosSemVendedorExcluidos: 1,
     numerosPedidosSemVendedor: ['999'],
+    numerosPedidosAnterioresNaoLocalizados: [],
   };
 });
 vi.mock('../../src/comissionamento/relatorioComissionamento.js', () => ({

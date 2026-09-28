@@ -218,7 +218,6 @@ export async function gerarRelatorio(
   dataReferenciaCusto: string = dataDeHojeFormatoOmie(),
 ): Promise<ResultadoRelatorio> {
   const [etapas, vendedores] = await Promise.all([cliente.listarEtapasVendaProduto(), cliente.listarVendedores()]);
-  const vendedoresPorCodigo = new Map(vendedores.map((v) => [v.codigo, v]));
 
   const pedidosBrutos: PedidoOmie[] = [];
   let pagina = 1;
@@ -240,6 +239,38 @@ export async function gerarRelatorio(
 
   const limiteAtingido = paginasConsultadas >= MAX_PAGINAS_OMIE && pagina <= totalDePaginas;
 
+  const { linhas: linhasConsolidadas, documentosAmbiguosExcluidos } = await montarLinhasDePedidos(
+    cliente,
+    pedidosBrutos,
+    filtros,
+    { etapas, vendedores },
+    dataReferenciaCusto,
+  );
+
+  return {
+    linhas: linhasConsolidadas,
+    resumo: calcularResumo(linhasConsolidadas),
+    documentosAmbiguosExcluidos,
+    paginasOmieConsultadas: paginasConsultadas,
+    limiteAtingido,
+  };
+}
+
+/**
+ * Transforma registros brutos de pedido da Omie em linhas do relatório — classificação por etapa,
+ * filtro de tipo/vendedor, custo, cliente e consolidação do faturamento parcial. Extraído de
+ * `gerarRelatorio` (sem mudança de regra) para o Comissionamento reaproveitar exatamente a mesma
+ * montagem nos pedidos de períodos anteriores trazidos por parcela (regra de 2026-09-28).
+ */
+export async function montarLinhasDePedidos(
+  cliente: ClienteOmieParaRelatorioAgregado,
+  pedidosBrutos: PedidoOmie[],
+  filtros: Pick<FiltrosRelatorio, 'tipoDocumento' | 'codigoVendedor'>,
+  referencias: { etapas: EtapaFaturamento[]; vendedores: VendedorInfo[] },
+  dataReferenciaCusto: string = dataDeHojeFormatoOmie(),
+): Promise<{ linhas: LinhaRelatorio[]; documentosAmbiguosExcluidos: number }> {
+  const { etapas } = referencias;
+  const vendedoresPorCodigo = new Map(referencias.vendedores.map((v) => [v.codigo, v]));
   let documentosAmbiguosExcluidos = 0;
   const linhas: LinhaRelatorio[] = [];
 
@@ -290,15 +321,7 @@ export async function gerarRelatorio(
     });
   }
 
-  const linhasConsolidadas = consolidarFaturamentoParcial(linhas);
-
-  return {
-    linhas: linhasConsolidadas,
-    resumo: calcularResumo(linhasConsolidadas),
-    documentosAmbiguosExcluidos,
-    paginasOmieConsultadas: paginasConsultadas,
-    limiteAtingido,
-  };
+  return { linhas: consolidarFaturamentoParcial(linhas), documentosAmbiguosExcluidos };
 }
 
 function normalizarTextoBusca(texto: string): string {

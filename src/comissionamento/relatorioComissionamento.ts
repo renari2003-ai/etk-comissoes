@@ -12,12 +12,22 @@ import {
   type ImpostosEmbutidos,
   type ResultadoMargemComissionamento,
 } from './calcularMargemComissionamento.js';
-import { gerarRelatorio, type ClienteOmieParaRelatorioAgregado, type LinhaRelatorio } from '../relatorio/relatorioVendas.js';
+import { gerarRelatorio, montarLinhasDePedidos, type ClienteOmieParaRelatorioAgregado, type LinhaRelatorio } from '../relatorio/relatorioVendas.js';
+import type { PedidoOmie } from '../calculo/tipos.js';
 import type { TituloContaReceber } from '../omie/cliente.js';
 
 export interface ClienteOmieParaComissionamento extends ClienteOmieParaRelatorioAgregado {
   listarContasReceberPorVendedor(codigoVendedor: number): Promise<TituloContaReceber[]>;
+  /** Somente leitura (`ConsultarPedido`) — usado só para os pedidos de períodos anteriores trazidos por parcela no período. */
+  consultarPedido(identificador: { numeroPedido?: string; codigoPedido?: number }): Promise<PedidoOmie>;
 }
+
+/**
+ * `PERIODO` = venda do período filtrado (como sempre foi). `PARCELA_PERIODO_ANTERIOR` = pedido dos
+ * 12 meses anteriores ao início do período, incluído SÓ porque tem parcela com vencimento dentro
+ * do período (regra de 2026-09-28) — nunca soma venda/comissão total/quantidade do período.
+ */
+export type OrigemLinhaComissionamento = 'PERIODO' | 'PARCELA_PERIODO_ANTERIOR';
 
 export interface FiltrosComissionamento {
   dataDe?: string;
@@ -80,6 +90,14 @@ export interface LinhaComissionamento extends LinhaRelatorio {
   comissaoPendente: number;
   /** true quando nenhum título financeiro pôde ser localizado na Omie para este pedido — comissão calculada, mas sem acompanhamento de baixa (seção 40). */
   semTitulosLocalizados: boolean;
+  /** Ver `OrigemLinhaComissionamento`. Em `PARCELA_PERIODO_ANTERIOR`, `parcelas`/`comissaoLiberada`/`comissaoPendente` cobrem só as parcelas com vencimento no período. */
+  origem: OrigemLinhaComissionamento;
+  /**
+   * Datas de faturamento do pedido (dd/mm/aaaa, cronológicas, sem repetição) = `data_emissao` dos
+   * títulos localizados (uma por fatura; várias no faturamento parcial). Vazio quando não há
+   * título — nunca substituída pela data do pedido.
+   */
+  datasFaturamento: string[];
   /** Soma do `valorDocumento` de todos os títulos localizados para o pedido (todas as faturas, parciais ou não). 0 quando `semTitulosLocalizados` é true. */
   valorFaturado: number;
   /**
@@ -120,6 +138,37 @@ export interface ResultadoComissionamento {
   pedidosSemVendedorExcluidos: number;
   /** Números dos pedidos excluídos por não terem vendedor identificado (mesma contagem de `pedidosSemVendedorExcluidos`) — para o usuário conseguir localizá-los na Omie e corrigir o cadastro do vendedor. */
   numerosPedidosSemVendedor: string[];
+  /**
+   * Pedidos de períodos anteriores que tinham parcela vencendo no período, mas cujo pedido não
+   * pôde ser consultado na Omie (ex.: excluído/cancelado) — ficam fora do relatório e são
+   * listados aqui para aviso, nunca calculados com dado incompleto.
+   */
+  numerosPedidosAnterioresNaoLocalizados: string[];
+}
+
+/** "dd/mm/aaaa" → aaaammdd (número comparável); `null` se o texto não for uma data nesse formato. */
+function chaveData(data: string | null | undefined): number | null {
+  const partes = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((data ?? '').trim());
+  if (partes === null) return null;
+  return Number(partes[3]) * 10000 + Number(partes[2]) * 100 + Number(partes[1]);
+}
+
+/** Mesmo dia, 12 meses antes (29/02 → 28/02) — limite inferior da janela de pedidos anteriores. */
+function chaveDozeMesesAntes(chave: number): number {
+  const ano = Math.floor(chave / 10000);
+  const mes = Math.floor(chave / 100) % 100;
+  const dia = chave % 100;
+  const ultimoDiaDoMes = new Date(ano - 1, mes, 0).getDate();
+  return (ano - 1) * 10000 + mes * 100 + Math.min(dia, ultimoDiaDoMes);
+}
+
+function datasFaturamentoDosTitulos(titulos: TituloContaReceber[]): string[] {
+  const porChave = new Map<number, string>();
+  for (const titulo of titulos) {
+    const chave = chaveData(titulo.dataEmissao);
+    if (chave !== null && titulo.dataEmissao) porChave.set(chave, titulo.dataEmissao.trim());
+  }
+  return [...porChave.entries()].sort((a, b) => a[0] - b[0]).map(([, data]) => data);
 }
 
 function arredondarDinheiroLocal(valor: number): number {
@@ -344,6 +393,10 @@ function rotularFaturamentoParcial(numeroPedido: string, parcelas: ParcelaComiss
  *   4. Localiza as parcelas do pedido pelo código do pedido (`nCodPedido`)
  *      e distribui a comissão proporcionalmente ao valor de cada uma.
  *   5. Consolida comissão total, liberada (parcela baixada) e pendente.
+ *   6. Com período informado (regra de 2026-09-28): inclui pedidos dos 12
+ *      meses anteriores que tenham parcela com VENCIMENTO no período,
+ *      partindo dos títulos (nunca varre 12 meses de pedidos), sem duplicar
+ *      venda do período e sem somar venda/comissão total/quantidade deles.
  */
 export async function gerarRelatorioComissionamento(
   cliente: ClienteOmieParaComissionamento,
@@ -361,7 +414,20 @@ export async function gerarRelatorioComissionamento(
   const pedidosSemVendedorExcluidos = semVendedor.length;
   const numerosPedidosSemVendedor = semVendedor.map((l) => l.numeroPedido);
 
-  const codigosVendedorUnicos = [...new Set(comVendedor.map((l) => l.codigoVendedor as number))];
+  // Janela de pedidos anteriores (regra de 2026-09-28): só existe com período completo informado.
+  // "Parcela no período" = VENCIMENTO do título dentro do período (única data que a Omie dá por
+  // título; liberada/pendente continuam decididas só pelo status, como sempre).
+  const inicioPeriodo = chaveData(filtros.dataDe);
+  const fimPeriodo = chaveData(filtros.dataAte);
+
+  // Vendedores cujos títulos são necessários: os das vendas do período e, com janela, também os
+  // que podem ter parcela de pedido antigo vencendo no período — o vendedor filtrado ou, sem
+  // filtro, todos os vendedores (a restrição por vendedor continua vindo de `codigoVendedor`).
+  const codigosVendedor = new Set(comVendedor.map((l) => l.codigoVendedor as number));
+  if (inicioPeriodo !== null && fimPeriodo !== null) {
+    if (filtros.codigoVendedor !== undefined) codigosVendedor.add(filtros.codigoVendedor);
+    else for (const vendedor of await cliente.listarVendedores()) codigosVendedor.add(vendedor.codigo);
+  }
 
   // Sequencial, nunca Promise.all: a Omie rejeita chamadas concorrentes do
   // MESMO método ("Já existe uma requisição desse método sendo executada"),
@@ -377,7 +443,7 @@ export async function gerarRelatorioComissionamento(
   // vínculo por código sozinho perde os títulos das faturas parciais.
   const titulosPorCodigoPedido = new Map<number, TituloContaReceber[]>();
   const titulosPorNumeroPedido = new Map<string, TituloContaReceber[]>();
-  for (const codigo of codigosVendedorUnicos) {
+  for (const codigo of codigosVendedor) {
     const titulos = await cliente.listarContasReceberPorVendedor(codigo);
     for (const titulo of titulos) {
       if (titulo.codigoPedido !== null) {
@@ -407,78 +473,155 @@ export async function gerarRelatorioComissionamento(
     return combinados;
   }
 
-  const linhas: LinhaComissionamento[] = await Promise.all(
-    comVendedor.map(async (linha) => {
-      const {
-        margem,
-        comissaoNormalPercentual,
-        adicionalVendedorPercentual,
-        comissaoFinalPercentual,
-        comissaoTotal,
-        vendedorComissaoFixaPercentual,
-        segregacaoComissaoFixa,
-      } = await calcularComissaoDaLinha(cliente, linha);
+  function venceNoPeriodo(dataVencimento: string | null | undefined): boolean {
+    const chave = chaveData(dataVencimento);
+    return chave !== null && inicioPeriodo !== null && fimPeriodo !== null && chave >= inicioPeriodo && chave <= fimPeriodo;
+  }
 
-      // Percentual efetivo (comissão total ÷ receita) para distribuir a comissão pelas parcelas
-      // proporcionalmente ao peso de cada uma — necessário porque, com segregação, a comissão do
-      // pedido não é mais um único percentual aplicado à base (é a soma de duas partes).
-      const percentualEfetivo = linha.receitaTotal === 0 ? 0 : (comissaoTotal / linha.receitaTotal) * 100;
+  /** Cálculo de sempre (margem → comissão → parcelas → liberada/pendente) para uma linha — idêntico para venda do período e pedido anterior. */
+  async function calcularLinha(linha: LinhaRelatorio, origem: OrigemLinhaComissionamento): Promise<LinhaComissionamento> {
+    const {
+      margem,
+      comissaoNormalPercentual,
+      adicionalVendedorPercentual,
+      comissaoFinalPercentual,
+      comissaoTotal,
+      vendedorComissaoFixaPercentual,
+      segregacaoComissaoFixa,
+    } = await calcularComissaoDaLinha(cliente, linha);
 
-      const titulosDoPedido = localizarTitulosDoPedido(linha);
-      const parcelasSemFatura = distribuirComissaoPorParcelas(
-        linha.receitaTotal,
-        percentualEfetivo,
-        titulosDoPedido.map((t) => ({
-          numeroParcela: t.numeroParcela,
-          valorBruto: t.valorDocumento,
-          statusTitulo: t.statusTitulo,
-          numeroNotaFiscal: t.numeroNotaFiscal,
-        })),
-      );
-      const parcelas = rotularFaturamentoParcial(linha.numeroPedido, parcelasSemFatura);
+    // Percentual efetivo (comissão total ÷ receita) para distribuir a comissão pelas parcelas
+    // proporcionalmente ao peso de cada uma — necessário porque, com segregação, a comissão do
+    // pedido não é mais um único percentual aplicado à base (é a soma de duas partes).
+    const percentualEfetivo = linha.receitaTotal === 0 ? 0 : (comissaoTotal / linha.receitaTotal) * 100;
 
-      const comissaoLiberada = parcelas.filter((p) => p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
-      const comissaoPendente = comissaoTotal - comissaoLiberada;
+    const titulosDoPedido = localizarTitulosDoPedido(linha);
+    const parcelasSemFatura = distribuirComissaoPorParcelas(
+      linha.receitaTotal,
+      percentualEfetivo,
+      titulosDoPedido.map((t) => ({
+        numeroParcela: t.numeroParcela,
+        valorBruto: t.valorDocumento,
+        statusTitulo: t.statusTitulo,
+        numeroNotaFiscal: t.numeroNotaFiscal,
+        dataVencimento: t.dataVencimento,
+        dataEmissao: t.dataEmissao ?? null,
+      })),
+    );
+    const todasAsParcelas = rotularFaturamentoParcial(linha.numeroPedido, parcelasSemFatura);
 
-      const valorFaturado = titulosDoPedido.reduce((soma, t) => soma + t.valorDocumento, 0);
-      const saldoAFaturar = linha.valorBruto - valorFaturado;
+    // Venda do período: todas as parcelas, liberada/pendente sobre a comissão inteira (regra de
+    // sempre). Pedido anterior: só as parcelas que vencem no período — a distribuição acima já
+    // usou TODAS as parcelas, então o valor de cada parcela é exatamente o mesmo de sempre.
+    const parcelas = origem === 'PERIODO' ? todasAsParcelas : todasAsParcelas.filter((p) => venceNoPeriodo(p.dataVencimento));
+    const comissaoLiberada = parcelas.filter((p) => p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
+    const comissaoPendente =
+      origem === 'PERIODO'
+        ? comissaoTotal - comissaoLiberada
+        : parcelas.filter((p) => !p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
 
-      return {
-        ...linha,
-        despesasIPI: arredondarDinheiroLocal(margem.despesasIPI),
-        despesasIcmsSt: arredondarDinheiroLocal(margem.despesasIcmsSt),
-        despesasFreteSeguroOutras: arredondarDinheiroLocal(margem.despesasFreteSeguroOutras),
-        despesasTotal: arredondarDinheiroLocal(margem.despesasTotal),
-        resultadoAposDespesas: arredondarDinheiroLocal(margem.resultadoAposDespesas),
-        margemComissionamentoPercentual:
-          margem.margemComissionamentoPercentual === null ? null : arredondarDinheiroLocal(margem.margemComissionamentoPercentual),
-        impostosEmbutidos: {
-          icms: arredondarDinheiroLocal(margem.impostosEmbutidos.icms),
-          pis: arredondarDinheiroLocal(margem.impostosEmbutidos.pis),
-          cofins: arredondarDinheiroLocal(margem.impostosEmbutidos.cofins),
-          ibs: arredondarDinheiroLocal(margem.impostosEmbutidos.ibs),
-          cbs: arredondarDinheiroLocal(margem.impostosEmbutidos.cbs),
-        },
-        comissaoNormalPercentual: arredondarDinheiroLocal(comissaoNormalPercentual),
-        adicionalVendedorPercentual: arredondarDinheiroLocal(adicionalVendedorPercentual),
-        comissaoFinalPercentual: arredondarDinheiroLocal(comissaoFinalPercentual),
-        comissaoTotal: arredondarDinheiroLocal(comissaoTotal),
-        parcelas,
-        comissaoLiberada: arredondarDinheiroLocal(comissaoLiberada),
-        comissaoPendente: arredondarDinheiroLocal(comissaoPendente),
-        semTitulosLocalizados: titulosDoPedido.length === 0,
-        valorFaturado: arredondarDinheiroLocal(valorFaturado),
-        saldoAFaturar: arredondarDinheiroLocal(saldoAFaturar),
-        ...(vendedorComissaoFixaPercentual !== undefined ? { vendedorComissaoFixaPercentual } : {}),
-        ...(segregacaoComissaoFixa !== undefined ? { segregacaoComissaoFixa } : {}),
-      };
-    }),
-  );
+    const valorFaturado = titulosDoPedido.reduce((soma, t) => soma + t.valorDocumento, 0);
+    const saldoAFaturar = linha.valorBruto - valorFaturado;
 
+    return {
+      ...linha,
+      despesasIPI: arredondarDinheiroLocal(margem.despesasIPI),
+      despesasIcmsSt: arredondarDinheiroLocal(margem.despesasIcmsSt),
+      despesasFreteSeguroOutras: arredondarDinheiroLocal(margem.despesasFreteSeguroOutras),
+      despesasTotal: arredondarDinheiroLocal(margem.despesasTotal),
+      resultadoAposDespesas: arredondarDinheiroLocal(margem.resultadoAposDespesas),
+      margemComissionamentoPercentual:
+        margem.margemComissionamentoPercentual === null ? null : arredondarDinheiroLocal(margem.margemComissionamentoPercentual),
+      impostosEmbutidos: {
+        icms: arredondarDinheiroLocal(margem.impostosEmbutidos.icms),
+        pis: arredondarDinheiroLocal(margem.impostosEmbutidos.pis),
+        cofins: arredondarDinheiroLocal(margem.impostosEmbutidos.cofins),
+        ibs: arredondarDinheiroLocal(margem.impostosEmbutidos.ibs),
+        cbs: arredondarDinheiroLocal(margem.impostosEmbutidos.cbs),
+      },
+      comissaoNormalPercentual: arredondarDinheiroLocal(comissaoNormalPercentual),
+      adicionalVendedorPercentual: arredondarDinheiroLocal(adicionalVendedorPercentual),
+      comissaoFinalPercentual: arredondarDinheiroLocal(comissaoFinalPercentual),
+      comissaoTotal: arredondarDinheiroLocal(comissaoTotal),
+      parcelas,
+      comissaoLiberada: arredondarDinheiroLocal(comissaoLiberada),
+      comissaoPendente: arredondarDinheiroLocal(comissaoPendente),
+      semTitulosLocalizados: titulosDoPedido.length === 0,
+      origem,
+      datasFaturamento: datasFaturamentoDosTitulos(titulosDoPedido),
+      valorFaturado: arredondarDinheiroLocal(valorFaturado),
+      saldoAFaturar: arredondarDinheiroLocal(saldoAFaturar),
+      ...(vendedorComissaoFixaPercentual !== undefined ? { vendedorComissaoFixaPercentual } : {}),
+      ...(segregacaoComissaoFixa !== undefined ? { segregacaoComissaoFixa } : {}),
+    };
+  }
+
+  const linhasDoPeriodo: LinhaComissionamento[] = await Promise.all(comVendedor.map((linha) => calcularLinha(linha, 'PERIODO')));
+
+  // Pedidos anteriores trazidos por parcela: parte dos TÍTULOS com vencimento no período (nunca
+  // varre 12 meses de pedidos). Pedido que já é venda do período nunca entra de novo.
+  const linhasAnteriores: LinhaComissionamento[] = [];
+  const numerosPedidosAnterioresNaoLocalizados: string[] = [];
+  if (inicioPeriodo !== null && fimPeriodo !== null) {
+    const limiteInferior = chaveDozeMesesAntes(inicioPeriodo);
+    const numerosDoPeriodo = new Set(relatorioVendas.linhas.map((l) => l.numeroPedido));
+    const candidatos = [...titulosPorNumeroPedido.entries()]
+      .filter(([numero, titulos]) => !numerosDoPeriodo.has(numero) && titulos.some((t) => venceNoPeriodo(t.dataVencimento)))
+      .sort(([a], [b]) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+
+    if (candidatos.length > 0) {
+      const [etapas, vendedores] = await Promise.all([cliente.listarEtapasVendaProduto(), cliente.listarVendedores()]);
+      for (const [numeroPedido, titulos] of candidatos) {
+        // Faturamento parcial: o registro original consultado sozinho vem com os itens já movidos
+        // zerados — por isso busca também o registro de CADA fatura (o `nCodPedido` dos títulos) e
+        // consolida exatamente como o relatório do período faz (`montarLinhasDePedidos`).
+        let registros: PedidoOmie[];
+        try {
+          registros = [await cliente.consultarPedido({ numeroPedido })];
+          const codigosFaturas = [...new Set(titulos.map((t) => t.codigoPedido).filter((c): c is number => c !== null))];
+          for (const codigoPedido of codigosFaturas) {
+            if (registros.some((r) => r.cabecalho.codigo_pedido === codigoPedido)) continue;
+            registros.push(await cliente.consultarPedido({ codigoPedido }));
+          }
+        } catch {
+          numerosPedidosAnterioresNaoLocalizados.push(numeroPedido);
+          continue;
+        }
+
+        // Janela: mesma referência de data que decide se um pedido é "do período". O filtro
+        // `filtrar_por_data_de/ate` do `ListarPedidos` seleciona pela INCLUSÃO ou pela ÚLTIMA
+        // ALTERAÇÃO do registro (`infoCadastro.dInc`/`dAlt`) — confirmado contra a API real em
+        // 2026-09-28: 66/66 pedidos de 01–15/09/2026 com dInc ou dAlt no intervalo, contra 46/66
+        // pela `data_previsao`. Entra se algum registro do pedido (original ou fatura) seria
+        // listado pelo mesmo filtro na janela [início − 12 meses, início). Sem data: não entra.
+        const naJanela = (data: string | undefined) => {
+          const chave = chaveData(data);
+          return chave !== null && chave >= limiteInferior && chave < inicioPeriodo;
+        };
+        if (!registros.some((r) => naJanela(r.infoCadastro?.dInc) || naJanela(r.infoCadastro?.dAlt))) continue;
+
+        const { linhas: linhasDoPedido } = await montarLinhasDePedidos(
+          cliente,
+          registros,
+          { tipoDocumento: 'PEDIDO', codigoVendedor: filtros.codigoVendedor },
+          { etapas, vendedores },
+        );
+        for (const linha of linhasDoPedido) {
+          if (linha.numeroPedido !== numeroPedido || linha.codigoVendedor === null) continue;
+          linhasAnteriores.push(await calcularLinha(linha, 'PARCELA_PERIODO_ANTERIOR'));
+        }
+      }
+    }
+  }
+
+  const linhas = [...linhasDoPeriodo, ...linhasAnteriores];
+
+  // Venda/comissão total/quantidade: só vendas do período (pedido anterior nunca infla o mês).
+  // Liberada/pendente/parcelas: todas as linhas — nos pedidos anteriores, já só as do período.
   const resumo: ResumoComissionamento = {
-    quantidadePedidos: linhas.length,
-    valorVendaTotal: arredondarDinheiroLocal(linhas.reduce((s, l) => s + l.valorBruto, 0)),
-    comissaoTotalCalculada: arredondarDinheiroLocal(linhas.reduce((s, l) => s + l.comissaoTotal, 0)),
+    quantidadePedidos: linhasDoPeriodo.length,
+    valorVendaTotal: arredondarDinheiroLocal(linhasDoPeriodo.reduce((s, l) => s + l.valorBruto, 0)),
+    comissaoTotalCalculada: arredondarDinheiroLocal(linhasDoPeriodo.reduce((s, l) => s + l.comissaoTotal, 0)),
     comissaoLiberada: arredondarDinheiroLocal(linhas.reduce((s, l) => s + l.comissaoLiberada, 0)),
     comissaoPendente: arredondarDinheiroLocal(linhas.reduce((s, l) => s + l.comissaoPendente, 0)),
     quantidadeParcelasTotal: linhas.reduce((s, l) => s + l.parcelas.length, 0),
@@ -492,5 +635,6 @@ export async function gerarRelatorioComissionamento(
     documentosAmbiguosExcluidos: relatorioVendas.documentosAmbiguosExcluidos,
     pedidosSemVendedorExcluidos,
     numerosPedidosSemVendedor,
+    numerosPedidosAnterioresNaoLocalizados,
   };
 }

@@ -29,6 +29,7 @@ function resultadoVazio(): ResultadoComissionamento {
     documentosAmbiguosExcluidos: 0,
     pedidosSemVendedorExcluidos: 0,
     numerosPedidosSemVendedor: [],
+    numerosPedidosAnterioresNaoLocalizados: [],
   };
 }
 
@@ -50,6 +51,7 @@ async function gerarParaCodigos(
     total.linhas.push(...parcial.linhas);
     for (const chave of Object.keys(total.resumo) as Array<keyof typeof total.resumo>) total.resumo[chave] += parcial.resumo[chave];
     total.documentosAmbiguosExcluidos = Math.max(total.documentosAmbiguosExcluidos, parcial.documentosAmbiguosExcluidos);
+    total.numerosPedidosAnterioresNaoLocalizados.push(...parcial.numerosPedidosAnterioresNaoLocalizados);
   }
   return total;
 }
@@ -95,6 +97,7 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
         documentosAmbiguosExcluidos: resultado.documentosAmbiguosExcluidos,
         pedidosSemVendedorExcluidos: ehVendedor ? 0 : resultado.pedidosSemVendedorExcluidos,
         numerosPedidosSemVendedor: ehVendedor ? [] : resultado.numerosPedidosSemVendedor,
+        numerosPedidosAnterioresNaoLocalizados: resultado.numerosPedidosAnterioresNaoLocalizados,
       });
     }),
   );

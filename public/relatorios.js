@@ -31,6 +31,7 @@ export function titulosTabelaComissionamento(margemVisivel) {
         'Nº',
         'Cliente',
         'Vendedor',
+        'Data de faturamento',
         ...(margemVisivel ? ['Margem'] : []),
         'Comissão %',
         'Valor da venda',
@@ -39,6 +40,19 @@ export function titulosTabelaComissionamento(margemVisivel) {
         'Pendente',
         'Parcelas',
     ];
+}
+/**
+ * Célula "Data de faturamento": emissão da(s) fatura(s) do pedido, nunca a data do pedido. Sem
+ * título → "—". Várias faturas (faturamento parcial) → a primeira + "(+N)", todas no `title`,
+ * sem duplicar a linha do pedido.
+ */
+export function formatarDatasFaturamento(datas) {
+    const lista = datas ?? [];
+    if (lista.length === 0)
+        return { texto: '—', titulo: 'Sem faturamento localizado na Omie' };
+    if (lista.length === 1)
+        return { texto: lista[0], titulo: `Faturado em ${lista[0]}` };
+    return { texto: `${lista[0]} (+${lista.length - 1})`, titulo: `Faturas emitidas em: ${lista.join(', ')}` };
 }
 /**
  * Popula o filtro de vendedor. Papel "vendedor" (o servidor devolve `restritoAoProprioVendedor`
@@ -345,8 +359,8 @@ export function inicializarRelatorios() {
         const temFaturamentoParcial = linha.parcelas.some((p) => p.numeroFaturaParcial);
         const trh = document.createElement('tr');
         const colunas = temFaturamentoParcial
-            ? ['Fatura', 'Parcela', 'Valor', 'Situação financeira', 'Comissão', 'Situação da comissão']
-            : ['Parcela', 'Valor', 'Situação financeira', 'Comissão', 'Situação da comissão'];
+            ? ['Fatura', 'Parcela', 'Faturamento', 'Vencimento', 'Valor', 'Situação financeira', 'Comissão', 'Situação da comissão']
+            : ['Parcela', 'Faturamento', 'Vencimento', 'Valor', 'Situação financeira', 'Comissão', 'Situação da comissão'];
         for (const titulo of colunas) {
             const th = document.createElement('th');
             th.textContent = titulo;
@@ -361,6 +375,8 @@ export function inicializarRelatorios() {
                 trp.appendChild(celula(parcela.numeroFaturaParcial ?? linha.numeroPedido, 'col-fatura-parcial'));
             }
             trp.appendChild(celula(parcela.numeroParcela ?? '—'));
+            trp.appendChild(celula(parcela.dataEmissao ?? '—'));
+            trp.appendChild(celula(parcela.dataVencimento ?? '—'));
             trp.appendChild(celula(formatarMoeda(parcela.valorBrutoParcela)));
             trp.appendChild(celula(parcela.statusTitulo ?? 'Não localizado'));
             trp.appendChild(celula(formatarMoeda(parcela.comissaoParcela)));
@@ -382,7 +398,7 @@ export function inicializarRelatorios() {
             const th = document.createElement('th');
             th.scope = 'col';
             th.textContent = titulo;
-            if (!['Nº', 'Cliente', 'Vendedor'].includes(titulo))
+            if (!['Nº', 'Cliente', 'Vendedor', 'Data de faturamento'].includes(titulo))
                 th.className = 'col-num';
             trCabecalho.appendChild(th);
         }
@@ -400,6 +416,16 @@ export function inicializarRelatorios() {
                 badge.title = 'Pedido faturado em mais de uma nota fiscal — veja o detalhamento por fatura ao expandir a linha.';
                 tdNumero.appendChild(badge);
             }
+            const periodoAnterior = linha.origem === 'PARCELA_PERIODO_ANTERIOR';
+            if (periodoAnterior) {
+                tr.classList.add('linha-periodo-anterior');
+                const badge = document.createElement('span');
+                badge.className = 'badge-periodo-anterior';
+                badge.textContent = 'Parcela de período anterior';
+                badge.title =
+                    'Venda de período anterior com parcela vencendo neste período — valor da venda e comissão total não somam nos totais do período; liberada/pendente consideram só as parcelas do período.';
+                tdNumero.appendChild(badge);
+            }
             tr.appendChild(tdNumero);
             const tdCliente = celula(linha.nomeCliente ?? 'Não localizado', 'col-nome');
             tdCliente.title = linha.nomeCliente ?? 'Não localizado';
@@ -407,6 +433,10 @@ export function inicializarRelatorios() {
             const tdVendedor = celula(linha.nomeVendedor ?? 'Não identificado', 'col-nome');
             tdVendedor.title = linha.nomeVendedor ?? 'Não identificado';
             tr.appendChild(tdVendedor);
+            const faturamento = formatarDatasFaturamento(linha.datasFaturamento);
+            const tdFaturamento = celula(faturamento.texto, 'col-data');
+            tdFaturamento.title = faturamento.titulo;
+            tr.appendChild(tdFaturamento);
             if (margemVisivel)
                 tr.appendChild(celula(formatarPercentual(linha.margemComissionamentoPercentual ?? null), 'col-num'));
             // Em pedidos mistos (comissão fixa numa família + regra normal no resto), mostra a taxa EFETIVA
@@ -430,8 +460,10 @@ export function inicializarRelatorios() {
                         : `Comissão normal ${linha.comissaoNormalPercentual}% (sem adicional)`;
             }
             tr.appendChild(tdFaixa);
-            tr.appendChild(celula(formatarMoeda(linha.valorBruto), 'col-num'));
-            tr.appendChild(celula(formatarMoeda(linha.comissaoTotal), 'col-num'));
+            // Pedido anterior: venda e comissão total aparecem para referência, mas não somam no período.
+            const classeForaDoTotal = periodoAnterior ? 'col-num valor-fora-do-total' : 'col-num';
+            tr.appendChild(celula(formatarMoeda(linha.valorBruto), classeForaDoTotal));
+            tr.appendChild(celula(formatarMoeda(linha.comissaoTotal), classeForaDoTotal));
             tr.appendChild(celula(formatarMoeda(linha.comissaoLiberada), 'col-num valor-positivo'));
             tr.appendChild(celula(formatarMoeda(linha.comissaoPendente), 'col-num'));
             tr.appendChild(celula(linha.semTitulosLocalizados ? 'Sem título' : `${linha.parcelas.filter((p) => p.baixado).length}/${linha.parcelas.length}`, 'col-num'));
@@ -474,6 +506,14 @@ export function inicializarRelatorios() {
                 }
                 if (dados.documentosAmbiguosExcluidos > 0) {
                     avisos.push(`${dados.documentosAmbiguosExcluidos} documento(s) com etapa não reconhecida foram excluídos.`);
+                }
+                const anterioresNaoLocalizados = dados.numerosPedidosAnterioresNaoLocalizados ?? [];
+                if (anterioresNaoLocalizados.length > 0) {
+                    avisos.push(`${anterioresNaoLocalizados.length} pedido(s) de período anterior com parcela neste período não puderam ser consultados na Omie e ficaram fora: ${anterioresNaoLocalizados.map((n) => `nº ${n}`).join(', ')}.`);
+                }
+                const qtdAnteriores = dados.linhas.filter((l) => l.origem === 'PARCELA_PERIODO_ANTERIOR').length;
+                if (qtdAnteriores > 0) {
+                    avisos.push(`${qtdAnteriores} pedido(s) de até 12 meses antes aparecem por terem parcela vencendo no período — não somam em Pedidos, Valor da venda nem Comissão calculada.`);
                 }
                 if (avisos.length > 0) {
                     avisoRelatorio.textContent = avisos.join(' ');

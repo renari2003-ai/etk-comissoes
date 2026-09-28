@@ -142,6 +142,10 @@ export interface ParcelaFinanceira {
   statusTitulo: string | null;
   /** Número da nota fiscal do título de origem — identifica de qual fatura (parcial ou não) esta parcela veio (regra de 2026-09-10, ver `numeroFaturaParcial` em `ParcelaComissao`). */
   numeroNotaFiscal?: string | null;
+  /** Vencimento do título (dd/mm/aaaa) — só repassado; nunca entra no cálculo. */
+  dataVencimento?: string | null;
+  /** Emissão da fatura do título (dd/mm/aaaa) — só repassado; nunca entra no cálculo. */
+  dataEmissao?: string | null;
 }
 
 export interface ParcelaComissao {
@@ -165,6 +169,10 @@ export interface ParcelaComissao {
    * numa única nota.
    */
   numeroFaturaParcial?: string | null;
+  /** Vencimento do título (dd/mm/aaaa), repassado de `ParcelaFinanceira` — critério de "parcela no período" (regra de 2026-09-28). */
+  dataVencimento?: string | null;
+  /** Emissão da fatura do título (dd/mm/aaaa), repassada de `ParcelaFinanceira` — data de faturamento da parcela. */
+  dataEmissao?: string | null;
 }
 
 /**
@@ -208,6 +216,8 @@ export function distribuirComissaoPorParcelas(
       baixado,
       situacao,
       numeroNotaFiscal: parcela.numeroNotaFiscal ?? null,
+      dataVencimento: parcela.dataVencimento ?? null,
+      dataEmissao: parcela.dataEmissao ?? null,
     };
   });
 }

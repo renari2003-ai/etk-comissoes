@@ -192,6 +192,13 @@ export interface TituloContaReceber {
   valorDocumento: number;
   dataVencimento: string;
   /**
+   * `data_emissao` do título — data de emissão da fatura/nota que gerou o título, usada como
+   * DATA DE FATURAMENTO no Comissionamento (regra de 2026-09-28). Confirmado contra a API real
+   * em 2026-09-28 (pedido 154): preenchida e diferente em cada fatura parcial (NF 00025739 em
+   * 01/09/2026, NF 00025767 em 10/09/2026). `null` quando ausente — nunca substituída por outra data.
+   */
+  dataEmissao: string | null;
+  /**
    * Status literal retornado pela Omie (`status_titulo`). Valores
    * observados: "RECEBIDO" (baixado), "ATRASADO", "A VENCER", "VENCE HOJE",
    * "CANCELADO". A Omie NÃO expõe uma data de baixa explícita nesta
@@ -594,6 +601,7 @@ export class ClienteOmie {
             numero_documento_fiscal?: string;
             valor_documento: number;
             data_vencimento: string;
+            data_emissao?: string;
             status_titulo: string;
             codigo_vendedor?: number;
             id_origem: string;
@@ -615,6 +623,7 @@ export class ClienteOmie {
             numeroNotaFiscal: registro.numero_documento_fiscal ?? null,
             valorDocumento: registro.valor_documento,
             dataVencimento: registro.data_vencimento,
+            dataEmissao: registro.data_emissao?.trim() ? registro.data_emissao.trim() : null,
             statusTitulo: registro.status_titulo,
             codigoVendedor: registro.codigo_vendedor ?? null,
           });

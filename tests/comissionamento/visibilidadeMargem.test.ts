@@ -82,6 +82,8 @@ const LINHA: LinhaComissionamento = {
   semTitulosLocalizados: false,
   valorFaturado: 1000,
   saldoAFaturar: 0,
+  origem: 'PERIODO',
+  datasFaturamento: ['01/09/2026'],
 };
 
 const RESULTADO: ResultadoComissionamento = {
@@ -99,6 +101,7 @@ const RESULTADO: ResultadoComissionamento = {
   documentosAmbiguosExcluidos: 0,
   pedidosSemVendedorExcluidos: 0,
   numerosPedidosSemVendedor: [],
+  numerosPedidosAnterioresNaoLocalizados: [],
 };
 
 const gerarRelatorioMock = vi.fn(async () => structuredClone(RESULTADO));
@@ -179,10 +182,10 @@ describe('API do relatório de comissionamento — margem só para administrador
 describe('tela e PDF (impressão da mesma tabela) — coluna Margem', () => {
   it('administrador vê a coluna Margem', () => {
     expect(titulosTabelaComissionamento(true)).toContain('Margem');
-    expect(titulosTabelaComissionamento(true)).toHaveLength(10);
+    expect(titulosTabelaComissionamento(true)).toHaveLength(11);
   });
 
-  it('demais papéis: coluna Margem removida, sem coluna vazia (9 colunas, demais na mesma ordem)', () => {
+  it('demais papéis: coluna Margem removida, sem coluna vazia (demais na mesma ordem)', () => {
     const titulos = titulosTabelaComissionamento(false);
     expect(titulos).not.toContain('Margem');
     expect(titulos).toEqual(titulosTabelaComissionamento(true).filter((t) => t !== 'Margem'));

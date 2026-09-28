@@ -24,14 +24,50 @@ export class ClienteComissionamentoOmieFalso implements ClienteOmieParaComission
     return registro;
   }
 
+  /** Registro de chamadas de leitura (para os testes conferirem quais consultas foram feitas). */
+  readonly consultasPedido: Array<{ numeroPedido?: string; codigoPedido?: number }> = [];
+  readonly consultasTitulosPorVendedor: number[] = [];
+
+  /**
+   * Com `dataDe`/`dataAte`, simula o filtro de período da Omie como ele é de verdade (confirmado
+   * contra a API real em 2026-09-28): o registro entra se a INCLUSÃO ou a ÚLTIMA ALTERAÇÃO
+   * (`infoCadastro.dInc`/`dAlt`) cair no intervalo. Pedidos sem `infoCadastro` sempre entram
+   * (comportamento anterior do fake, preservado para os testes que não usam período).
+   */
   async listarPedidosCompletos(filtros: {
     pagina: number;
     registrosPorPagina: number;
+    dataDe?: string;
+    dataAte?: string;
   }): Promise<{ pedidos: PedidoOmie[]; pagina: number; totalDePaginas: number }> {
+    const chave = (d: string) => d.split('/').reverse().join('');
+    const noIntervalo = (data: string | undefined) =>
+      data !== undefined &&
+      (filtros.dataDe === undefined || chave(data) >= chave(filtros.dataDe)) &&
+      (filtros.dataAte === undefined || chave(data) <= chave(filtros.dataAte));
+    const filtrados = this.pedidos.filter((p) => {
+      if (p.infoCadastro === undefined) return true;
+      return noIntervalo(p.infoCadastro.dInc) || noIntervalo(p.infoCadastro.dAlt);
+    });
     const inicio = (filtros.pagina - 1) * filtros.registrosPorPagina;
-    const pagina = this.pedidos.slice(inicio, inicio + filtros.registrosPorPagina);
-    const totalDePaginas = Math.max(1, Math.ceil(this.pedidos.length / filtros.registrosPorPagina));
+    const pagina = filtrados.slice(inicio, inicio + filtros.registrosPorPagina);
+    const totalDePaginas = Math.max(1, Math.ceil(filtrados.length / filtros.registrosPorPagina));
     return { pedidos: pagina, pagina: filtros.pagina, totalDePaginas };
+  }
+
+  /** Por número devolve o registro ORIGINAL (menor código), como a Omie; rejeita quando não existe. */
+  async consultarPedido(identificador: { numeroPedido?: string; codigoPedido?: number }): Promise<PedidoOmie> {
+    this.consultasPedido.push(identificador);
+    const candidatos = this.pedidos
+      .filter((p) =>
+        identificador.codigoPedido !== undefined
+          ? p.cabecalho.codigo_pedido === identificador.codigoPedido
+          : p.cabecalho.numero_pedido === identificador.numeroPedido,
+      )
+      .sort((a, b) => a.cabecalho.codigo_pedido - b.cabecalho.codigo_pedido);
+    const encontrado = candidatos[0];
+    if (encontrado === undefined) throw new Error('Pedido não cadastrado (fake)');
+    return encontrado;
   }
 
   async listarEtapasVendaProduto(): Promise<EtapaFaturamento[]> {
@@ -51,6 +87,7 @@ export class ClienteComissionamentoOmieFalso implements ClienteOmieParaComission
   }
 
   async listarContasReceberPorVendedor(codigoVendedor: number): Promise<TituloContaReceber[]> {
+    this.consultasTitulosPorVendedor.push(codigoVendedor);
     return this.titulosPorVendedor.get(codigoVendedor) ?? [];
   }
 }
