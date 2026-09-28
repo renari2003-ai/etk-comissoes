@@ -96,7 +96,7 @@ describe('gerarRelatorioComissionamento — separação Pedido vs Orçamento (re
     const semVendedor = pedido({
       codigoPedido: 21,
       numeroPedido: '21',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       quantidade: 10,
       valorUnitario: 10,
@@ -118,7 +118,7 @@ describe('gerarRelatorioComissionamento — regra fundamental: custo do produto 
     const baseVenda = {
       codigoPedido: 40,
       numeroPedido: '40',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 100,
@@ -176,7 +176,7 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
     const pedidoD = pedido({
       codigoPedido: 10,
       numeroPedido: '10',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 100,
@@ -257,7 +257,7 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
     const pedidoComFrete = pedido({
       codigoPedido: 12,
       numeroPedido: '12',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -290,7 +290,7 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
     const pedidoComImpostosEmbutidos = pedido({
       codigoPedido: 13,
       numeroPedido: '13',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -323,7 +323,7 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
     const pedidoSemTitulo = pedido({
       codigoPedido: 11,
       numeroPedido: '11',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -351,7 +351,7 @@ describe('gerarRelatorioComissionamento — adicional de vendedor especial, pont
     const pedidoSandro = pedido({
       codigoPedido: 50,
       numeroPedido: '50',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 300,
       quantidade: 10,
@@ -380,7 +380,7 @@ describe('gerarRelatorioComissionamento — adicional de vendedor especial, pont
     const pedidoJoao = pedido({
       codigoPedido: 51,
       numeroPedido: '51',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -407,7 +407,7 @@ describe('gerarRelatorioComissionamento — filtro por vendedor (teste — seç�
     const pedidoVendedor100 = pedido({
       codigoPedido: 30,
       numeroPedido: '30',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -417,7 +417,7 @@ describe('gerarRelatorioComissionamento — filtro por vendedor (teste — seç�
     const pedidoVendedor200 = pedido({
       codigoPedido: 31,
       numeroPedido: '31',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 200,
       quantidade: 10,
@@ -448,7 +448,7 @@ describe('gerarRelatorioComissionamento — vendedor com comissão fixa: Renato 
     const pedidoRenato = pedido({
       codigoPedido: 60,
       numeroPedido: '60',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 400,
       quantidade: 10,
@@ -475,7 +475,7 @@ describe('gerarRelatorioComissionamento — vendedor com comissão fixa: Renato 
 
   it('a comissão fixa do vendedor tem prioridade sobre a comissão fixa de família — ignora item CTO Promocional', async () => {
     const pedidoMisto: PedidoOmie = {
-      cabecalho: { codigo_pedido: 63, numero_pedido: '63', etapa: '10', codigo_cliente: 500 },
+      cabecalho: { codigo_pedido: 63, numero_pedido: '63', etapa: '50', codigo_cliente: 500 },
       det: [
         { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Produto normal', quantidade: 10, valor_unitario: 100, valor_mercadoria: 900 } },
         { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'CTO Promocional', quantidade: 5, valor_unitario: 20, valor_mercadoria: 100 } },
@@ -507,7 +507,7 @@ describe('gerarRelatorioComissionamento — família com comissão fixa: CTO Pro
     const pedidoPromo = pedido({
       codigoPedido: 61,
       numeroPedido: '61',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -535,7 +535,7 @@ describe('gerarRelatorioComissionamento — família com comissão fixa: CTO Pro
   it('pedido MISTO segrega o item CTO Promocional: cada parte com sua própria regra de comissão', async () => {
     // item 1 (normal, receita 900) + item 2 (CTO Promocional, receita 100) — total produtos 1000, IPI 100 -> nota 1100
     const pedidoMisto: PedidoOmie = {
-      cabecalho: { codigo_pedido: 62, numero_pedido: '62', etapa: '10', codigo_cliente: 500 },
+      cabecalho: { codigo_pedido: 62, numero_pedido: '62', etapa: '50', codigo_cliente: 500 },
       det: [
         { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Produto normal', quantidade: 10, valor_unitario: 100, valor_mercadoria: 900 } },
         { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'CTO Promocional', quantidade: 5, valor_unitario: 20, valor_mercadoria: 100 } },
@@ -572,7 +572,7 @@ describe('gerarRelatorioComissionamento — família com comissão fixa: CTO Pro
 
   it('vendedor especial (Sandro) recebe o adicional +1% em AMBAS as partes do pedido misto — normal E comissão fixa (regra confirmada em 2026-09-10)', async () => {
     const pedidoMisto: PedidoOmie = {
-      cabecalho: { codigo_pedido: 64, numero_pedido: '64', etapa: '10', codigo_cliente: 500 },
+      cabecalho: { codigo_pedido: 64, numero_pedido: '64', etapa: '50', codigo_cliente: 500 },
       det: [
         { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Produto normal', quantidade: 10, valor_unitario: 100, valor_mercadoria: 900 } },
         { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'CTO Promocional', quantidade: 5, valor_unitario: 20, valor_mercadoria: 100 } },
@@ -611,7 +611,7 @@ describe('gerarRelatorioComissionamento — família com comissão fixa: CTO Pro
     const pedidoPromoSandro = pedido({
       codigoPedido: 65,
       numeroPedido: '65',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 300,
       quantidade: 10,
@@ -649,7 +649,7 @@ describe('gerarRelatorioComissionamento — faturamento parcial (BUG REAL corrig
     const pedidoParcial = pedido({
       codigoPedido: 900, // codigo_pedido do pedido ORIGINAL — não bate com nenhum título abaixo
       numeroPedido: '154',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 100,
@@ -718,7 +718,7 @@ describe('gerarRelatorioComissionamento — faturamento parcial (BUG REAL corrig
     const pedidoNormal = pedido({
       codigoPedido: 10,
       numeroPedido: '10',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -759,7 +759,7 @@ describe('gerarRelatorioComissionamento — faturamento parcial (BUG REAL corrig
     const pedidoUmaNota = pedido({
       codigoPedido: 20,
       numeroPedido: '20',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
@@ -814,7 +814,7 @@ describe('gerarRelatorioComissionamento — faturamento parcial (BUG REAL corrig
     const pedidoCompleto = pedido({
       codigoPedido: 30,
       numeroPedido: '30',
-      etapa: '10',
+      etapa: '50',
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,

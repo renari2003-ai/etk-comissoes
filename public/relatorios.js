@@ -6,6 +6,17 @@
  * pois os dados vêm da Omie e são tratados como não confiáveis.
  */
 import { formatarMoeda, formatarPercentual } from './formatacao.js';
+/** Uma linha de aviso por exceção, com o necessário para conferir na Omie (tela e PDF). */
+export function descreverExcecoesRevisaoManual(excecoes) {
+    const moeda = (valor) => valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const itens = excecoes.map((e) => {
+        const titulos = e.titulos.length === 0
+            ? 'nenhum verificado'
+            : e.titulos.map((t) => `${t.numeroParcela ?? 's/ parcela'} ${t.statusTitulo} ${moeda(t.valor)}`).join('; ');
+        return `pedido nº ${e.numeroPedido} (registro ${e.codigoPedido}, etapa ${e.etapa}, vendedor ${e.nomeVendedor ?? 'não identificado'}, valor ${moeda(e.valor)}; títulos: ${titulos}) — ${e.motivo}`;
+    });
+    return `${excecoes.length} registro(s) fora do cálculo para revisão manual: ${itens.join(' | ')}.`;
+}
 const SITUACAO_COMISSAO_LEGIVEL = {
     AGUARDANDO_TITULO: 'Aguardando título financeiro',
     PENDENTE_DE_BAIXA: 'Pendente de baixa',
@@ -511,6 +522,9 @@ export function inicializarRelatorios() {
                 if (anterioresNaoLocalizados.length > 0) {
                     avisos.push(`${anterioresNaoLocalizados.length} pedido(s) de período anterior com parcela neste período não puderam ser consultados na Omie e ficaram fora: ${anterioresNaoLocalizados.map((n) => `nº ${n}`).join(', ')}.`);
                 }
+                const excecoes = dados.excecoesRevisaoManual ?? [];
+                if (excecoes.length > 0)
+                    avisos.push(descreverExcecoesRevisaoManual(excecoes));
                 const qtdAnteriores = dados.linhas.filter((l) => l.origem === 'PARCELA_PERIODO_ANTERIOR').length;
                 if (qtdAnteriores > 0) {
                     avisos.push(`${qtdAnteriores} pedido(s) de até 12 meses antes aparecem por terem parcela vencendo no período — não somam em Pedidos, Valor da venda nem Comissão calculada.`);

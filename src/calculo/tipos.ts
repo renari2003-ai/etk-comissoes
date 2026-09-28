@@ -39,6 +39,8 @@ export interface InfoCadastroPedidoOmie {
   dAlt?: string;
   hAlt?: string;
   uAlt?: string;
+  /** "S" quando o registro foi cancelado na Omie (verificado contra a API real em 2026-09-28). */
+  cancelado?: string;
 }
 
 export interface ParcelaPedidoOmie {

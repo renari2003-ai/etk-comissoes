@@ -2,8 +2,21 @@ import type { EstoqueOmie, PedidoOmie } from '../../src/calculo/tipos.js';
 import type { ClienteInfo, VendedorInfo } from '../../src/relatorio/relatorioVendas.js';
 import type { ClienteOmieParaComissionamento } from '../../src/comissionamento/relatorioComissionamento.js';
 import type { ProdutoOmie, TituloContaReceber } from '../../src/omie/cliente.js';
-import { ETAPAS_VENDA_PRODUTO_PADRAO } from './clienteFalso.js';
 import type { EtapaFaturamento } from '../../src/omie/classificacaoDocumento.js';
+
+/**
+ * Configuração REAL de etapas de Venda de Produto da conta (`ListarEtapasFaturamento`, verificada
+ * em 2026-09-28): o Comissionamento só aceita 50 = "PV Liberado Financeiro" e 60 = "Faturado".
+ */
+export const ETAPAS_VENDA_PRODUTO_CONTA_REAL: EtapaFaturamento[] = [
+  { codigo: '00', descricaoPadrao: 'Proposta', descricao: 'Orçamento', inativa: true },
+  { codigo: '10', descricaoPadrao: 'Pedido de Venda', descricao: 'Orçamento', inativa: false },
+  { codigo: '20', descricaoPadrao: 'Separar Estoque', descricao: 'Pedido de Venda', inativa: false },
+  { codigo: '50', descricaoPadrao: 'Faturar', descricao: 'PV Liberado Financeiro', inativa: false },
+  { codigo: '60', descricaoPadrao: 'Faturado', descricao: 'Faturado', inativa: false },
+  { codigo: '70', descricaoPadrao: 'Entrega', descricao: 'Aprovação Gerência', inativa: false },
+  { codigo: '80', descricaoPadrao: '<disponível>', descricao: 'Aprovação Financeiro', inativa: false },
+];
 
 /** Cliente Omie falso para o relatório de Comissionamento — nenhum teste toca a rede. */
 export class ClienteComissionamentoOmieFalso implements ClienteOmieParaComissionamento {
@@ -13,7 +26,7 @@ export class ClienteComissionamentoOmieFalso implements ClienteOmieParaComission
     private readonly clientesPorCodigo: Map<number, ClienteInfo>,
     private readonly estoquesPorCodigoProduto: Map<number, EstoqueOmie>,
     private readonly titulosPorVendedor: Map<number, TituloContaReceber[]>,
-    private readonly etapas: EtapaFaturamento[] = ETAPAS_VENDA_PRODUTO_PADRAO,
+    private readonly etapas: EtapaFaturamento[] = ETAPAS_VENDA_PRODUTO_CONTA_REAL,
     /** Família por produto, usada pelo custo estimado (`custoEstimado.ts`). Produto não configurado -> `consultarProduto` rejeita (cai no divisor padrão). */
     private readonly produtosPorCodigo: Map<number, ProdutoOmie> = new Map(),
   ) {}

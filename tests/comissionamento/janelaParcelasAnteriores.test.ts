@@ -27,7 +27,7 @@ function pedido(o: { codigo: number; numero: string; data: string; valor: number
     cabecalho: {
       codigo_pedido: o.codigo,
       numero_pedido: o.numero,
-      etapa: '10',
+      etapa: '50',
       codigo_cliente: 500,
       data_previsao: o.previsao ?? o.data,
     },

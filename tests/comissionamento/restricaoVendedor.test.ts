@@ -115,6 +115,17 @@ const gerarRelatorioMock = vi.fn(async (_cliente: unknown, filtros: { codigoVend
     pedidosSemVendedorExcluidos: 1,
     numerosPedidosSemVendedor: ['999'],
     numerosPedidosAnterioresNaoLocalizados: [],
+    // Exceções de revisão manual de dois vendedores — a de Bruno (77) nunca pode chegar à Alice.
+    excecoesRevisaoManual: [42, 77].map((codigoVendedor) => ({
+      codigoPedido: 5000 + codigoVendedor,
+      numeroPedido: String(5000 + codigoVendedor),
+      etapa: '60',
+      codigoVendedor,
+      nomeVendedor: codigoVendedor === 42 ? 'Alice Silva' : 'Bruno Souza',
+      valor: 100,
+      titulos: [{ numeroParcela: '001/001', numeroNotaFiscal: 'NF', statusTitulo: 'RECEBIDO', valor: 100, dataVencimento: '10/09/2026' }],
+      motivo: 'Registro cancelado com título financeiro ativo/recebido',
+    })),
   };
 });
 vi.mock('../../src/comissionamento/relatorioComissionamento.js', () => ({
@@ -188,6 +199,16 @@ describe('relatório de comissionamento (tela e PDF) — vendedor forçado pelo 
     expect(linhas.map((l) => l.codigoVendedor).sort()).toEqual([42, 43]);
     expect(linhas.some((l) => l.nomeVendedor === 'Alice Silveira' || l.nomeVendedor === 'Bruno Souza')).toBe(false);
     expect(corpo.numerosPedidosSemVendedor).toEqual([]);
+  });
+
+  it('exceções para revisão manual (registro cancelado com título ativo) também ficam restritas ao próprio vendedor', async () => {
+    const vendedor = await chamar('/api/relatorios/comissionamento', 'vendedor', 'Alice Silva');
+    const excecoes = vendedor.corpo.excecoesRevisaoManual as Array<{ codigoVendedor: number }>;
+    expect(excecoes.length).toBeGreaterThan(0);
+    expect(excecoes.every((e) => e.codigoVendedor === 42)).toBe(true);
+
+    const admin = await chamar('/api/relatorios/comissionamento', 'administrador');
+    expect((admin.corpo.excecoesRevisaoManual as Array<{ codigoVendedor: number }>).map((e) => e.codigoVendedor).sort()).toEqual([42, 77]);
   });
 
   it('comparação só por trim/maiúsculas: nome vinculado com espaços/caixa diferentes funciona; nome parecido não', async () => {

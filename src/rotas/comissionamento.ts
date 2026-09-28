@@ -30,6 +30,7 @@ function resultadoVazio(): ResultadoComissionamento {
     pedidosSemVendedorExcluidos: 0,
     numerosPedidosSemVendedor: [],
     numerosPedidosAnterioresNaoLocalizados: [],
+    excecoesRevisaoManual: [],
   };
 }
 
@@ -52,6 +53,7 @@ async function gerarParaCodigos(
     for (const chave of Object.keys(total.resumo) as Array<keyof typeof total.resumo>) total.resumo[chave] += parcial.resumo[chave];
     total.documentosAmbiguosExcluidos = Math.max(total.documentosAmbiguosExcluidos, parcial.documentosAmbiguosExcluidos);
     total.numerosPedidosAnterioresNaoLocalizados.push(...parcial.numerosPedidosAnterioresNaoLocalizados);
+    total.excecoesRevisaoManual.push(...(parcial.excecoesRevisaoManual ?? []));
   }
   return total;
 }
@@ -89,6 +91,11 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
       const linhas = ehVendedor
         ? linhasFiltradas.filter((linha) => linha.codigoVendedor !== null && (codigos ?? []).includes(linha.codigoVendedor))
         : linhasFiltradas;
+      // Exceções para revisão manual seguem a mesma restrição: vendedor só vê as próprias.
+      const excecoes = resultado.excecoesRevisaoManual ?? [];
+      const excecoesRevisaoManual = ehVendedor
+        ? excecoes.filter((e) => e.codigoVendedor !== null && (codigos ?? []).includes(e.codigoVendedor))
+        : excecoes;
 
       res.json({
         margemVisivel,
@@ -98,6 +105,7 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
         pedidosSemVendedorExcluidos: ehVendedor ? 0 : resultado.pedidosSemVendedorExcluidos,
         numerosPedidosSemVendedor: ehVendedor ? [] : resultado.numerosPedidosSemVendedor,
         numerosPedidosAnterioresNaoLocalizados: resultado.numerosPedidosAnterioresNaoLocalizados,
+        excecoesRevisaoManual,
       });
     }),
   );

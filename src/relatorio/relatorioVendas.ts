@@ -99,6 +99,13 @@ export interface ResultadoRelatorio {
   limiteAtingido: boolean;
 }
 
+/**
+ * Filtro opcional por REGISTRO, aplicado depois da classificação/vendedor e ANTES da consolidação
+ * do faturamento parcial — usado só pelo Comissionamento (etapas elegíveis e cancelamento, ver
+ * `elegibilidadeComissionamento.ts`). Sem ele, o comportamento é o de sempre (Vendas/Orçamentos).
+ */
+export type AvaliarRegistroPedido = (pedido: PedidoOmie, codigoVendedor: number | null) => Promise<boolean>;
+
 /** Limite de segurança de páginas da Omie por relatório, para nunca disparar um número ilimitado de chamadas. */
 const MAX_PAGINAS_OMIE = 25;
 const REGISTROS_POR_PAGINA_OMIE = 200;
@@ -216,6 +223,7 @@ export async function gerarRelatorio(
   cliente: ClienteOmieParaRelatorioAgregado,
   filtros: FiltrosRelatorio,
   dataReferenciaCusto: string = dataDeHojeFormatoOmie(),
+  avaliarRegistro?: AvaliarRegistroPedido,
 ): Promise<ResultadoRelatorio> {
   const [etapas, vendedores] = await Promise.all([cliente.listarEtapasVendaProduto(), cliente.listarVendedores()]);
 
@@ -245,6 +253,7 @@ export async function gerarRelatorio(
     filtros,
     { etapas, vendedores },
     dataReferenciaCusto,
+    avaliarRegistro,
   );
 
   return {
@@ -268,6 +277,7 @@ export async function montarLinhasDePedidos(
   filtros: Pick<FiltrosRelatorio, 'tipoDocumento' | 'codigoVendedor'>,
   referencias: { etapas: EtapaFaturamento[]; vendedores: VendedorInfo[] },
   dataReferenciaCusto: string = dataDeHojeFormatoOmie(),
+  avaliarRegistro?: AvaliarRegistroPedido,
 ): Promise<{ linhas: LinhaRelatorio[]; documentosAmbiguosExcluidos: number }> {
   const { etapas } = referencias;
   const vendedoresPorCodigo = new Map(referencias.vendedores.map((v) => [v.codigo, v]));
@@ -284,6 +294,7 @@ export async function montarLinhasDePedidos(
 
     const codigoVendedor = extrairCodigoVendedor(pedido);
     if (filtros.codigoVendedor !== undefined && codigoVendedor !== filtros.codigoVendedor) continue;
+    if (avaliarRegistro !== undefined && !(await avaliarRegistro(pedido, codigoVendedor))) continue;
 
     const { totais, itens } = await calcularPedidoCompleto(cliente, pedido, dataReferenciaCusto);
     const nomeVendedor = codigoVendedor !== null ? (vendedoresPorCodigo.get(codigoVendedor)?.nome ?? null) : null;

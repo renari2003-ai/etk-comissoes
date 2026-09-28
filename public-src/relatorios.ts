@@ -150,6 +150,31 @@ interface RespostaComissionamento {
   numerosPedidosSemVendedor: string[];
   /** Pedidos anteriores com parcela no período que não puderam ser consultados na Omie (ficam fora, com aviso). */
   numerosPedidosAnterioresNaoLocalizados?: string[];
+  /** Registros cancelados com título ativo/recebido — fora do cálculo, para revisão manual. */
+  excecoesRevisaoManual?: ExcecaoRevisaoManual[];
+}
+
+interface ExcecaoRevisaoManual {
+  codigoPedido: number;
+  numeroPedido: string;
+  etapa: string;
+  nomeVendedor: string | null;
+  valor: number;
+  titulos: Array<{ numeroParcela: string | null; statusTitulo: string; valor: number }>;
+  motivo: string;
+}
+
+/** Uma linha de aviso por exceção, com o necessário para conferir na Omie (tela e PDF). */
+export function descreverExcecoesRevisaoManual(excecoes: readonly ExcecaoRevisaoManual[]): string {
+  const moeda = (valor: number) => valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const itens = excecoes.map((e) => {
+    const titulos =
+      e.titulos.length === 0
+        ? 'nenhum verificado'
+        : e.titulos.map((t) => `${t.numeroParcela ?? 's/ parcela'} ${t.statusTitulo} ${moeda(t.valor)}`).join('; ');
+    return `pedido nº ${e.numeroPedido} (registro ${e.codigoPedido}, etapa ${e.etapa}, vendedor ${e.nomeVendedor ?? 'não identificado'}, valor ${moeda(e.valor)}; títulos: ${titulos}) — ${e.motivo}`;
+  });
+  return `${excecoes.length} registro(s) fora do cálculo para revisão manual: ${itens.join(' | ')}.`;
 }
 
 interface Vendedor {
@@ -703,6 +728,8 @@ export function inicializarRelatorios(): { ativar: () => void } {
             `${anterioresNaoLocalizados.length} pedido(s) de período anterior com parcela neste período não puderam ser consultados na Omie e ficaram fora: ${anterioresNaoLocalizados.map((n) => `nº ${n}`).join(', ')}.`,
           );
         }
+        const excecoes = dados.excecoesRevisaoManual ?? [];
+        if (excecoes.length > 0) avisos.push(descreverExcecoesRevisaoManual(excecoes));
         const qtdAnteriores = dados.linhas.filter((l) => l.origem === 'PARCELA_PERIODO_ANTERIOR').length;
         if (qtdAnteriores > 0) {
           avisos.push(

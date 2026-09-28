@@ -12,7 +12,18 @@ import {
   type ImpostosEmbutidos,
   type ResultadoMargemComissionamento,
 } from './calcularMargemComissionamento.js';
-import { gerarRelatorio, montarLinhasDePedidos, type ClienteOmieParaRelatorioAgregado, type LinhaRelatorio } from '../relatorio/relatorioVendas.js';
+import {
+  avaliarRegistroComissionamento,
+  validarConfiguracaoEtapasComissionamento,
+  type ExcecaoRevisaoManual,
+} from './elegibilidadeComissionamento.js';
+import {
+  gerarRelatorio,
+  montarLinhasDePedidos,
+  type AvaliarRegistroPedido,
+  type ClienteOmieParaRelatorioAgregado,
+  type LinhaRelatorio,
+} from '../relatorio/relatorioVendas.js';
 import type { PedidoOmie } from '../calculo/tipos.js';
 import type { TituloContaReceber } from '../omie/cliente.js';
 
@@ -144,6 +155,11 @@ export interface ResultadoComissionamento {
    * listados aqui para aviso, nunca calculados com dado incompleto.
    */
   numerosPedidosAnterioresNaoLocalizados: string[];
+  /**
+   * Registros cancelados na Omie que ainda têm título financeiro não cancelado (em aberto ou
+   * recebido) — fora do cálculo automático e listados para revisão manual (regra de 2026-09-28).
+   */
+  excecoesRevisaoManual: ExcecaoRevisaoManual[];
 }
 
 /** "dd/mm/aaaa" → aaaammdd (número comparável); `null` se o texto não for uma data nesse formato. */
@@ -397,17 +413,76 @@ function rotularFaturamentoParcial(numeroPedido: string, parcelas: ParcelaComiss
  *      meses anteriores que tenham parcela com VENCIMENTO no período,
  *      partindo dos títulos (nunca varre 12 meses de pedidos), sem duplicar
  *      venda do período e sem somar venda/comissão total/quantidade deles.
+ *
+ * Elegibilidade (regra de 2026-09-28, ver `elegibilidadeComissionamento.ts`): só registros nas
+ * etapas 50 (PV Liberado Financeiro) e 60 (Faturado), com a configuração da conta conferida antes
+ * de gerar; cancelamento decidido POR REGISTRO, antes da consolidação do faturamento parcial —
+ * uma fatura filha cancelada nunca derruba as faturas irmãs. Título CANCELADO não gera parcela,
+ * comissão liberada/pendente nem valor faturado. Vale igual para os pedidos anteriores.
  */
 export async function gerarRelatorioComissionamento(
   cliente: ClienteOmieParaComissionamento,
   filtros: FiltrosComissionamento,
 ): Promise<ResultadoComissionamento> {
-  const relatorioVendas = await gerarRelatorio(cliente, {
-    tipoDocumento: 'PEDIDO',
-    dataDe: filtros.dataDe,
-    dataAte: filtros.dataAte,
-    codigoVendedor: filtros.codigoVendedor,
-  });
+  validarConfiguracaoEtapasComissionamento(await cliente.listarEtapasVendaProduto());
+
+  // Títulos por vendedor, buscados uma vez e sempre em sequência (ver nota abaixo sobre chamadas
+  // concorrentes) — compartilhados entre a avaliação de cancelamento e o cálculo das parcelas.
+  const titulosPorVendedor = new Map<number, TituloContaReceber[]>();
+  async function titulosDoVendedor(codigoVendedor: number): Promise<TituloContaReceber[]> {
+    const emCache = titulosPorVendedor.get(codigoVendedor);
+    if (emCache !== undefined) return emCache;
+    const titulos = await cliente.listarContasReceberPorVendedor(codigoVendedor);
+    titulosPorVendedor.set(codigoVendedor, titulos);
+    return titulos;
+  }
+
+  const excecoesPorCodigoPedido = new Map<number, ExcecaoRevisaoManual>();
+  const vendedoresParaExcecao = await cliente.listarVendedores();
+  const avaliarRegistro: AvaliarRegistroPedido = async (pedido, codigoVendedor) => {
+    const cancelado = pedido.infoCadastro?.cancelado === 'S';
+    // Cancelado sem vendedor: os títulos só são consultáveis por vendedor, então não dá para
+    // verificá-los (`null`) — vira exceção para revisão manual, nunca "cancelado sem título".
+    let titulosDoRegistro: TituloContaReceber[] | null = [];
+    if (cancelado) {
+      titulosDoRegistro =
+        codigoVendedor === null
+          ? null
+          : (await titulosDoVendedor(codigoVendedor)).filter((t) => t.codigoPedido === pedido.cabecalho.codigo_pedido);
+    }
+    const resultado = avaliarRegistroComissionamento(pedido, titulosDoRegistro);
+    if (resultado.decisao === 'EXCECAO') {
+      excecoesPorCodigoPedido.set(pedido.cabecalho.codigo_pedido, {
+        codigoPedido: pedido.cabecalho.codigo_pedido,
+        numeroPedido: pedido.cabecalho.numero_pedido,
+        etapa: pedido.cabecalho.etapa,
+        codigoVendedor,
+        nomeVendedor: vendedoresParaExcecao.find((v) => v.codigo === codigoVendedor)?.nome ?? null,
+        valor: pedido.total_pedido?.valor_total_pedido ?? 0,
+        titulos: resultado.titulosAtivos.map((t) => ({
+          numeroParcela: t.numeroParcela,
+          numeroNotaFiscal: t.numeroNotaFiscal,
+          statusTitulo: t.statusTitulo,
+          valor: t.valorDocumento,
+          dataVencimento: t.dataVencimento,
+        })),
+        motivo: resultado.motivo,
+      });
+    }
+    return resultado.decisao === 'ELEGIVEL';
+  };
+
+  const relatorioVendas = await gerarRelatorio(
+    cliente,
+    {
+      tipoDocumento: 'PEDIDO',
+      dataDe: filtros.dataDe,
+      dataAte: filtros.dataAte,
+      codigoVendedor: filtros.codigoVendedor,
+    },
+    undefined,
+    avaliarRegistro,
+  );
 
   const comVendedor = relatorioVendas.linhas.filter((l) => l.codigoVendedor !== null);
   const semVendedor = relatorioVendas.linhas.filter((l) => l.codigoVendedor === null);
@@ -441,11 +516,15 @@ export async function gerarRelatorioComissionamento(
   // gera títulos com um `nCodPedido` PRÓPRIO, diferente do `codigoPedido` do
   // pedido original, mas sempre com o mesmo `numeroPedido` — por isso o
   // vínculo por código sozinho perde os títulos das faturas parciais.
+  //
+  // Título CANCELADO fica fora dos índices: não gera parcela, comissão liberada/pendente, valor
+  // faturado nem data de faturamento, e não traz pedido anterior para o período.
   const titulosPorCodigoPedido = new Map<number, TituloContaReceber[]>();
   const titulosPorNumeroPedido = new Map<string, TituloContaReceber[]>();
   for (const codigo of codigosVendedor) {
-    const titulos = await cliente.listarContasReceberPorVendedor(codigo);
+    const titulos = await titulosDoVendedor(codigo);
     for (const titulo of titulos) {
+      if (titulo.statusTitulo === 'CANCELADO') continue;
       if (titulo.codigoPedido !== null) {
         const lista = titulosPorCodigoPedido.get(titulo.codigoPedido) ?? [];
         lista.push(titulo);
@@ -605,6 +684,8 @@ export async function gerarRelatorioComissionamento(
           registros,
           { tipoDocumento: 'PEDIDO', codigoVendedor: filtros.codigoVendedor },
           { etapas, vendedores },
+          undefined,
+          avaliarRegistro,
         );
         for (const linha of linhasDoPedido) {
           if (linha.numeroPedido !== numeroPedido || linha.codigoVendedor === null) continue;
@@ -636,5 +717,6 @@ export async function gerarRelatorioComissionamento(
     pedidosSemVendedorExcluidos,
     numerosPedidosSemVendedor,
     numerosPedidosAnterioresNaoLocalizados,
+    excecoesRevisaoManual: [...excecoesPorCodigoPedido.values()],
   };
 }
