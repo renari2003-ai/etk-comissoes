@@ -2042,45 +2042,51 @@ export function inicializarFretes() {
     }
     el('fretes-embalagens-adicionar').addEventListener('click', adicionarLinhaEmbalagem);
     adicionarLinhaEmbalagem();
-    /** Conferência antes do envio: lista o problema por transportadora/canal; vazio = pode enviar. */
-    function problemasEnvio() {
-        const problemas = [];
+    /**
+     * Conferência antes do envio. `bloqueios` impedem o lote inteiro (nada selecionado, canal
+     * faltando, embalagem malformada); `avisos` são por transportadora e NÃO bloqueiam as demais —
+     * o servidor revalida e devolve o erro só daquela linha.
+     */
+    function conferirEnvio() {
+        const bloqueios = [];
+        const avisos = [];
         if (selecionadas.length === 0)
-            problemas.push('Selecione ao menos uma transportadora.');
+            bloqueios.push('Selecione ao menos uma transportadora.');
         let embalagens = [];
         try {
             embalagens = lerEmbalagens();
         }
         catch (erro) {
-            problemas.push(erro.message);
+            bloqueios.push(erro.message);
         }
         // Canal obrigatório: qualquer transportadora sem canal bloqueia o envio inteiro.
         const semCanal = selecionadas.filter((s) => s.canal === null).map((s) => nomeTransportadoraBusca(s).toUpperCase());
         if (semCanal.length > 0)
-            problemas.push(`Selecione o canal de envio para todas as transportadoras. Sem canal: ${semCanal.join(', ')}.`);
+            bloqueios.push(`Selecione o canal de envio para todas as transportadoras. Sem canal: ${semCanal.join(', ')}.`);
         const c = cotacaoEnvioAtual;
         for (const s of selecionadas) {
             const nome = nomeTransportadoraBusca(s).toUpperCase();
             if (s.canal === null)
                 continue;
             if (s.canal === 'EMAIL' && s.emailManual.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.emailManual.trim())) {
-                problemas.push(`${nome}: e-mail manual inválido.`);
+                avisos.push(`${nome}: e-mail manual inválido.`);
             }
             if (s.canal === 'API') {
                 if (embalagens.length === 0)
-                    problemas.push(`${nome}: informe as dimensões da carga.`);
+                    avisos.push(`${nome}: informe as dimensões da carga.`);
                 if (c !== null && (c.peso === null || c.peso <= 0))
-                    problemas.push(`${nome}: peso da cotação não informado.`);
+                    avisos.push(`${nome}: peso da cotação não informado.`);
                 if (c !== null && (c.valorMercadoria === null || c.valorMercadoria <= 0))
-                    problemas.push(`${nome}: valor da mercadoria não informado.`);
+                    avisos.push(`${nome}: valor da mercadoria não informado.`);
                 if (c !== null && (c.cepDestino === null || c.cepDestino.trim() === ''))
-                    problemas.push(`${nome}: CEP de destino não informado.`);
+                    avisos.push(`${nome}: CEP de destino não informado.`);
             }
         }
-        return problemas;
+        return { bloqueios, avisos };
     }
     function atualizarConferenciaEnvio() {
-        const problemas = problemasEnvio();
+        const { bloqueios, avisos } = conferirEnvio();
+        const problemas = [...bloqueios, ...avisos];
         conferenciaEnvio.textContent = '';
         conferenciaEnvio.className = problemas.length === 0 ? 'fretes-conferencia fretes-conferencia-ok' : 'fretes-conferencia fretes-conferencia-alerta';
         if (problemas.length === 0) {
@@ -2096,7 +2102,7 @@ export function inicializarFretes() {
         const quantidade = selecionadas.length;
         botaoEnviarSolicitacoes.textContent =
             quantidade === 1 ? 'Enviar solicitação para 1 transportadora' : `Enviar solicitação para ${quantidade} transportadoras`;
-        botaoEnviarSolicitacoes.disabled = problemas.length > 0 || envioBloqueadoPorStatus;
+        botaoEnviarSolicitacoes.disabled = bloqueios.length > 0 || envioBloqueadoPorStatus;
     }
     /** Chamado a cada carga do detalhe: zera a seleção ao trocar de cotação, mantém ao recarregar a mesma. */
     function prepararEnvioSolicitacoes(cotacao, encerrada) {
@@ -2122,7 +2128,7 @@ export function inicializarFretes() {
     }
     const ROTULOS_RESULTADO_ENVIO = {
         ENVIADO: 'ENVIADO VIA',
-        FALHOU: 'FALHOU',
+        FALHOU: 'ERRO',
         NAO_ENVIADO: 'NÃO ENVIADO',
     };
     botaoEnviarSolicitacoes.addEventListener('click', () => {
@@ -2130,9 +2136,9 @@ export function inicializarFretes() {
             if (cotacaoAtualId === null)
                 return;
             erroEnvio.hidden = true;
-            const problemas = problemasEnvio();
-            if (problemas.length > 0) {
-                erroEnvio.textContent = problemas.join(' ');
+            const { bloqueios } = conferirEnvio();
+            if (bloqueios.length > 0) {
+                erroEnvio.textContent = bloqueios.join(' ');
                 erroEnvio.hidden = false;
                 atualizarConferenciaEnvio();
                 return;
@@ -2163,8 +2169,7 @@ export function inicializarFretes() {
                 for (const r of resultados) {
                     const li = document.createElement('li');
                     li.className = r.status === 'ENVIADO' ? 'fretes-envio-ok' : 'fretes-envio-falha';
-                    const rotulo = r.status === 'ENVIADO' ? `${ROTULOS_RESULTADO_ENVIO.ENVIADO} ${ROTULOS_CANAL_ENVIO[r.canal].toUpperCase()}` : ROTULOS_RESULTADO_ENVIO[r.status];
-                    li.textContent = `${r.transportadora.toUpperCase()} — ${rotulo}: ${r.mensagem}`;
+                    li.textContent = `${r.transportadora.toUpperCase()} — ${r.canal} — ${ROTULOS_RESULTADO_ENVIO[r.status]} — ${r.mensagem}`;
                     resultadoEnvio.appendChild(li);
                 }
                 resultadoEnvio.hidden = false;

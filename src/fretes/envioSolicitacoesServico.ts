@@ -10,6 +10,7 @@
  */
 import type { ClienteOmie } from '../omie/cliente.js';
 import { ErroValidacao } from '../validacao.js';
+import { registrarAuditoria } from './auditoriaRepositorio.js';
 import { ehTransportadoraBraspress, servicoCotarBraspress } from './braspressServico.js';
 import { servicoBuscarCotacao, servicoCriarTransportadora } from './fretesServico.js';
 import { ErroBraspressFalhou, ErroBraspressNaoConfigurada, type ItemCubagemBraspress } from './integracoes/braspressCliente.js';
@@ -22,7 +23,7 @@ import {
   type DadosTransportadora,
 } from './transportadorasRepositorio.js';
 import { emailValido, whatsappValido } from './validacao.js';
-import type { Transportadora } from './tipos.js';
+import type { SolicitacaoCotacao, Transportadora } from './tipos.js';
 
 export type CanalEnvio = 'EMAIL' | 'WHATSAPP' | 'API';
 
@@ -167,6 +168,7 @@ export interface DependenciasEnvio {
   listarSolicitacoes: typeof listarSolicitacoesPorCotacao;
   solicitar: typeof servicoSolicitarCotacoes;
   cotarBraspress: typeof servicoCotarBraspress;
+  registrarAuditoria: typeof registrarAuditoria;
 }
 
 const DEPENDENCIAS_PADRAO: DependenciasEnvio = {
@@ -175,6 +177,7 @@ const DEPENDENCIAS_PADRAO: DependenciasEnvio = {
   listarSolicitacoes: listarSolicitacoesPorCotacao,
   solicitar: servicoSolicitarCotacoes,
   cotarBraspress: servicoCotarBraspress,
+  registrarAuditoria,
 };
 
 function nomeExibicao(t: Transportadora): string {
@@ -183,6 +186,41 @@ function nomeExibicao(t: Transportadora): string {
 
 function formatarMoeda(valor: number): string {
   return `R$ ${valor.toFixed(2).replace('.', ',')}`;
+}
+
+/**
+ * Mensagens mostradas ao operador, por canal — curtas e acionáveis. Detalhe técnico (motivo
+ * do n8n/Braspress, código de erro) vai só para a auditoria, nunca para a tela.
+ */
+export const MENSAGENS_ENVIO = {
+  EMAIL_INVALIDO: 'Erro: e-mail inválido ou não cadastrado.',
+  EMAIL_FALHOU: 'Erro ao enviar e-mail.',
+  EMAIL_ENVIADO: 'Enviado por e-mail.',
+  WHATSAPP_INVALIDO: 'Erro: WhatsApp inválido ou não cadastrado.',
+  WHATSAPP_FALHOU: 'Erro ao enviar WhatsApp.',
+  WHATSAPP_ENVIADO: 'Enviado por WhatsApp.',
+  API_NAO_CADASTRADA: 'Erro: API não cadastrada para esta transportadora.',
+  API_FALHOU: 'Erro na API da transportadora.',
+} as const;
+
+/** Canal sem cadastro utilizável NESTE registro de transportadora (nunca de outro com o mesmo nome). */
+const MENSAGEM_CADASTRO_INVALIDO: Record<CanalEnvio, string> = {
+  EMAIL: MENSAGENS_ENVIO.EMAIL_INVALIDO,
+  WHATSAPP: MENSAGENS_ENVIO.WHATSAPP_INVALIDO,
+  API: MENSAGENS_ENVIO.API_NAO_CADASTRADA,
+};
+
+const MENSAGEM_FALHA_ENVIO: Record<CanalEnvio, string> = {
+  EMAIL: MENSAGENS_ENVIO.EMAIL_FALHOU,
+  WHATSAPP: MENSAGENS_ENVIO.WHATSAPP_FALHOU,
+  API: MENSAGENS_ENVIO.API_FALHOU,
+};
+
+/** Erros de cadastro vindos do fluxo n8n (resolução de e-mail/WhatsApp) — viram o "inválido ou não cadastrado" do canal. */
+function ehErroCadastroCanal(erro: ErroValidacao): boolean {
+  return /EMAIL_TRANSPORTADORA_NAO_CADASTRADO|WHATSAPP_TRANSPORTADORA_NAO_CADASTRADO|e-mail manual informado não é um endereço válido/.test(
+    erro.message,
+  );
 }
 
 export async function servicoEnviarSolicitacoes(
@@ -223,48 +261,82 @@ export async function servicoEnviarSolicitacoes(
 
   const resultados: ResultadoEnvioTransportadora[] = [];
   for (const item of itensComCanal) {
-    const base = { transportadoraId: item.transportadoraId, canal: item.canal, solicitacaoId: null, propostaId: null };
-    const transportadora = await deps.buscarTransportadora(item.transportadoraId);
-    if (transportadora === null) {
-      resultados.push({ ...base, transportadora: '—', status: 'FALHOU', mensagem: 'Transportadora não encontrada.' });
-      continue;
-    }
-    const nome = nomeExibicao(transportadora);
-    if (!transportadora.ativo) {
-      resultados.push({ ...base, transportadora: nome, status: 'FALHOU', mensagem: 'Transportadora inativa.' });
-      continue;
-    }
-    if (!canaisDisponiveis(transportadora).includes(item.canal)) {
-      resultados.push({
-        ...base,
-        transportadora: nome,
-        status: 'FALHOU',
-        mensagem: `${ROTULOS_CANAL_ENVIO[item.canal]} não disponível para esta transportadora.`,
-      });
-      continue;
-    }
+    // Cada transportadora é processada e auditada isoladamente — nada aqui propaga exceção
+    // para o laço, então a falha de uma nunca impede o envio das demais.
+    const { resultado, detalheTecnico } = await processarItemEnvio(cliente, cotacaoId, item, cubagem, usuarioId, solicitacoesExistentes, deps);
+    resultados.push(resultado);
+    await auditarResultadoEnvio(deps, cotacaoId, usuarioId, resultado, detalheTecnico);
+  }
+  return resultados;
+}
 
-    try {
-      if (item.canal === 'API') {
-        const r = await deps.cotarBraspress(cliente, cotacaoId, { cepOrigem: null, cubagem }, usuarioId);
-        const prazo = r.cotacaoExterna.prazoDias === null ? '—' : `${r.cotacaoExterna.prazoDias} dia(s)`;
-        resultados.push({
+interface ResultadoItemEnvio {
+  resultado: ResultadoEnvioTransportadora;
+  /** Só para a auditoria (nunca devolvido à tela) — mensagens já sanitizadas pelos clientes n8n/Braspress. */
+  detalheTecnico: string | null;
+}
+
+/**
+ * Um item do lote: sempre usa o REGISTRO selecionado (`transportadoraId`) — e-mail,
+ * `whatsappCotacao` e integração API vêm só dele, nunca de outro cadastro com o mesmo nome.
+ */
+async function processarItemEnvio(
+  cliente: ClienteOmie,
+  cotacaoId: string,
+  item: ItemEnvioSolicitacao & { canal: CanalEnvio },
+  cubagem: ItemCubagemBraspress[] | null,
+  usuarioId: string,
+  solicitacoesExistentes: SolicitacaoCotacao[],
+  deps: DependenciasEnvio,
+): Promise<ResultadoItemEnvio> {
+  const base = { transportadoraId: item.transportadoraId, canal: item.canal, solicitacaoId: null, propostaId: null };
+  const falha = (transportadora: string, mensagem: string, detalheTecnico: string | null = null, extra: Partial<ResultadoEnvioTransportadora> = {}): ResultadoItemEnvio => ({
+    resultado: { ...base, transportadora, status: 'FALHOU', mensagem, ...extra },
+    detalheTecnico,
+  });
+
+  const transportadora = await deps.buscarTransportadora(item.transportadoraId);
+  if (transportadora === null) return falha('—', 'Erro: transportadora não encontrada.');
+  const nome = nomeExibicao(transportadora);
+  if (!transportadora.ativo) return falha(nome, 'Erro: transportadora inativa.');
+
+  // Validação de cadastro por canal, no servidor e antes de qualquer tentativa de envio.
+  const emailManual = item.canal === 'EMAIL' && item.emailManual !== null && item.emailManual.trim() !== '' ? item.emailManual.trim() : null;
+  if (emailManual !== null && !emailValido(emailManual)) {
+    return falha(nome, MENSAGENS_ENVIO.EMAIL_INVALIDO, 'E-mail manual informado é malformado.');
+  }
+  if (!canaisDisponiveis(transportadora).includes(item.canal)) {
+    const detalhe =
+      item.canal === 'API' && transportadora.urlPortal !== null
+        ? 'Sem integração API; o portal/site cadastrado não é tratado como API.'
+        : `${ROTULOS_CANAL_ENVIO[item.canal]} sem cadastro válido neste registro de transportadora.`;
+    return falha(nome, MENSAGEM_CADASTRO_INVALIDO[item.canal], detalhe);
+  }
+
+  try {
+    if (item.canal === 'API') {
+      const r = await deps.cotarBraspress(cliente, cotacaoId, { cepOrigem: null, cubagem }, usuarioId);
+      const prazo = r.cotacaoExterna.prazoDias === null ? '—' : `${r.cotacaoExterna.prazoDias} dia(s)`;
+      return {
+        resultado: {
           ...base,
           transportadora: nome,
           status: 'ENVIADO',
           propostaId: r.proposta.id,
           mensagem: `Cotado via API — ${formatarMoeda(r.cotacaoExterna.valorFrete)}, prazo ${prazo}${r.duplicada ? ' (proposta já registrada)' : ''}.`,
-        });
-        continue;
-      }
+        },
+        detalheTecnico: null,
+      };
+    }
 
-      // Idempotência: nunca cria uma segunda solicitação para a mesma transportadora/canal
-      // nesta cotação — com ERRO, o caminho é o "Reenviar" existente (mesma referência).
-      const anterior = solicitacoesExistentes.find(
-        (s) => s.transportadoraId === transportadora.id && s.canal === item.canal && s.status !== 'CANCELADA',
-      );
-      if (anterior !== undefined) {
-        resultados.push({
+    // Idempotência: nunca cria uma segunda solicitação para a mesma transportadora/canal
+    // nesta cotação — com ERRO, o caminho é o "Reenviar" existente (mesma referência).
+    const anterior = solicitacoesExistentes.find(
+      (s) => s.transportadoraId === transportadora.id && s.canal === item.canal && s.status !== 'CANCELADA',
+    );
+    if (anterior !== undefined) {
+      return {
+        resultado: {
           ...base,
           transportadora: nome,
           status: 'NAO_ENVIADO',
@@ -273,47 +345,72 @@ export async function servicoEnviarSolicitacoes(
             anterior.status === 'ERRO'
               ? 'Já existe solicitação com erro para esta transportadora — use "Reenviar" na lista de solicitações.'
               : `Já solicitada nesta cotação (${anterior.status}).`,
-        });
-        continue;
-      }
+        },
+        detalheTecnico: null,
+      };
+    }
 
-      const [solicitacao] = await deps.solicitar(
-        cliente,
-        cotacaoId,
-        [{ transportadoraId: transportadora.id, emailManual: item.canal === 'EMAIL' ? item.emailManual : null }],
-        item.canal,
-        usuarioId,
-      );
-      if (solicitacao === undefined || solicitacao.status === 'ERRO') {
-        resultados.push({
-          ...base,
-          transportadora: nome,
-          status: 'FALHOU',
-          solicitacaoId: solicitacao?.id ?? null,
-          mensagem: 'Falha ao enviar ao serviço de automação — a solicitação ficou registrada com erro; use "Reenviar".',
-        });
-        continue;
-      }
-      const destino = solicitacao.emailDestino !== null ? ` para ${solicitacao.emailDestino}` : '';
-      resultados.push({
+    const [solicitacao] = await deps.solicitar(cliente, cotacaoId, [{ transportadoraId: transportadora.id, emailManual }], item.canal, usuarioId);
+    if (solicitacao === undefined || solicitacao.status === 'ERRO') {
+      return falha(nome, MENSAGEM_FALHA_ENVIO[item.canal], solicitacao?.erroUltimaTentativa ?? 'Envio ao n8n não confirmado.', {
+        solicitacaoId: solicitacao?.id ?? null,
+      });
+    }
+    // "Enviado" = aceito pelo fluxo n8n; confirmação real de entrega nunca é presumida aqui.
+    return {
+      resultado: {
         ...base,
         transportadora: nome,
         status: 'ENVIADO',
         solicitacaoId: solicitacao.id,
-        mensagem: `Enviado via ${ROTULOS_CANAL_ENVIO[item.canal]}${destino}.`,
-      });
-    } catch (erro) {
-      let mensagem: string;
-      if (erro instanceof ErroBraspressNaoConfigurada) {
-        mensagem = 'Integração Braspress não configurada no servidor.';
-      } else if (erro instanceof ErroValidacao || erro instanceof ErroBraspressFalhou) {
-        mensagem = erro.message;
-      } else {
-        console.error('Erro interno no envio de solicitação:', erro instanceof Error ? erro.message : erro);
-        mensagem = 'Erro interno ao processar esta transportadora — nenhuma confirmação de envio.';
-      }
-      resultados.push({ ...base, transportadora: nome, status: 'FALHOU', mensagem });
+        mensagem: item.canal === 'EMAIL' ? MENSAGENS_ENVIO.EMAIL_ENVIADO : MENSAGENS_ENVIO.WHATSAPP_ENVIADO,
+      },
+      detalheTecnico: null,
+    };
+  } catch (erro) {
+    const detalhe = erro instanceof Error ? erro.message : String(erro);
+    if (erro instanceof ErroValidacao && item.canal !== 'API' && ehErroCadastroCanal(erro)) {
+      return falha(nome, MENSAGEM_CADASTRO_INVALIDO[item.canal], detalhe);
     }
+    if (erro instanceof ErroBraspressNaoConfigurada || erro instanceof ErroBraspressFalhou) {
+      return falha(nome, MENSAGENS_ENVIO.API_FALHOU, detalhe);
+    }
+    // Dados da cotação que o operador precisa corrigir (ex.: dimensões faltando) — mensagem acionável.
+    if (erro instanceof ErroValidacao) return falha(nome, `Erro: ${erro.message}`, detalhe);
+    console.error('Erro interno no envio de solicitação:', detalhe);
+    return falha(nome, MENSAGEM_FALHA_ENVIO[item.canal], detalhe);
   }
-  return resultados;
+}
+
+/**
+ * Um registro de auditoria por transportadora/canal do lote (data/hora = `criado_em`). Falha
+ * ao auditar é logada e nunca derruba o envio das demais transportadoras.
+ */
+async function auditarResultadoEnvio(
+  deps: DependenciasEnvio,
+  cotacaoId: string,
+  usuarioId: string,
+  resultado: ResultadoEnvioTransportadora,
+  detalheTecnico: string | null,
+): Promise<void> {
+  try {
+    await deps.registrarAuditoria({
+      usuarioId,
+      acao: 'ENVIO_SOLICITACAO_RESULTADO',
+      entidade: 'cotacao_frete',
+      entidadeId: cotacaoId,
+      valorNovo: {
+        transportadoraId: resultado.transportadoraId,
+        transportadora: resultado.transportadora,
+        canal: resultado.canal,
+        status: resultado.status,
+        mensagem: resultado.mensagem,
+        detalheTecnico,
+        solicitacaoId: resultado.solicitacaoId,
+        propostaId: resultado.propostaId,
+      },
+    });
+  } catch (erro) {
+    console.error('Falha ao registrar auditoria do envio de solicitação:', erro instanceof Error ? erro.message : erro);
+  }
 }

@@ -1014,7 +1014,9 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         return {
           transportadoraId: validarUuid(item?.id, `transportadoras[${i}].id`),
           canal,
-          emailManual: canal === 'EMAIL' ? validarEmailOpcional(item?.emailManual) : null,
+          // Tipo/tamanho validados aqui; o formato do e-mail é validado no serviço, por
+          // transportadora — um e-mail manual malformado vira erro só daquela linha do lote.
+          emailManual: canal === 'EMAIL' ? validarTextoComTamanhoMaximo(item?.emailManual, `transportadoras[${i}].emailManual`, 254) : null,
         };
       });
       const cubagem = validarCubagemOpcional(req.body?.cubagem);

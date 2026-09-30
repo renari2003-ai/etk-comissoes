@@ -4,12 +4,14 @@ import {
   canaisDisponiveis,
   canalSugerido,
   escolherCanonicasPorCnpj,
+  MENSAGENS_ENVIO,
   paraTransportadoraBusca,
   servicoEnviarSolicitacoes,
   type DependenciasEnvio,
   type ItemEnvioSolicitacao,
 } from '../../src/fretes/envioSolicitacoesServico.js';
 import { ErroDadosCotacaoIncompletos } from '../../src/fretes/braspressServico.js';
+import { ErroBraspressFalhou } from '../../src/fretes/integracoes/braspressCliente.js';
 import { ErroValidacao } from '../../src/validacao.js';
 import type { CotacaoFrete, SolicitacaoCotacao, Transportadora } from '../../src/fretes/tipos.js';
 import { droparTabelasRemanescentes, isolarTabelasComerciais, limparTabelasComerciais } from './isolamentoTabelasComerciais.js';
@@ -122,6 +124,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
         proposta: { id: 'prop-1' },
         duplicada: false,
       })),
+      registrarAuditoria: vi.fn(async () => undefined),
       ...extra,
     };
     return d as unknown as DependenciasEnvio & typeof d;
@@ -190,7 +193,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
     expect(r).toEqual([
       expect.objectContaining({ transportadora: 'BRASPRESS', canal: 'API', status: 'ENVIADO', propostaId: 'prop-1' }),
       expect.objectContaining({ transportadora: 'Transportes XYZ', canal: 'EMAIL', status: 'ENVIADO', solicitacaoId: `sol-${XYZ.id}` }),
-      expect.objectContaining({ transportadora: 'Transportadora ABC', canal: 'WHATSAPP', status: 'FALHOU', mensagem: 'WhatsApp não disponível para esta transportadora.' }),
+      expect.objectContaining({ transportadora: 'Transportadora ABC', canal: 'WHATSAPP', status: 'FALHOU', mensagem: MENSAGENS_ENVIO.WHATSAPP_INVALIDO }),
     ]);
   });
 
@@ -208,8 +211,8 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
       d,
     );
     expect(r.map((x) => [x.status, x.mensagem])).toEqual([
-      ['FALHOU', 'API não disponível para esta transportadora.'],
-      ['FALHOU', 'E-mail não disponível para esta transportadora.'],
+      ['FALHOU', MENSAGENS_ENVIO.API_NAO_CADASTRADA],
+      ['FALHOU', MENSAGENS_ENVIO.EMAIL_INVALIDO],
     ]);
     expect(d.cotarBraspress).not.toHaveBeenCalled();
     expect(d.solicitar).not.toHaveBeenCalled();
@@ -236,13 +239,13 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
       d,
     );
     expect(r[0]).toMatchObject({ status: 'FALHOU', mensagem: expect.stringContaining('cubagem') });
-    expect(r[1]).toMatchObject({ status: 'FALHOU', mensagem: expect.stringContaining('EMAIL_TRANSPORTADORA_NAO_CADASTRADO') });
+    expect(r[1]).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.EMAIL_INVALIDO });
 
     const comErroN8n = deps({
       solicitar: vi.fn(async () => [{ id: 'sol-erro', status: 'ERRO', emailDestino: 'a@b.com' } as SolicitacaoCotacao]) as unknown as DependenciasEnvio['solicitar'],
     });
     const [n8n] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: null }], null, USUARIO_TESTE, comErroN8n);
-    expect(n8n).toMatchObject({ status: 'FALHOU', solicitacaoId: 'sol-erro', mensagem: expect.stringContaining('Reenviar') });
+    expect(n8n).toMatchObject({ status: 'FALHOU', solicitacaoId: 'sol-erro', mensagem: MENSAGENS_ENVIO.EMAIL_FALHOU });
   });
 
   it('WHATSAPP com número válido é despachado ao fluxo n8n existente (canal WHATSAPP, sem e-mail manual)', async () => {
@@ -257,7 +260,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
       d,
     );
     expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, emailManual: null }], 'WHATSAPP', USUARIO_TESTE);
-    expect(r).toMatchObject({ canal: 'WHATSAPP', status: 'ENVIADO', mensagem: 'Enviado via WhatsApp.' });
+    expect(r).toMatchObject({ canal: 'WHATSAPP', status: 'ENVIADO', mensagem: MENSAGENS_ENVIO.WHATSAPP_ENVIADO });
   });
 
   it('idempotência: transportadora/canal já solicitados nesta cotação não geram nova solicitação', async () => {
@@ -279,6 +282,205 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
     await expect(
       servicoEnviarSolicitacoes(cliente, COTACAO_ID, itens, null, USUARIO_TESTE, deps({ buscarCotacao: vi.fn(async () => cotacao({ modalidadeExecucao: 'RETIRA' })) as never })),
     ).rejects.toThrow(/TRANSPORTADORA/);
+  });
+
+  describe('status de envio por canal', () => {
+    it('EMAIL válido envia: "Enviado por e-mail." (nunca "Entregue")', async () => {
+      const d = deps();
+      const [r] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: null }], null, USUARIO_TESTE, d);
+      expect(r).toMatchObject({ status: 'ENVIADO', canal: 'EMAIL', mensagem: MENSAGENS_ENVIO.EMAIL_ENVIADO });
+      expect(r?.mensagem).not.toMatch(/entregue/i);
+    });
+
+    it('EMAIL inválido informa erro sem tentar enviar (manual malformado, cadastro sem e-mail, Omie sem e-mail)', async () => {
+      const semEmail = transportadora({ id: 'b0000000-0000-0000-0000-000000000010', nomeRazaoSocial: 'Sem e-mail', email: 'nao-e-email' });
+      const d = deps({
+        buscarTransportadora: vi.fn(async (id: string) => (id === semEmail.id ? semEmail : XYZ)) as unknown as DependenciasEnvio['buscarTransportadora'],
+      });
+      const r = await servicoEnviarSolicitacoes(
+        cliente,
+        COTACAO_ID,
+        [
+          { transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: 'sem-arroba' },
+          { transportadoraId: semEmail.id, canal: 'EMAIL', emailManual: null },
+        ],
+        null,
+        USUARIO_TESTE,
+        d,
+      );
+      expect(r.map((x) => [x.status, x.mensagem])).toEqual([
+        ['FALHOU', MENSAGENS_ENVIO.EMAIL_INVALIDO],
+        ['FALHOU', MENSAGENS_ENVIO.EMAIL_INVALIDO],
+      ]);
+      expect(d.solicitar).not.toHaveBeenCalled();
+
+      // Omie vinculada mas sem e-mail: a resolução MANUAL > CADASTRO > OMIE bloqueia → mesma mensagem simples.
+      const omieSemEmail = deps({
+        solicitar: vi.fn(async () => {
+          throw new ErroValidacao('EMAIL_TRANSPORTADORA_NAO_CADASTRADO: nenhum e-mail disponível.');
+        }) as unknown as DependenciasEnvio['solicitar'],
+      });
+      const [o] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: null }], null, USUARIO_TESTE, omieSemEmail);
+      expect(o).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.EMAIL_INVALIDO });
+    });
+
+    it('falha do n8n: "Erro ao enviar e-mail." / "Erro ao enviar WhatsApp." — motivo técnico só na auditoria', async () => {
+      const comWhatsapp = { ...XYZ, whatsappCotacao: '11999990000' };
+      const d = deps({
+        buscarTransportadora: vi.fn(async () => comWhatsapp) as unknown as DependenciasEnvio['buscarTransportadora'],
+        solicitar: vi.fn(async (_c: unknown, _cot: string, _i: unknown, canal: string) => [
+          { id: `sol-${canal}`, status: 'ERRO', emailDestino: null, erroUltimaTentativa: 'O webhook do n8n respondeu HTTP 500.' } as SolicitacaoCotacao,
+        ]) as unknown as DependenciasEnvio['solicitar'],
+      });
+      const [email] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: null }], null, USUARIO_TESTE, d);
+      const [whats] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'WHATSAPP', emailManual: null }], null, USUARIO_TESTE, d);
+      expect(email).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.EMAIL_FALHOU });
+      expect(whats).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.WHATSAPP_FALHOU });
+      expect(email?.mensagem).not.toContain('HTTP 500');
+      expect(d.registrarAuditoria).toHaveBeenCalledWith(
+        expect.objectContaining({ valorNovo: expect.objectContaining({ detalheTecnico: 'O webhook do n8n respondeu HTTP 500.' }) }),
+      );
+    });
+
+    it('WHATSAPP inválido ou só telefone genérico: "Erro: WhatsApp inválido ou não cadastrado." sem tentar enviar', async () => {
+      const d = deps({
+        buscarTransportadora: vi.fn(async () => ({ ...ABC, whatsappCotacao: '999' })) as unknown as DependenciasEnvio['buscarTransportadora'],
+      });
+      const [invalido] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, canal: 'WHATSAPP', emailManual: null }], null, USUARIO_TESTE, d);
+      expect(invalido).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.WHATSAPP_INVALIDO });
+      const soTelefone = deps(); // ABC tem só `telefone`
+      const [generico] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, canal: 'WHATSAPP', emailManual: null }], null, USUARIO_TESTE, soTelefone);
+      expect(generico).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.WHATSAPP_INVALIDO });
+      expect(d.solicitar).not.toHaveBeenCalled();
+      expect(soTelefone.solicitar).not.toHaveBeenCalled();
+    });
+
+    it('API: configurada envia; não configurada → "API não cadastrada"; falha na chamada → "Erro na API da transportadora."', async () => {
+      const ok = deps();
+      const [enviado] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: BRASPRESS.id, canal: 'API', emailManual: null }], CUBAGEM, USUARIO_TESTE, ok);
+      expect(enviado).toMatchObject({ status: 'ENVIADO', canal: 'API', propostaId: 'prop-1' });
+
+      const [semApi] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, canal: 'API', emailManual: null }], CUBAGEM, USUARIO_TESTE, ok);
+      expect(semApi).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.API_NAO_CADASTRADA });
+
+      const falhou = deps({
+        cotarBraspress: vi.fn(async () => {
+          throw new ErroBraspressFalhou('A Braspress respondeu HTTP 503.');
+        }) as unknown as DependenciasEnvio['cotarBraspress'],
+      });
+      const [erroApi] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: BRASPRESS.id, canal: 'API', emailManual: null }], CUBAGEM, USUARIO_TESTE, falhou);
+      expect(erroApi).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.API_FALHOU });
+      expect(falhou.registrarAuditoria).toHaveBeenCalledWith(
+        expect.objectContaining({ valorNovo: expect.objectContaining({ detalheTecnico: 'A Braspress respondeu HTTP 503.' }) }),
+      );
+    });
+
+    it('portal/site nunca é tratado como API', async () => {
+      const comPortal = transportadora({ id: 'b0000000-0000-0000-0000-000000000011', nomeRazaoSocial: 'Patrus', urlPortal: 'https://portal.patrus', canalPrincipal: 'API' });
+      const d = deps({ buscarTransportadora: vi.fn(async () => comPortal) as unknown as DependenciasEnvio['buscarTransportadora'] });
+      const [r] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: comPortal.id, canal: 'API', emailManual: null }], CUBAGEM, USUARIO_TESTE, d);
+      expect(r).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.API_NAO_CADASTRADA });
+      expect(d.cotarBraspress).not.toHaveBeenCalled();
+    });
+
+    it('duas transportadoras com o MESMO nome usam só o próprio cadastro (id), sem misturar canais', async () => {
+      const nome = 'J. SEDA NETO TRANSPORTES LTDA';
+      const comEmail = transportadora({ id: 'b0000000-0000-0000-0000-000000000021', nomeRazaoSocial: nome, email: 'cotacao@a.com.br' });
+      const comWhatsapp = transportadora({ id: 'b0000000-0000-0000-0000-000000000022', nomeRazaoSocial: nome, whatsappCotacao: '11999990000' });
+      const cadastro = new Map([comEmail, comWhatsapp].map((t) => [t.id, t]));
+      const d = deps({ buscarTransportadora: vi.fn(async (id: string) => cadastro.get(id) ?? null) as unknown as DependenciasEnvio['buscarTransportadora'] });
+      const r = await servicoEnviarSolicitacoes(
+        cliente,
+        COTACAO_ID,
+        [
+          { transportadoraId: comEmail.id, canal: 'EMAIL', emailManual: null },
+          { transportadoraId: comWhatsapp.id, canal: 'EMAIL', emailManual: null }, // e-mail do homônimo NÃO vale
+        ],
+        null,
+        USUARIO_TESTE,
+        d,
+      );
+      expect(r).toEqual([
+        expect.objectContaining({ transportadoraId: comEmail.id, status: 'ENVIADO', mensagem: MENSAGENS_ENVIO.EMAIL_ENVIADO }),
+        expect.objectContaining({ transportadoraId: comWhatsapp.id, status: 'FALHOU', mensagem: MENSAGENS_ENVIO.EMAIL_INVALIDO }),
+      ]);
+      expect(d.solicitar).toHaveBeenCalledTimes(1);
+      expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: comEmail.id, emailManual: null }], 'EMAIL', USUARIO_TESTE);
+    });
+
+    it('lote: falha de uma transportadora não bloqueia as demais (A ok, B WhatsApp inválido, C sem API, D ok)', async () => {
+      const a = transportadora({ id: 'b0000000-0000-0000-0000-000000000031', nomeRazaoSocial: 'A', email: 'a@a.com.br' });
+      const b = transportadora({ id: 'b0000000-0000-0000-0000-000000000032', nomeRazaoSocial: 'B', whatsappCotacao: '12' });
+      const c = transportadora({ id: 'b0000000-0000-0000-0000-000000000033', nomeRazaoSocial: 'C', email: 'c@c.com.br' });
+      const dT = transportadora({ id: 'b0000000-0000-0000-0000-000000000034', nomeRazaoSocial: 'D', email: 'd@d.com.br' });
+      const cadastro = new Map([a, b, c, dT].map((t) => [t.id, t]));
+      const d = deps({ buscarTransportadora: vi.fn(async (id: string) => cadastro.get(id) ?? null) as unknown as DependenciasEnvio['buscarTransportadora'] });
+      const r = await servicoEnviarSolicitacoes(
+        cliente,
+        COTACAO_ID,
+        [
+          { transportadoraId: a.id, canal: 'EMAIL', emailManual: null },
+          { transportadoraId: b.id, canal: 'WHATSAPP', emailManual: null },
+          { transportadoraId: c.id, canal: 'API', emailManual: null },
+          { transportadoraId: dT.id, canal: 'EMAIL', emailManual: null },
+        ],
+        null,
+        USUARIO_TESTE,
+        d,
+      );
+      expect(r.map((x) => [x.transportadora, x.canal, x.status, x.mensagem])).toEqual([
+        ['A', 'EMAIL', 'ENVIADO', MENSAGENS_ENVIO.EMAIL_ENVIADO],
+        ['B', 'WHATSAPP', 'FALHOU', MENSAGENS_ENVIO.WHATSAPP_INVALIDO],
+        ['C', 'API', 'FALHOU', MENSAGENS_ENVIO.API_NAO_CADASTRADA],
+        ['D', 'EMAIL', 'ENVIADO', MENSAGENS_ENVIO.EMAIL_ENVIADO],
+      ]);
+      expect(d.solicitar).toHaveBeenCalledTimes(2);
+    });
+
+    it('auditoria: um registro por transportadora/canal com status e erro; falha ao auditar não derruba o lote', async () => {
+      const d = deps({
+        registrarAuditoria: vi.fn(async () => {
+          throw new Error('banco indisponível');
+        }) as unknown as DependenciasEnvio['registrarAuditoria'],
+      });
+      const erroLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const r = await servicoEnviarSolicitacoes(
+        cliente,
+        COTACAO_ID,
+        [
+          { transportadoraId: XYZ.id, canal: 'EMAIL', emailManual: null },
+          { transportadoraId: ABC.id, canal: 'WHATSAPP', emailManual: null },
+        ],
+        null,
+        USUARIO_TESTE,
+        d,
+      );
+      erroLog.mockRestore();
+      expect(r.map((x) => x.status)).toEqual(['ENVIADO', 'FALHOU']);
+      expect(d.registrarAuditoria).toHaveBeenCalledTimes(2);
+      expect(d.registrarAuditoria).toHaveBeenNthCalledWith(1, {
+        usuarioId: USUARIO_TESTE,
+        acao: 'ENVIO_SOLICITACAO_RESULTADO',
+        entidade: 'cotacao_frete',
+        entidadeId: COTACAO_ID,
+        valorNovo: {
+          transportadoraId: XYZ.id,
+          transportadora: 'Transportes XYZ',
+          canal: 'EMAIL',
+          status: 'ENVIADO',
+          mensagem: MENSAGENS_ENVIO.EMAIL_ENVIADO,
+          detalheTecnico: null,
+          solicitacaoId: `sol-${XYZ.id}`,
+          propostaId: null,
+        },
+      });
+      expect(d.registrarAuditoria).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          valorNovo: expect.objectContaining({ transportadoraId: ABC.id, canal: 'WHATSAPP', status: 'FALHOU', mensagem: MENSAGENS_ENVIO.WHATSAPP_INVALIDO, detalheTecnico: expect.any(String) }),
+        }),
+      );
+    });
   });
 });
 
