@@ -130,6 +130,22 @@ export async function buscarSolicitacaoPorId(id: string): Promise<SolicitacaoCot
 }
 
 /**
+ * Solicitações de canal EMAIL cujo Message-ID de saída (gravado em `identificador_externo`
+ * pelo envio SMTP direto) está entre `messageIds` — usado para correlacionar uma resposta pelos
+ * cabeçalhos `In-Reply-To`/`References` quando o assunto perdeu a referência. Igualdade exata.
+ */
+export async function buscarSolicitacoesEmailPorMessageId(messageIds: string[]): Promise<SolicitacaoCotacao[]> {
+  if (messageIds.length === 0) return [];
+  await garantirEsquemaFretes();
+  const pool = obterPool();
+  const { rows } = await pool.query<LinhaSolicitacao>(
+    `SELECT * FROM ${nomeTabelaSolicitacoes()} WHERE canal = 'EMAIL' AND identificador_externo = ANY($1::text[])`,
+    [messageIds],
+  );
+  return rows.map(linhaParaSolicitacao);
+}
+
+/**
  * `codigoReferencia` é a chave de reconciliação segura (seção 23/24) — é através dela,
  * nunca de nome/assunto/texto aproximado, que o webhook (Fase 4A.1, seção 20) encontra a
  * solicitação correspondente a uma resposta recebida.

@@ -72,6 +72,24 @@ export const config = {
    * (rollback/homologação). Qualquer outro valor cai no padrão `smtp`.
    */
   fretesEmailOutbound: (process.env.FRETES_EMAIL_OUTBOUND ?? '').trim().toLowerCase() === 'n8n' ? ('n8n' as const) : ('smtp' as const),
+  /**
+   * Fase 2 da migração n8n → backend: leitura IMAP direta das respostas
+   * (`src/fretes/integracoes/imapCliente.ts`). Sempre SSL/TLS (porta padrão 993). Caixa aberta
+   * em modo somente leitura — nunca apaga e-mail nem altera lido/não lido. Vazios → job
+   * recusado de forma controlada.
+   */
+  imapHost: process.env.IMAP_HOST ?? '',
+  imapPort: numeroDoAmbiente('IMAP_PORT', 993),
+  imapUser: process.env.IMAP_USER ?? '',
+  imapPass: process.env.IMAP_PASS ?? '',
+  imapMailbox: (process.env.IMAP_MAILBOX ?? '').trim() || 'INBOX',
+  imapTimeoutMs: numeroDoAmbiente('IMAP_TIMEOUT_MS', 20000),
+  /**
+   * Segredo próprio do endpoint interno de jobs (`/api/fretes/jobs/processar-emails`), enviado
+   * como `Authorization: Bearer <segredo>`. Vazio → endpoint recusa tudo (fail closed). Para
+   * Vercel Cron, usar o mesmo valor em `CRON_SECRET`.
+   */
+  fretesJobSecret: process.env.FRETES_JOB_SECRET ?? '',
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

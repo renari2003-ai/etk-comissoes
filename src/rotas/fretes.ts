@@ -105,6 +105,8 @@ import {
   validarPayloadWebhookResposta,
 } from '../fretes/webhookCotacoes.js';
 import { assincrono } from './erroHttp.js';
+import { servicoProcessarEmailsResposta } from '../fretes/jobEmailsRespostaServico.js';
+import { listarEmailsParaRevisao } from '../fretes/emailsRespostaRepositorio.js';
 
 const MODALIDADES_EXECUCAO_VALIDAS: readonly ModalidadeExecucao[] = ['TRANSPORTADORA', 'VEICULO_PROPRIO', 'RETIRA'];
 function validarModalidadeExecucaoOpcional(valor: unknown): ModalidadeExecucao | undefined {
@@ -151,6 +153,28 @@ function exigirSegredoWebhookFretes(req: Request, _res: Response, next: NextFunc
   const autorizado = bufferConfigurado.length === bufferRecebido.length && timingSafeEqual(bufferConfigurado, bufferRecebido);
   if (!autorizado) {
     next(new ErroSemPermissao('Webhook não autorizado.'));
+    return;
+  }
+  next();
+}
+
+/**
+ * Jobs internos (ex.: leitura IMAP das respostas): segredo PRÓPRIO (`FRETES_JOB_SECRET`) em
+ * `Authorization: Bearer <segredo>` — formato que o Vercel Cron também envia. Comparação em
+ * tempo constante; segredo vazio no servidor recusa tudo (fail closed). Nunca logado.
+ */
+function exigirSegredoJobFretes(req: Request, _res: Response, next: NextFunction): void {
+  const configurado = config.fretesJobSecret;
+  const cabecalho = req.header('authorization') ?? '';
+  const recebido = cabecalho.startsWith('Bearer ') ? cabecalho.slice(7) : '';
+  if (configurado.trim() === '' || recebido === '') {
+    next(new ErroSemPermissao('Job não autorizado.'));
+    return;
+  }
+  const a = Buffer.from(configurado);
+  const b = Buffer.from(recebido);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    next(new ErroSemPermissao('Job não autorizado.'));
     return;
   }
   next();
@@ -1099,6 +1123,27 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   // Mesma autenticação máquina-a-máquina já existente (`exigirSegredoWebhookFretes`, seção 4/5
   // da fase — "seguir o padrão já existente", nenhum segredo novo). NUNCA dispara o webhook de
   // resposta (`/integracoes/cotacoes/resposta`) automaticamente (seção 8, explícito).
+
+  // --- Fase 2 da migração n8n → backend: respostas por e-mail via IMAP ----------------
+  // Endpoint interno, sem sessão de usuário e fora do frontend: chamado por um agendador
+  // (Vercel Cron = GET; agendador externo = POST). Nunca aceita parâmetro que mude caixa,
+  // servidor ou credencial — tudo vem do ambiente.
+  const processarEmails = assincrono(async (_req, res) => {
+    const resumo = await servicoProcessarEmailsResposta();
+    res.status(resumo.status === 'ERRO' ? 502 : 200).json(resumo);
+  });
+  rotas.post('/api/fretes/jobs/processar-emails', exigirSegredoJobFretes, processarEmails);
+  rotas.get('/api/fretes/jobs/processar-emails', exigirSegredoJobFretes, processarEmails);
+
+  // Fila de revisão manual dos e-mails de resposta (sem referência, valor ausente/ambíguo,
+  // correlação impossível, falha repetida) — só leitura, para quem já acessa fretes.
+  rotas.get(
+    '/api/fretes/emails-resposta/revisao',
+    ...protegida,
+    assincrono(async (_req, res) => {
+      res.json(await listarEmailsParaRevisao());
+    }),
+  );
 
   rotas.post(
     '/api/fretes/integracoes/whatsapp/outbound',

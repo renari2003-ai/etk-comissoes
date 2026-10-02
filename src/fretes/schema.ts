@@ -99,6 +99,13 @@ export function nomeTabelaComposicoesComerciais(): string {
 export function nomeTabelaAprovacoesValorMinimo(): string {
   return nomeValidado(process.env.APROVACOES_VALOR_MINIMO_FRETE_TABELA ?? 'aprovacoes_valor_minimo_frete');
 }
+// Fase 2 da migração n8n → backend — leitura IMAP direta das respostas por e-mail.
+export function nomeTabelaEmailsResposta(): string {
+  return nomeValidado(process.env.EMAILS_RESPOSTA_FRETE_TABELA ?? 'emails_resposta_frete');
+}
+export function nomeTabelaCursoresImap(): string {
+  return nomeValidado(process.env.CURSORES_IMAP_FRETE_TABELA ?? 'cursores_imap_frete');
+}
 
 /**
  * Cria (se ainda não existirem) todas as tabelas novas do módulo de Fretes — nunca toca
@@ -562,6 +569,45 @@ export function garantirEsquemaFretes(): Promise<void> {
     `);
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${aprovacoesValorMinimo}_status ON ${aprovacoesValorMinimo} (status)`);
     await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${aprovacoesValorMinimo}_proposta ON ${aprovacoesValorMinimo} (proposta_id)`);
+
+    // Fase 2 da migração n8n → backend: controle de e-mails de resposta lidos por IMAP.
+    // `chave_mensagem` = Message-ID (ou hash determinístico de cabeçalhos+conteúdo quando o
+    // e-mail não tem Message-ID) e é UNIQUE — a mesma mensagem nunca é processada duas vezes,
+    // mesmo relida da caixa. Só e-mails do fluxo de fretes são gravados; `conteudo` guarda o
+    // texto (limitado) para a revisão manual nunca perder a mensagem. Tabelas novas, aditivas.
+    const emailsResposta = nomeTabelaEmailsResposta();
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${emailsResposta} (
+        id UUID PRIMARY KEY,
+        chave_mensagem TEXT NOT NULL UNIQUE,
+        message_id TEXT,
+        mailbox TEXT NOT NULL,
+        uid BIGINT,
+        uidvalidity BIGINT,
+        recebido_em TIMESTAMPTZ,
+        remetente TEXT,
+        assunto TEXT,
+        referencia TEXT,
+        solicitacao_id UUID,
+        resposta_id UUID,
+        status TEXT NOT NULL CHECK (status IN ('PROCESSADO','REVISAO_MANUAL','ERRO')),
+        motivo TEXT,
+        conteudo TEXT,
+        tentativas INTEGER NOT NULL DEFAULT 1,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${emailsResposta}_status ON ${emailsResposta} (status)`);
+    const cursoresImap = nomeTabelaCursoresImap();
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${cursoresImap} (
+        mailbox TEXT PRIMARY KEY,
+        uidvalidity BIGINT NOT NULL,
+        ultimo_uid BIGINT NOT NULL,
+        atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
 
     // Mesma autocura de `${solicitacoes}` (ver `repararFkSeApontarParaTabelaErrada`): em
     // 2026-09-23 as 4 FKs abaixo foram encontradas em produção apontando para tabelas

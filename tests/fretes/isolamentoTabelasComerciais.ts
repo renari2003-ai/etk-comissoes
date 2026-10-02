@@ -11,6 +11,9 @@ const VARIAVEIS: ReadonlyArray<[variavel: string, prefixo: string]> = [
   ['COMPOSICOES_COMERCIAIS_FRETE_TABELA', 'composicoes_t'],
   ['APROVACOES_VALOR_MINIMO_FRETE_TABELA', 'aprovacoes_vm_t'],
   ['PARAMETROS_FISCAIS_FRETE_TABELA', 'parametros_fiscais_t'],
+  // Fase 2 (IMAP): sem isolar, qualquer teste com banco criava estas tabelas REAIS.
+  ['EMAILS_RESPOSTA_FRETE_TABELA', 'emails_resp_t'],
+  ['CURSORES_IMAP_FRETE_TABELA', 'cursores_imap_t'],
 ];
 
 /** Tabelas isoladas pelos testes de Fretes (uma variável de ambiente por tabela). */
