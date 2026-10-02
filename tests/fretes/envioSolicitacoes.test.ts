@@ -264,6 +264,46 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
     expect(n8n).toMatchObject({ status: 'FALHOU', solicitacaoId: 'sol-erro', mensagem: MENSAGENS_ENVIO.EMAIL_FALHOU });
   });
 
+  it('lote EMAIL: destinatário recusado pelo SMTP e falha de SMTP não impedem as demais; mensagens amigáveis por transportadora', async () => {
+    const cadastroEmail = new Map([
+      [XYZ.id, { ...XYZ, email: 'cotacao@xyz.com.br' }],
+      [ABC.id, { ...ABC, email: 'cotacao@abc.com.br' }],
+      [BRASPRESS.id, { ...BRASPRESS, email: 'cotacao@braspress.com.br' }],
+    ]);
+    const respostas: Record<string, Partial<SolicitacaoCotacao>> = {
+      [XYZ.id]: { status: 'ERRO', erroUltimaTentativa: 'SMTP_DESTINATARIO_RECUSADO: o servidor SMTP recusou o destinatário. Servidor: 550 5.1.1' },
+      [ABC.id]: { status: 'ERRO', erroUltimaTentativa: 'SMTP_CONEXAO: não foi possível conectar ao servidor SMTP.' },
+      [BRASPRESS.id]: { status: 'ENVIADA', erroUltimaTentativa: null },
+    };
+    const d = deps({
+      buscarTransportadora: vi.fn(async (id: string) => cadastroEmail.get(id) ?? null) as unknown as DependenciasEnvio['buscarTransportadora'],
+      solicitar: vi.fn(async (_c: unknown, _cot: string, itens: { transportadoraId: string }[]) => {
+        const id = itens[0]?.transportadoraId ?? '';
+        return [{ id: `sol-${id}`, ...respostas[id] } as SolicitacaoCotacao];
+      }) as unknown as DependenciasEnvio['solicitar'],
+    });
+    const r = await servicoEnviarSolicitacoes(
+      cliente,
+      COTACAO_ID,
+      [XYZ, ABC, BRASPRESS].map((t) => ({ transportadoraId: t.id, canal: 'EMAIL' as const, emailManual: null })),
+      null,
+      USUARIO_TESTE,
+      d,
+    );
+    expect(d.solicitar).toHaveBeenCalledTimes(3);
+    expect(r.map((x) => [x.status, x.mensagem])).toEqual([
+      ['FALHOU', MENSAGENS_ENVIO.EMAIL_INVALIDO],
+      ['FALHOU', MENSAGENS_ENVIO.EMAIL_FALHOU],
+      ['ENVIADO', MENSAGENS_ENVIO.EMAIL_ENVIADO],
+    ]);
+    // Detalhe técnico só na auditoria, nunca na mensagem da tela.
+    expect(r.every((x) => !x.mensagem.includes('SMTP_'))).toBe(true);
+    expect(d.registrarAuditoria).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ valorNovo: expect.objectContaining({ detalheTecnico: expect.stringMatching(/^SMTP_DESTINATARIO_RECUSADO/) }) }),
+    );
+  });
+
   it('WHATSAPP com número válido é despachado ao fluxo n8n existente (canal WHATSAPP, sem e-mail manual)', async () => {
     const comWhatsapp = { ...ABC, whatsappCotacao: '11999990000' };
     const d = deps({ buscarTransportadora: vi.fn(async () => comWhatsapp) as unknown as DependenciasEnvio['buscarTransportadora'] });

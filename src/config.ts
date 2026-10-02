@@ -55,6 +55,23 @@ export const config = {
   braspressPassword: process.env.BRASPRESS_PASSWORD ?? '',
   braspressUrl: process.env.BRASPRESS_URL ?? 'https://api.braspress.com/v1/cotacao/calcular/json',
   braspressTimeoutMs: numeroDoAmbiente('BRASPRESS_TIMEOUT_MS', 15000),
+  /**
+   * Fase 1 da migração n8n → backend: envio SMTP direto das solicitações de cotação
+   * (`src/fretes/integracoes/smtpCliente.ts`). Credenciais só do ambiente, nunca logadas;
+   * vazias → envio recusado de forma controlada (fail closed). Porta 465 = TLS implícito;
+   * demais portas exigem STARTTLS.
+   */
+  smtpHost: process.env.SMTP_HOST ?? '',
+  smtpPort: numeroDoAmbiente('SMTP_PORT', 587),
+  smtpUser: process.env.SMTP_USER ?? '',
+  smtpPass: process.env.SMTP_PASS ?? '',
+  smtpFrom: process.env.SMTP_FROM ?? '',
+  smtpTimeoutMs: numeroDoAmbiente('SMTP_TIMEOUT_MS', 15000),
+  /**
+   * Caminho do canal EMAIL: `smtp` (padrão) envia direto; `n8n` volta ao webhook do n8n
+   * (rollback/homologação). Qualquer outro valor cai no padrão `smtp`.
+   */
+  fretesEmailOutbound: (process.env.FRETES_EMAIL_OUTBOUND ?? '').trim().toLowerCase() === 'n8n' ? ('n8n' as const) : ('smtp' as const),
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

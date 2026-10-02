@@ -14,6 +14,7 @@ const SEGREDO_TESTE = 'segredo-de-teste-whatsapp-etapa-3-nao-e-real';
 let sufixo: string;
 
 beforeEach(() => {
+  process.env.FRETES_EMAIL_OUTBOUND = 'n8n'; // estes testes cobrem o caminho via n8n (SMTP direto: tests/fretes/envioSmtp.test.ts)
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   isolarTabelasComerciais(sufixo);
   process.env.FRETES_WEBHOOK_SECRET = SEGREDO_TESTE;

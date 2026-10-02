@@ -44,6 +44,8 @@ import {
 } from './solicitacoesRepositorio.js';
 import { buscarTransportadoraPorId } from './transportadorasRepositorio.js';
 import { enviarSolicitacaoAoN8n, type PayloadSolicitacaoN8n } from './integracoes/n8nCliente.js';
+import { enviarEmailSmtp, ErroEnvioSmtpFalhou } from './integracoes/smtpCliente.js';
+import { montarEmailCotacao } from './email/templateCotacao.js';
 import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, EmbalagemSolicitacao, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
 import type { PayloadCorrelacionarWhatsapp, PayloadOutboundWhatsapp, PayloadRespostaWebhook } from './webhookCotacoes.js';
 
@@ -181,10 +183,67 @@ async function resolverEmailDestino(
 
 /**
  * Tenta o envio outbound de UMA solicitação já criada — nunca lança: qualquer falha
- * (config ausente, timeout, rede, HTTP não-2xx) vira `status = 'ERRO'` registrado na
- * própria solicitação (seção 8/11/27), preservando a cotação íntegra e sem criar proposta
- * nenhuma. Usada tanto no envio inicial quanto no reenvio manual.
+ * (config ausente, timeout, rede, HTTP não-2xx, SMTP recusado) vira `status = 'ERRO'`
+ * registrado na própria solicitação (seção 8/11/27), preservando a cotação íntegra e sem
+ * criar proposta nenhuma. Usada tanto no envio inicial quanto no reenvio manual.
+ *
+ * Canal EMAIL vai por SMTP direto (padrão, Fase 1 da migração) ou pelo n8n quando
+ * `FRETES_EMAIL_OUTBOUND=n8n` (rollback). WHATSAPP continua sempre pelo n8n.
  */
+async function tentarEnviarSolicitacao(
+  cotacao: CotacaoFrete,
+  solicitacao: SolicitacaoCotacao,
+  cnpjs: CnpjsPayloadN8n,
+  whatsapp: string | null,
+  usuarioId: string | null,
+): Promise<SolicitacaoCotacao> {
+  if (solicitacao.canal === 'EMAIL' && config.fretesEmailOutbound === 'smtp') {
+    return tentarEnviarPorSmtp(cotacao, solicitacao, cnpjs, usuarioId);
+  }
+  return tentarEnviarAoN8n(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
+}
+
+/**
+ * SMTP direto: `ENVIADA` só depois que o servidor SMTP aceita o e-mail (nunca "entregue");
+ * o Message-ID gerado vira o identificador externo da solicitação. Destinatário = snapshot
+ * `emailDestino` já resolvido (MANUAL > CADASTRO > OMIE > bloqueio) — nunca recalculado aqui.
+ */
+async function tentarEnviarPorSmtp(
+  cotacao: CotacaoFrete,
+  solicitacao: SolicitacaoCotacao,
+  cnpjs: CnpjsPayloadN8n,
+  usuarioId: string | null,
+): Promise<SolicitacaoCotacao> {
+  try {
+    if (solicitacao.emailDestino === null) {
+      throw new ErroEnvioSmtpFalhou('DESTINATARIO_RECUSADO', 'SMTP_DESTINATARIO_RECUSADO: solicitação sem e-mail de destino — nada foi enviado.');
+    }
+    const email = montarEmailCotacao(montarPayloadN8n(cotacao, solicitacao, cnpjs, null));
+    const { messageId } = await enviarEmailSmtp({ para: solicitacao.emailDestino, assunto: email.assunto, html: email.html, texto: email.texto });
+    const atualizada = await marcarSolicitacaoEnviada(solicitacao.id, messageId);
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'SOLICITACAO_ENVIADA_SMTP',
+      entidade: 'solicitacao_cotacao_frete',
+      entidadeId: solicitacao.id,
+      valorNovo: { status: atualizada.status, tentativas: atualizada.tentativas, messageId },
+    });
+    return atualizada;
+  } catch (erro) {
+    // Mensagem já sanitizada por `smtpCliente.ts` (nunca inclui senha nem comando AUTH).
+    const motivo = erro instanceof Error ? erro.message : 'Falha desconhecida ao enviar e-mail por SMTP.';
+    const atualizada = await marcarSolicitacaoErro(solicitacao.id, motivo);
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'SOLICITACAO_ERRO_SMTP',
+      entidade: 'solicitacao_cotacao_frete',
+      entidadeId: solicitacao.id,
+      valorNovo: { status: atualizada.status, tentativas: atualizada.tentativas, erro: motivo },
+    });
+    return atualizada;
+  }
+}
+
 async function tentarEnviarAoN8n(
   cotacao: CotacaoFrete,
   solicitacao: SolicitacaoCotacao,
@@ -278,7 +337,7 @@ export async function servicoSolicitarCotacoes(
     });
     // Envio outbound síncrono (Fase 4A.2) — uma única tentativa automática (seção 11); falha
     // nunca aborta o laço nem propaga: a solicitação fica registrada com status ERRO.
-    const final = await tentarEnviarAoN8n(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
+    const final = await tentarEnviarSolicitacao(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
     resultado.push(final);
   }
   return resultado;
@@ -312,7 +371,7 @@ export async function servicoReenviarSolicitacao(cliente: ClienteOmie, solicitac
     if (transportadora === null) throw new ErroValidacao('Transportadora da solicitação não encontrada.');
     whatsapp = exigirWhatsappDestino(transportadora);
   }
-  return tentarEnviarAoN8n(cotacao, solicitacao, await obterCnpjsPayloadN8n(cliente, cotacao), whatsapp, usuarioId);
+  return tentarEnviarSolicitacao(cotacao, solicitacao, await obterCnpjsPayloadN8n(cliente, cotacao), whatsapp, usuarioId);
 }
 
 // --- Webhook de entrada (seção 20/23) ---------------------------------------------------

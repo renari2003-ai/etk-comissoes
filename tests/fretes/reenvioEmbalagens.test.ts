@@ -56,6 +56,8 @@ vi.mock('../../src/fretes/auditoriaRepositorio.js', () => ({
   }),
 }));
 
+// Este arquivo cobre o caminho via n8n; o SMTP direto (padrão) está em `envioSmtp.test.ts`.
+process.env.FRETES_EMAIL_OUTBOUND = 'n8n';
 const { servicoReenviarSolicitacao } = await import('../../src/fretes/integracaoCotacoesServico.js');
 const n8n = await import('../../src/fretes/integracoes/n8nCliente.js');
 const repositorio = await import('../../src/fretes/solicitacoesRepositorio.js');

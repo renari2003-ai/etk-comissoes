@@ -7,6 +7,9 @@
  * de payload do frontend/usuário (seção 36/37: evita SSRF via URL escolhida pelo cliente).
  */
 import { config } from '../../config.js';
+import { sanitizarTextoErro } from './sanitizacao.js';
+
+export { sanitizarTextoErro };
 
 /** Contrato versionado outbound (seção 12/19) — campos reais do domínio, nunca dado comercial interno (seção 13). */
 export interface PayloadSolicitacaoN8n {
@@ -77,26 +80,6 @@ export class ErroEnvioN8nFalhou extends Error {
 const LIMITE_RESUMO_RESPOSTA = 300;
 /** Lê no máximo isto do corpo de erro — nunca carrega uma página HTML inteira. */
 const LIMITE_LEITURA_CORPO = 16_384;
-
-/**
- * Remove do texto qualquer coisa com cara de credencial antes de persistir/auditar: o próprio
- * segredo configurado, cabeçalhos/pares `chave=valor` sensíveis, tokens Bearer/Basic, JWTs e
- * sequências longas tipo chave de API.
- */
-export function sanitizarTextoErro(texto: string, segredos: readonly string[] = []): string {
-  let resultado = texto;
-  for (const segredo of segredos) {
-    if (segredo.trim().length >= 4) resultado = resultado.split(segredo.trim()).join('[oculto]');
-  }
-  return resultado
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [oculto]')
-    .replace(
-      /(["']?[\w-]*(?:secret|segredo|token|senha|password|passwd|pwd|api[_-]?key|apikey|authorization|credential|credencial|cookie|session)[\w-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&}]+)/gi,
-      '$1[oculto]',
-    )
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[oculto]')
-    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[oculto]');
-}
 
 /**
  * Resumo curto e sanitizado do corpo de uma resposta de erro do n8n (para diagnóstico na

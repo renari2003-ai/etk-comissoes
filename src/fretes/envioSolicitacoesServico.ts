@@ -4,7 +4,7 @@
  * orquestrador só DESPACHA para os serviços que já existem — nenhuma implementação nova de
  * e-mail, WhatsApp ou Braspress:
  *   - API (só Braspress)  → `servicoCotarBraspress`
- *   - EMAIL / WHATSAPP    → `servicoSolicitarCotacoes` (n8n; e-mail resolvido MANUAL > CADASTRO > OMIE > bloqueio)
+ *   - EMAIL / WHATSAPP    → `servicoSolicitarCotacoes` (EMAIL por SMTP direto, WHATSAPP pelo n8n; e-mail resolvido MANUAL > CADASTRO > OMIE > bloqueio)
  * Cadastro e canal são sempre revalidados aqui (nunca confia no navegador). Uma
  * transportadora com problema não impede as demais: cada uma recebe seu resultado.
  */
@@ -364,7 +364,10 @@ async function processarItemEnvio(
       usuarioId,
     );
     if (solicitacao === undefined || solicitacao.status === 'ERRO') {
-      return falha(nome, MENSAGEM_FALHA_ENVIO[item.canal], solicitacao?.erroUltimaTentativa ?? 'Envio ao n8n não confirmado.', {
+      // Destinatário recusado pelo servidor SMTP = e-mail inválido para o operador corrigir.
+      const destinatarioRecusado = item.canal === 'EMAIL' && (solicitacao?.erroUltimaTentativa ?? '').startsWith('SMTP_DESTINATARIO_RECUSADO');
+      const mensagem = destinatarioRecusado ? MENSAGENS_ENVIO.EMAIL_INVALIDO : MENSAGEM_FALHA_ENVIO[item.canal];
+      return falha(nome, mensagem, solicitacao?.erroUltimaTentativa ?? 'Envio não confirmado.', {
         solicitacaoId: solicitacao?.id ?? null,
       });
     }

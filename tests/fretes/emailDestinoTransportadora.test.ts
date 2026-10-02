@@ -11,6 +11,7 @@ vi.setConfig({ testTimeout: 20000 });
 let sufixo: string;
 
 beforeEach(() => {
+  process.env.FRETES_EMAIL_OUTBOUND = 'n8n'; // estes testes cobrem o caminho via n8n (SMTP direto: tests/fretes/envioSmtp.test.ts)
   sufixo = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   isolarTabelasComerciais(sufixo);
   process.env.TRANSPORTADORAS_TABELA = `transportadoras_teste_${sufixo}`;
