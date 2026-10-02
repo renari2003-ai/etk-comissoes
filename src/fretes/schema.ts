@@ -423,6 +423,10 @@ export function garantirEsquemaFretes(): Promise<void> {
     await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS ycloud_message_id TEXT`);
     await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS telefone_destino TEXT`);
 
+    // Snapshot das embalagens (altura/largura/comprimento/quantidade por tipo) usado no envio
+    // e no "Reenviar". Aditivo/nullable: registros antigos ficam `NULL` e continuam legíveis.
+    await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS embalagens JSONB`);
+
     // Material bruto — NUNCA alterado depois de criado (seção 18); correções humanas
     // alteram só a proposta estruturada. UNIQUE (canal, identificador_mensagem) é a
     // idempotência em nível de banco (seção 19): a mesma mensagem chegando duas vezes

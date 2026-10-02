@@ -189,7 +189,23 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
     expect(d.cotarBraspress).toHaveBeenCalledWith(cliente, COTACAO_ID, { cepOrigem: null, cubagem: CUBAGEM }, USUARIO_TESTE);
     // EMAIL → fluxo de solicitação existente (resolução MANUAL > OMIE acontece lá)
     expect(d.solicitar).toHaveBeenCalledTimes(1);
-    expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: XYZ.id, emailManual: 'manual@xyz.com.br' }], 'EMAIL', USUARIO_TESTE);
+    // EMAIL também recebe as embalagens (uma por tipo, medidas como informadas) para gravar na solicitação.
+    expect(d.solicitar).toHaveBeenCalledWith(
+      cliente,
+      COTACAO_ID,
+      [
+        {
+          transportadoraId: XYZ.id,
+          emailManual: 'manual@xyz.com.br',
+          embalagens: [
+            { altura: 0.5, largura: 0.4, comprimento: 0.6, quantidade: 5 },
+            { altura: 1.2, largura: 0.8, comprimento: 1, quantidade: 2 },
+          ],
+        },
+      ],
+      'EMAIL',
+      USUARIO_TESTE,
+    );
     expect(r).toEqual([
       expect.objectContaining({ transportadora: 'BRASPRESS', canal: 'API', status: 'ENVIADO', propostaId: 'prop-1' }),
       expect.objectContaining({ transportadora: 'Transportes XYZ', canal: 'EMAIL', status: 'ENVIADO', solicitacaoId: `sol-${XYZ.id}` }),
@@ -259,7 +275,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
       USUARIO_TESTE,
       d,
     );
-    expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, emailManual: null }], 'WHATSAPP', USUARIO_TESTE);
+    expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, emailManual: null, embalagens: null }], 'WHATSAPP', USUARIO_TESTE);
     expect(r).toMatchObject({ canal: 'WHATSAPP', status: 'ENVIADO', mensagem: MENSAGENS_ENVIO.WHATSAPP_ENVIADO });
   });
 
@@ -405,7 +421,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
         expect.objectContaining({ transportadoraId: comWhatsapp.id, status: 'FALHOU', mensagem: MENSAGENS_ENVIO.EMAIL_INVALIDO }),
       ]);
       expect(d.solicitar).toHaveBeenCalledTimes(1);
-      expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: comEmail.id, emailManual: null }], 'EMAIL', USUARIO_TESTE);
+      expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: comEmail.id, emailManual: null, embalagens: null }], 'EMAIL', USUARIO_TESTE);
     });
 
     it('lote: falha de uma transportadora não bloqueia as demais (A ok, B WhatsApp inválido, C sem API, D ok)', async () => {

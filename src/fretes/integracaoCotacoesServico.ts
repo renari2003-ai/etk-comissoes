@@ -44,7 +44,7 @@ import {
 } from './solicitacoesRepositorio.js';
 import { buscarTransportadoraPorId } from './transportadorasRepositorio.js';
 import { enviarSolicitacaoAoN8n, type PayloadSolicitacaoN8n } from './integracoes/n8nCliente.js';
-import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
+import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, EmbalagemSolicitacao, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
 import type { PayloadCorrelacionarWhatsapp, PayloadOutboundWhatsapp, PayloadRespostaWebhook } from './webhookCotacoes.js';
 
 // --- Solicitação de cotação (seção 12/25/27) -------------------------------------------
@@ -59,8 +59,10 @@ function gerarCodigoReferencia(codigoCotacao: string): string {
  * NUNCA inclui margem/comissão/custo de produto/markup ETK/valor de venda/credenciais —
  * esses conceitos nem existem neste objeto. Fase 4A.4.1 (seção 9): `transportadora.email`/
  * `fonteEmail` são o SNAPSHOT já gravado na solicitação — o n8n nunca decide/consulta Omie.
+ * `embalagens` também vem do snapshot da solicitação: envio inicial e "Reenviar" mandam as
+ * mesmas medidas/quantidades, nunca relidas da tela.
  */
-function montarPayloadN8n(
+export function montarPayloadN8n(
   cotacao: CotacaoFrete,
   solicitacao: SolicitacaoCotacao,
   cnpjs: CnpjsPayloadN8n,
@@ -93,6 +95,12 @@ function montarPayloadN8n(
       cnpjDestino: cnpjs.cnpjDestino,
       modalidade: cotacao.modalidade,
       observacoes: cotacao.observacoes && cotacao.observacoes.trim() !== '' ? cotacao.observacoes : null,
+      embalagens: (solicitacao.embalagens ?? []).map((e) => ({
+        altura: e.altura,
+        largura: e.largura,
+        comprimento: e.comprimento,
+        quantidade: e.quantidade,
+      })),
     },
   };
 }
@@ -214,6 +222,8 @@ async function tentarEnviarAoN8n(
 export interface ItemSolicitacaoCotacao {
   transportadoraId: string;
   emailManual?: string | null;
+  /** Embalagens do envio (uma por tipo) — gravadas como snapshot na solicitação e reusadas no "Reenviar". */
+  embalagens?: EmbalagemSolicitacao[] | null;
 }
 
 export async function servicoSolicitarCotacoes(
@@ -257,6 +267,7 @@ export async function servicoSolicitarCotacoes(
       criadoPor: usuarioId,
       emailDestino,
       emailOrigem,
+      embalagens: item.embalagens ?? null,
     });
     await registrarAuditoria({
       usuarioId,

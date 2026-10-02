@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeTabelaSolicitacoes } from './schema.js';
-import type { CanalOrigemProposta, EmailOrigem, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
+import type { CanalOrigemProposta, EmailOrigem, EmbalagemSolicitacao, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
 
 interface LinhaSolicitacao {
   id: string;
@@ -21,6 +21,8 @@ interface LinhaSolicitacao {
   wamid_outbound: string | null;
   ycloud_message_id: string | null;
   telefone_destino: string | null;
+  /** JSONB (já desserializado pelo `pg`); ausente/`NULL` em registros anteriores à coluna. */
+  embalagens?: unknown;
   criado_por: string;
   criado_em: Date;
   atualizado_em: Date;
@@ -44,10 +46,30 @@ function linhaParaSolicitacao(l: LinhaSolicitacao): SolicitacaoCotacao {
     wamidOutbound: l.wamid_outbound,
     ycloudMessageId: l.ycloud_message_id,
     telefoneDestino: l.telefone_destino,
+    embalagens: lerEmbalagensPersistidas(l.embalagens),
     criadoPor: l.criado_por,
     criadoEm: l.criado_em.toISOString(),
     atualizadoEm: l.atualizado_em.toISOString(),
   };
+}
+
+/**
+ * Lê o snapshot de embalagens gravado na solicitação. Registro antigo (coluna ausente/`NULL`)
+ * ou lista vazia → `null`. Conteúdo fora do formato gravado por `criarSolicitacao` é estado
+ * inconsistente e falha alto — nunca é "consertado" ou parcialmente aproveitado.
+ */
+export function lerEmbalagensPersistidas(valor: unknown): EmbalagemSolicitacao[] | null {
+  if (valor === undefined || valor === null) return null;
+  if (!Array.isArray(valor)) throw new Error('Embalagens da solicitação em formato inválido — estado inconsistente.');
+  if (valor.length === 0) return null;
+  return valor.map((item: unknown) => {
+    const e = item as Record<string, unknown> | null;
+    const campos = ['altura', 'largura', 'comprimento', 'quantidade'] as const;
+    if (e === null || typeof e !== 'object' || !campos.every((c) => typeof e[c] === 'number' && Number.isFinite(e[c]))) {
+      throw new Error('Embalagens da solicitação em formato inválido — estado inconsistente.');
+    }
+    return { altura: e.altura as number, largura: e.largura as number, comprimento: e.comprimento as number, quantidade: e.quantidade as number };
+  });
 }
 
 export interface DadosNovaSolicitacao {
@@ -59,6 +81,8 @@ export interface DadosNovaSolicitacao {
   /** Fase 4A.4.1 — só preenchido para canal EMAIL; `undefined`/`null` nos demais canais. */
   emailDestino?: string | null;
   emailOrigem?: EmailOrigem | null;
+  /** Snapshot das embalagens do envio (canais EMAIL/WHATSAPP); `undefined`/`null`/vazio → `NULL`. */
+  embalagens?: EmbalagemSolicitacao[] | null;
 }
 
 export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<SolicitacaoCotacao> {
@@ -67,8 +91,8 @@ export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<Sol
   const id = randomUUID();
   const { rows } = await pool.query<LinhaSolicitacao>(
     `INSERT INTO ${nomeTabelaSolicitacoes()}
-       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por, email_destino, email_origem)
-     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6, $7, $8)
+       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por, email_destino, email_origem, embalagens)
+     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6, $7, $8, $9::jsonb)
      RETURNING *`,
     [
       id,
@@ -79,6 +103,7 @@ export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<Sol
       dados.criadoPor,
       dados.emailDestino ?? null,
       dados.emailOrigem ?? null,
+      dados.embalagens !== undefined && dados.embalagens !== null && dados.embalagens.length > 0 ? JSON.stringify(dados.embalagens) : null,
     ],
   );
   const linha = rows[0];

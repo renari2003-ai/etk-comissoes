@@ -48,6 +48,13 @@ export interface PayloadSolicitacaoN8n {
     /** Aditivos (compatível com `versao: 1`): CIF/FOB comercial da cotação e observações da cotação (vazio → `null`). */
     modalidade: 'CIF' | 'FOB';
     observacoes: string | null;
+    /**
+     * Aditivo (compatível com `versao: 1`): um item por tipo de embalagem, do snapshot gravado
+     * na solicitação (o "Reenviar" manda exatamente o mesmo). Medidas em metros, como
+     * informadas — sem conversão. Lista vazia quando a solicitação não tem embalagens
+     * (registros antigos). `volumes` acima continua sendo o total já existente da cotação.
+     */
+    embalagens: { altura: number; largura: number; comprimento: number; quantidade: number }[];
   };
 }
 
@@ -65,6 +72,64 @@ export class ErroEnvioN8nFalhou extends Error {
     super(motivo);
     this.name = 'ErroEnvioN8nFalhou';
   }
+}
+
+const LIMITE_RESUMO_RESPOSTA = 300;
+/** Lê no máximo isto do corpo de erro — nunca carrega uma página HTML inteira. */
+const LIMITE_LEITURA_CORPO = 16_384;
+
+/**
+ * Remove do texto qualquer coisa com cara de credencial antes de persistir/auditar: o próprio
+ * segredo configurado, cabeçalhos/pares `chave=valor` sensíveis, tokens Bearer/Basic, JWTs e
+ * sequências longas tipo chave de API.
+ */
+export function sanitizarTextoErro(texto: string, segredos: readonly string[] = []): string {
+  let resultado = texto;
+  for (const segredo of segredos) {
+    if (segredo.trim().length >= 4) resultado = resultado.split(segredo.trim()).join('[oculto]');
+  }
+  return resultado
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [oculto]')
+    .replace(
+      /(["']?[\w-]*(?:secret|segredo|token|senha|password|passwd|pwd|api[_-]?key|apikey|authorization|credential|credencial|cookie|session)[\w-]*["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&}]+)/gi,
+      '$1[oculto]',
+    )
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[oculto]')
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[oculto]');
+}
+
+/**
+ * Resumo curto e sanitizado do corpo de uma resposta de erro do n8n (para diagnóstico na
+ * auditoria e em "Detalhes"). JSON → prefere `message`/`error`/`details`/`hint`; HTML → só o
+ * texto, sem tags; sempre truncado em `LIMITE_RESUMO_RESPOSTA`. Vazio → `null`.
+ */
+export function resumirCorpoErroN8n(corpo: string, segredos: readonly string[] = []): string | null {
+  const bruto = corpo.slice(0, LIMITE_LEITURA_CORPO).trim();
+  if (bruto === '') return null;
+  let texto = bruto;
+  try {
+    const json = JSON.parse(bruto) as unknown;
+    if (json !== null && typeof json === 'object') {
+      const objeto = json as Record<string, unknown>;
+      const partes: string[] = [];
+      for (const campo of ['message', 'error', 'details', 'hint', 'description'] as const) {
+        const valor = objeto[campo];
+        if (valor === undefined || valor === null || valor === '') continue;
+        const textoCampo = typeof valor === 'string' ? valor : typeof valor === 'object' && typeof (valor as Record<string, unknown>).message === 'string' ? ((valor as Record<string, unknown>).message as string) : JSON.stringify(valor);
+        if (!partes.includes(textoCampo)) partes.push(textoCampo);
+      }
+      texto = partes.length > 0 ? partes.join(' | ') : JSON.stringify(json);
+    }
+  } catch {
+    if (/<[a-z!/][^>]*>/i.test(bruto)) {
+      texto = bruto
+        .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ');
+    }
+  }
+  const limpo = sanitizarTextoErro(texto.replace(/\s+/g, ' ').trim(), segredos);
+  if (limpo === '') return null;
+  return limpo.length > LIMITE_RESUMO_RESPOSTA ? `${limpo.slice(0, LIMITE_RESUMO_RESPOSTA)}…` : limpo;
 }
 
 export interface ResultadoEnvioN8n {
@@ -100,7 +165,13 @@ export async function enviarSolicitacaoAoN8n(payload: PayloadSolicitacaoN8n): Pr
       throw new ErroEnvioN8nFalhou('Falha de rede ao chamar o webhook do n8n.');
     }
     if (!resposta.ok) {
-      throw new ErroEnvioN8nFalhou(`O webhook do n8n respondeu HTTP ${resposta.status}.`);
+      let resumo: string | null = null;
+      try {
+        resumo = resumirCorpoErroN8n(await resposta.text(), [secret]);
+      } catch {
+        resumo = null; // corpo ilegível nunca mascara o status HTTP
+      }
+      throw new ErroEnvioN8nFalhou(`O webhook do n8n respondeu HTTP ${resposta.status}.${resumo === null ? '' : ` Resposta: ${resumo}`}`);
     }
     return { statusHttp: resposta.status };
   } finally {

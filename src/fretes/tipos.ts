@@ -98,9 +98,23 @@ export interface SolicitacaoCotacao {
   wamidOutbound: string | null;
   ycloudMessageId: string | null;
   telefoneDestino: string | null;
+  /**
+   * Snapshot das embalagens informadas no envio (uma linha por tipo), gravado na criação e
+   * reutilizado no "Reenviar" — nunca relido da tela. Medidas em metros, exatamente como
+   * informadas (sem conversão). `null` em registros antigos ou envios sem embalagens.
+   */
+  embalagens: EmbalagemSolicitacao[] | null;
   criadoPor: string;
   criadoEm: string;
   atualizadoEm: string;
+}
+
+/** Um tipo de embalagem da solicitação: medidas em metros (como informadas) e quantidade de volumes desse tipo. */
+export interface EmbalagemSolicitacao {
+  altura: number;
+  largura: number;
+  comprimento: number;
+  quantidade: number;
 }
 
 /**

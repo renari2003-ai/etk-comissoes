@@ -350,7 +350,19 @@ async function processarItemEnvio(
       };
     }
 
-    const [solicitacao] = await deps.solicitar(cliente, cotacaoId, [{ transportadoraId: transportadora.id, emailManual }], item.canal, usuarioId);
+    // Mesmas linhas de embalagem da tela (formato `cubagem`), gravadas na solicitação para o
+    // "Reenviar" reutilizar. Medidas exatamente como informadas; `volumes` da linha = quantidade.
+    const embalagens =
+      cubagem !== null && cubagem.length > 0
+        ? cubagem.map((c) => ({ altura: c.altura, largura: c.largura, comprimento: c.comprimento, quantidade: c.volumes }))
+        : null;
+    const [solicitacao] = await deps.solicitar(
+      cliente,
+      cotacaoId,
+      [{ transportadoraId: transportadora.id, emailManual, embalagens }],
+      item.canal,
+      usuarioId,
+    );
     if (solicitacao === undefined || solicitacao.status === 'ERRO') {
       return falha(nome, MENSAGEM_FALHA_ENVIO[item.canal], solicitacao?.erroUltimaTentativa ?? 'Envio ao n8n não confirmado.', {
         solicitacaoId: solicitacao?.id ?? null,
