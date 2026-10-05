@@ -2193,13 +2193,52 @@ export function inicializarFretes() {
         badgePendentes.textContent = String(quantidade);
         badgePendentes.hidden = quantidade === 0;
     }
-    async function carregarPropostasRecebidas() {
+    const buscarEmails = el('fretes-buscar-emails');
+    const statusBuscaEmails = el('fretes-busca-emails-status');
+    buscarEmails.addEventListener('click', async () => {
+        if (buscarEmails.disabled)
+            return;
+        buscarEmails.disabled = true;
+        buscarEmails.textContent = 'Buscando…';
+        statusBuscaEmails.textContent = 'Consultando respostas de e-mail…';
+        try {
+            const resposta = await fetch('/api/fretes/emails-resposta/buscar', { method: 'POST' });
+            const resumo = await resposta.json();
+            if (resposta.status === 401)
+                throw new Error('Sua sessão expirou. Entre novamente no sistema.');
+            if (!resposta.ok || resumo.status === 'ERRO')
+                throw new Error(resumo.erro || 'Não foi possível consultar os e-mails.');
+            if (resumo.status === 'PULADO_LOCK') {
+                statusBuscaEmails.textContent = 'Já existe uma busca em andamento. Aguarde e tente novamente.';
+                return;
+            }
+            await carregarPropostasRecebidas(true);
+            await atualizarBadgePendentes();
+            const novas = (resumo.processadas ?? 0) + (resumo.revisao ?? 0);
+            statusBuscaEmails.textContent = `${novas === 0 ? 'Nenhuma nova resposta de frete.' : `${novas} nova(s) resposta(s) de frete encontrada(s).`} Última busca: ${new Date().toLocaleString('pt-BR')}.`;
+            if (resumo.erros)
+                statusBuscaEmails.textContent += ` ${resumo.erros} e-mail(s) com erro; tente buscar novamente.`;
+            if (resumo.restantes)
+                statusBuscaEmails.textContent += ' Há mais e-mails na fila. Clique novamente para continuar.';
+        }
+        catch (erro) {
+            statusBuscaEmails.textContent = erro instanceof Error ? erro.message : 'Falha na busca de e-mails. Tente novamente.';
+        }
+        finally {
+            buscarEmails.disabled = false;
+            buscarEmails.textContent = 'Buscar respostas de e-mail';
+        }
+    });
+    async function carregarPropostasRecebidas(exigirSucesso = false) {
         const resposta = await fetch('/api/fretes/propostas/pendentes');
         const lista = el('fretes-propostas-recebidas-lista');
         const vazio = el('fretes-propostas-recebidas-vazio');
-        lista.textContent = '';
-        if (!resposta.ok)
+        if (!resposta.ok) {
+            if (exigirSucesso)
+                throw new Error('Busca concluída, mas não foi possível atualizar a lista. Reabra Propostas recebidas.');
             return;
+        }
+        lista.textContent = '';
         const dados = (await resposta.json());
         vazio.hidden = dados.pendentesValidacao.length > 0;
         if (dados.pendentesValidacao.length > 0) {

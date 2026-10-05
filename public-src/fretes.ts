@@ -2629,12 +2629,48 @@ export function inicializarFretes(): { ativar: () => void } {
     badgePendentes.hidden = quantidade === 0;
   }
 
-  async function carregarPropostasRecebidas(): Promise<void> {
+  const buscarEmails = el<HTMLButtonElement>('fretes-buscar-emails');
+  const statusBuscaEmails = el<HTMLElement>('fretes-busca-emails-status');
+  buscarEmails.addEventListener('click', async () => {
+    if (buscarEmails.disabled) return;
+    buscarEmails.disabled = true;
+    buscarEmails.textContent = 'Buscando…';
+    statusBuscaEmails.textContent = 'Consultando respostas de e-mail…';
+    try {
+      const resposta = await fetch('/api/fretes/emails-resposta/buscar', { method: 'POST' });
+      const resumo = await resposta.json() as {
+        status?: string; processadas?: number; revisao?: number; erros?: number;
+        restantes?: number; erro?: string | null;
+      };
+      if (resposta.status === 401) throw new Error('Sua sessão expirou. Entre novamente no sistema.');
+      if (!resposta.ok || resumo.status === 'ERRO') throw new Error(resumo.erro || 'Não foi possível consultar os e-mails.');
+      if (resumo.status === 'PULADO_LOCK') {
+        statusBuscaEmails.textContent = 'Já existe uma busca em andamento. Aguarde e tente novamente.';
+        return;
+      }
+      await carregarPropostasRecebidas(true);
+      await atualizarBadgePendentes();
+      const novas = (resumo.processadas ?? 0) + (resumo.revisao ?? 0);
+      statusBuscaEmails.textContent = `${novas === 0 ? 'Nenhuma nova resposta de frete.' : `${novas} nova(s) resposta(s) de frete encontrada(s).`} Última busca: ${new Date().toLocaleString('pt-BR')}.`;
+      if (resumo.erros) statusBuscaEmails.textContent += ` ${resumo.erros} e-mail(s) com erro; tente buscar novamente.`;
+      if (resumo.restantes) statusBuscaEmails.textContent += ' Há mais e-mails na fila. Clique novamente para continuar.';
+    } catch (erro) {
+      statusBuscaEmails.textContent = erro instanceof Error ? erro.message : 'Falha na busca de e-mails. Tente novamente.';
+    } finally {
+      buscarEmails.disabled = false;
+      buscarEmails.textContent = 'Buscar respostas de e-mail';
+    }
+  });
+
+  async function carregarPropostasRecebidas(exigirSucesso = false): Promise<void> {
     const resposta = await fetch('/api/fretes/propostas/pendentes');
     const lista = el<HTMLElement>('fretes-propostas-recebidas-lista');
     const vazio = el<HTMLElement>('fretes-propostas-recebidas-vazio');
+    if (!resposta.ok) {
+      if (exigirSucesso) throw new Error('Busca concluída, mas não foi possível atualizar a lista. Reabra Propostas recebidas.');
+      return;
+    }
     lista.textContent = '';
-    if (!resposta.ok) return;
     const dados = (await resposta.json()) as { pendentesValidacao: PropostaFrete[]; respostasSemProposta: { canal: CanalOrigemProposta; dataRecebimento: string; conteudoBruto: string | null }[] };
 
     vazio.hidden = dados.pendentesValidacao.length > 0;

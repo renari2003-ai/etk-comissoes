@@ -1138,6 +1138,8 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   });
   rotas.post('/api/fretes/jobs/processar-emails', exigirSegredoJobFretes, processarEmails);
   rotas.get('/api/fretes/jobs/processar-emails', exigirSegredoJobFretes, processarEmails);
+  // Busca manual usa a sessão do operador; o segredo do agendador nunca vai ao navegador.
+  rotas.post('/api/fretes/emails-resposta/buscar', ...protegida, processarEmails);
 
   // Fila de revisão manual dos e-mails de resposta (sem referência, valor ausente/ambíguo,
   // correlação impossível, falha repetida) — só leitura, para quem já acessa fretes.

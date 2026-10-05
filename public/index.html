@@ -821,9 +821,11 @@
     </section>
 
     <section id="fretes-secao-propostas-recebidas" hidden>
-      <div class="area-tabela-cabecalho">
+      <div class="area-tabela-cabecalho" style="flex-wrap: wrap; gap: 12px;">
         <h2 class="titulo-secao">Propostas recebidas automaticamente</h2>
+        <button id="fretes-buscar-emails" type="button" class="botao-secundario">Buscar respostas de e-mail</button>
       </div>
+      <p id="fretes-busca-emails-status" class="filtro-data-legenda" role="status" aria-live="polite"></p>
       <p class="filtro-data-legenda">
         Propostas chegadas por e-mail/WhatsApp/API ficam aqui até um humano confirmar os dados extraídos — nunca são aprovadas
         automaticamente, mesmo com alta confiança da extração. Corrija os campos abaixo antes de confirmar, se necessário.
