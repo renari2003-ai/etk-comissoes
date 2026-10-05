@@ -557,82 +557,8 @@ export async function gerarRelatorioComissionamento(
     return chave !== null && inicioPeriodo !== null && fimPeriodo !== null && chave >= inicioPeriodo && chave <= fimPeriodo;
   }
 
-  /** Cálculo de sempre (margem → comissão → parcelas → liberada/pendente) para uma linha — idêntico para venda do período e pedido anterior. */
   async function calcularLinha(linha: LinhaRelatorio, origem: OrigemLinhaComissionamento): Promise<LinhaComissionamento> {
-    const {
-      margem,
-      comissaoNormalPercentual,
-      adicionalVendedorPercentual,
-      comissaoFinalPercentual,
-      comissaoTotal,
-      vendedorComissaoFixaPercentual,
-      segregacaoComissaoFixa,
-    } = await calcularComissaoDaLinha(cliente, linha);
-
-    // Percentual efetivo (comissão total ÷ receita) para distribuir a comissão pelas parcelas
-    // proporcionalmente ao peso de cada uma — necessário porque, com segregação, a comissão do
-    // pedido não é mais um único percentual aplicado à base (é a soma de duas partes).
-    const percentualEfetivo = linha.receitaTotal === 0 ? 0 : (comissaoTotal / linha.receitaTotal) * 100;
-
-    const titulosDoPedido = localizarTitulosDoPedido(linha);
-    const parcelasSemFatura = distribuirComissaoPorParcelas(
-      linha.receitaTotal,
-      percentualEfetivo,
-      titulosDoPedido.map((t) => ({
-        numeroParcela: t.numeroParcela,
-        valorBruto: t.valorDocumento,
-        statusTitulo: t.statusTitulo,
-        numeroNotaFiscal: t.numeroNotaFiscal,
-        dataVencimento: t.dataVencimento,
-        dataEmissao: t.dataEmissao ?? null,
-      })),
-    );
-    const todasAsParcelas = rotularFaturamentoParcial(linha.numeroPedido, parcelasSemFatura);
-
-    // Venda do período: todas as parcelas, liberada/pendente sobre a comissão inteira (regra de
-    // sempre). Pedido anterior: só as parcelas que vencem no período — a distribuição acima já
-    // usou TODAS as parcelas, então o valor de cada parcela é exatamente o mesmo de sempre.
-    const parcelas = origem === 'PERIODO' ? todasAsParcelas : todasAsParcelas.filter((p) => venceNoPeriodo(p.dataVencimento));
-    const comissaoLiberada = parcelas.filter((p) => p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
-    const comissaoPendente =
-      origem === 'PERIODO'
-        ? comissaoTotal - comissaoLiberada
-        : parcelas.filter((p) => !p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
-
-    const valorFaturado = titulosDoPedido.reduce((soma, t) => soma + t.valorDocumento, 0);
-    const saldoAFaturar = linha.valorBruto - valorFaturado;
-
-    return {
-      ...linha,
-      despesasIPI: arredondarDinheiroLocal(margem.despesasIPI),
-      despesasIcmsSt: arredondarDinheiroLocal(margem.despesasIcmsSt),
-      despesasFreteSeguroOutras: arredondarDinheiroLocal(margem.despesasFreteSeguroOutras),
-      despesasTotal: arredondarDinheiroLocal(margem.despesasTotal),
-      resultadoAposDespesas: arredondarDinheiroLocal(margem.resultadoAposDespesas),
-      margemComissionamentoPercentual:
-        margem.margemComissionamentoPercentual === null ? null : arredondarDinheiroLocal(margem.margemComissionamentoPercentual),
-      impostosEmbutidos: {
-        icms: arredondarDinheiroLocal(margem.impostosEmbutidos.icms),
-        pis: arredondarDinheiroLocal(margem.impostosEmbutidos.pis),
-        cofins: arredondarDinheiroLocal(margem.impostosEmbutidos.cofins),
-        ibs: arredondarDinheiroLocal(margem.impostosEmbutidos.ibs),
-        cbs: arredondarDinheiroLocal(margem.impostosEmbutidos.cbs),
-      },
-      comissaoNormalPercentual: arredondarDinheiroLocal(comissaoNormalPercentual),
-      adicionalVendedorPercentual: arredondarDinheiroLocal(adicionalVendedorPercentual),
-      comissaoFinalPercentual: arredondarDinheiroLocal(comissaoFinalPercentual),
-      comissaoTotal: arredondarDinheiroLocal(comissaoTotal),
-      parcelas,
-      comissaoLiberada: arredondarDinheiroLocal(comissaoLiberada),
-      comissaoPendente: arredondarDinheiroLocal(comissaoPendente),
-      semTitulosLocalizados: titulosDoPedido.length === 0,
-      origem,
-      datasFaturamento: datasFaturamentoDosTitulos(titulosDoPedido),
-      valorFaturado: arredondarDinheiroLocal(valorFaturado),
-      saldoAFaturar: arredondarDinheiroLocal(saldoAFaturar),
-      ...(vendedorComissaoFixaPercentual !== undefined ? { vendedorComissaoFixaPercentual } : {}),
-      ...(segregacaoComissaoFixa !== undefined ? { segregacaoComissaoFixa } : {}),
-    };
+    return calcularLinhaComissionamento(cliente, linha, localizarTitulosDoPedido(linha), origem, (p) => venceNoPeriodo(p.dataVencimento));
   }
 
   const linhasDoPeriodo: LinhaComissionamento[] = await Promise.all(comVendedor.map((linha) => calcularLinha(linha, 'PERIODO')));
@@ -718,5 +644,89 @@ export async function gerarRelatorioComissionamento(
     numerosPedidosSemVendedor,
     numerosPedidosAnterioresNaoLocalizados,
     excecoesRevisaoManual: [...excecoesPorCodigoPedido.values()],
+  };
+}
+
+/** Cálculo de sempre (margem → comissão → parcelas → liberada/pendente) para uma linha — idêntico para venda do período e pedido anterior. */
+export async function calcularLinhaComissionamento(
+  cliente: ClienteOmieParaComissionamento,
+  linha: LinhaRelatorio,
+  titulosDoPedido: TituloContaReceber[],
+  origem: OrigemLinhaComissionamento = 'PERIODO',
+  selecionarParcela: (parcela: ParcelaComissao) => boolean = () => true,
+): Promise<LinhaComissionamento> {
+  const {
+    margem,
+    comissaoNormalPercentual,
+    adicionalVendedorPercentual,
+    comissaoFinalPercentual,
+    comissaoTotal,
+    vendedorComissaoFixaPercentual,
+    segregacaoComissaoFixa,
+  } = await calcularComissaoDaLinha(cliente, linha);
+
+  // Percentual efetivo (comissão total ÷ receita) para distribuir a comissão pelas parcelas
+  // proporcionalmente ao peso de cada uma — necessário porque, com segregação, a comissão do
+  // pedido não é mais um único percentual aplicado à base (é a soma de duas partes).
+  const percentualEfetivo = linha.receitaTotal === 0 ? 0 : (comissaoTotal / linha.receitaTotal) * 100;
+
+  const parcelasSemFatura = distribuirComissaoPorParcelas(
+    linha.receitaTotal,
+    percentualEfetivo,
+    titulosDoPedido.map((t) => ({
+      codigoLancamentoOmie: t.codigoLancamentoOmie,
+      numeroParcela: t.numeroParcela,
+      valorBruto: t.valorDocumento,
+      statusTitulo: t.statusTitulo,
+      numeroNotaFiscal: t.numeroNotaFiscal,
+      dataVencimento: t.dataVencimento,
+      dataEmissao: t.dataEmissao ?? null,
+    })),
+  );
+  const todasAsParcelas = rotularFaturamentoParcial(linha.numeroPedido, parcelasSemFatura);
+
+  // Venda do período: todas as parcelas, liberada/pendente sobre a comissão inteira (regra de
+  // sempre). Pedido anterior: só as parcelas que vencem no período — a distribuição acima já
+  // usou TODAS as parcelas, então o valor de cada parcela é exatamente o mesmo de sempre.
+  const parcelas = origem === 'PERIODO' ? todasAsParcelas : todasAsParcelas.filter(selecionarParcela);
+  const comissaoLiberada = parcelas.filter((p) => p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
+  const comissaoPendente =
+    origem === 'PERIODO'
+      ? comissaoTotal - comissaoLiberada
+      : parcelas.filter((p) => !p.baixado).reduce((soma, p) => soma + p.comissaoParcela, 0);
+
+  const valorFaturado = titulosDoPedido.reduce((soma, t) => soma + t.valorDocumento, 0);
+  const saldoAFaturar = linha.valorBruto - valorFaturado;
+
+  return {
+    ...linha,
+    despesasIPI: arredondarDinheiroLocal(margem.despesasIPI),
+    despesasIcmsSt: arredondarDinheiroLocal(margem.despesasIcmsSt),
+    despesasFreteSeguroOutras: arredondarDinheiroLocal(margem.despesasFreteSeguroOutras),
+    despesasTotal: arredondarDinheiroLocal(margem.despesasTotal),
+    resultadoAposDespesas: arredondarDinheiroLocal(margem.resultadoAposDespesas),
+    margemComissionamentoPercentual:
+      margem.margemComissionamentoPercentual === null ? null : arredondarDinheiroLocal(margem.margemComissionamentoPercentual),
+    impostosEmbutidos: {
+      icms: arredondarDinheiroLocal(margem.impostosEmbutidos.icms),
+      pis: arredondarDinheiroLocal(margem.impostosEmbutidos.pis),
+      cofins: arredondarDinheiroLocal(margem.impostosEmbutidos.cofins),
+      ibs: arredondarDinheiroLocal(margem.impostosEmbutidos.ibs),
+      cbs: arredondarDinheiroLocal(margem.impostosEmbutidos.cbs),
+    },
+    comissaoNormalPercentual: arredondarDinheiroLocal(comissaoNormalPercentual),
+    adicionalVendedorPercentual: arredondarDinheiroLocal(adicionalVendedorPercentual),
+    comissaoFinalPercentual: arredondarDinheiroLocal(comissaoFinalPercentual),
+    comissaoTotal: arredondarDinheiroLocal(comissaoTotal),
+    parcelas,
+    comissaoLiberada: arredondarDinheiroLocal(comissaoLiberada),
+    comissaoPendente: arredondarDinheiroLocal(comissaoPendente),
+    semTitulosLocalizados: titulosDoPedido.length === 0,
+    origem,
+    datasFaturamento: datasFaturamentoDosTitulos(titulosDoPedido),
+    valorFaturado: arredondarDinheiroLocal(valorFaturado),
+    saldoAFaturar: arredondarDinheiroLocal(saldoAFaturar),
+    ...(vendedorComissaoFixaPercentual !== undefined ? { vendedorComissaoFixaPercentual } : {}),
+    ...(segregacaoComissaoFixa !== undefined ? { segregacaoComissaoFixa } : {}),
   };
 }

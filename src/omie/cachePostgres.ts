@@ -35,12 +35,24 @@ const DEZ_MINUTOS_MS = 10 * 60 * 1000;
  * cache periodicamente; em produção serverless isso não é garantido).
  */
 export class CachePostgres {
+  /** Complementa o cache persistente: consultas simultâneas no mesmo processo compartilham
+   * a busca em andamento, antes mesmo de sua resposta ser gravada no Postgres.
+   */
+  private readonly emAndamento = new Map<string, Promise<unknown>>();
   constructor(
     private readonly categoria: string,
     private readonly ttlMs: number = DEZ_MINUTOS_MS,
   ) {}
 
-  async obterOuBuscar<T>(chave: string, buscar: () => Promise<T>): Promise<T> {
+  obterOuBuscar<T>(chave: string, buscar: () => Promise<T>): Promise<T> {
+    const pendente = this.emAndamento.get(chave);
+    if (pendente !== undefined) return pendente as Promise<T>;
+    const consulta = this.buscarComCache(chave, buscar).finally(() => this.emAndamento.delete(chave));
+    this.emAndamento.set(chave, consulta);
+    return consulta;
+  }
+
+  private async buscarComCache<T>(chave: string, buscar: () => Promise<T>): Promise<T> {
     await garantirTabela();
     const pool = obterPool();
     const { rows } = await pool.query<{ valor: T; criado_em: Date }>(

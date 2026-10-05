@@ -34,9 +34,16 @@ export class OmieErroTransitorio extends OmieError {
  * nota de `OmieErroTransitorio` sobre por que precisa estender `OmieError`.
  */
 export class OmieErroLimiteExcedido extends OmieError {
-  constructor(message: string) {
-    super(message);
+  /** REDUNDANT reinicia a janela de 60s a cada falha. Nunca repetir com backoff curto. */
+  readonly esperaMinimaMs: number;
+  constructor(message: string, faultcode?: string) {
+    super(message, faultcode);
     this.name = 'OmieErroLimiteExcedido';
+    const segundos = /aguarde\s+(\d+)\s+segundos?/i.exec(message);
+    const redundante = /redundan/i.test(`${message} ${faultcode ?? ''}`);
+    this.esperaMinimaMs = redundante || segundos !== null
+      ? (Math.max(redundante ? 60 : 0, Number(segundos?.[1] ?? 0)) + 1) * 1000
+      : 0;
   }
 }
 
@@ -53,5 +60,5 @@ export function verificarFalhaNoCorpo(corpo: unknown): { faultcode?: string; fau
 }
 
 export function indicaLimiteExcedido(faultcode?: string, faultstring?: string): boolean {
-  return (faultcode ?? '').includes('425') || (faultstring ?? '').includes('425');
+  return /425|redundan/i.test(`${faultcode ?? ''} ${faultstring ?? ''}`);
 }

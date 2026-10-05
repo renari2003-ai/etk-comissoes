@@ -12,6 +12,8 @@ import { validarBusca, validarCodigoVendedor, validarData } from '../validacao.j
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { resolverVinculoVendedor } from '../auth/vinculoVendedor.js';
 import { assincrono } from './erroHttp.js';
+import { gerarRelatorioFinanceiro, resumirFinanceiro, validarPeriodoFinanceiro } from '../comissionamento/relatorioFinanceiro.js';
+import { gerarExcelFinanceiro } from '../comissionamento/excelFinanceiro.js';
 
 function resultadoVazio(): ResultadoComissionamento {
   return {
@@ -64,6 +66,28 @@ async function gerarParaCodigos(
  */
 export function criarRotaComissionamento(cliente: ClienteOmie): Router {
   const rotas = Router();
+
+  // JSON e Excel usam a mesma apuração e os mesmos controles de acesso.
+  rotas.get(['/api/relatorios/financeiro-comissao', '/api/relatorios/financeiro-comissao/excel'],
+    exigirAutenticacao, exigirPermissao('relatorioFinanceiroComissao'), resolverVinculoVendedor(cliente),
+    assincrono(async (req, res) => {
+      const periodo = validarPeriodoFinanceiro(validarData(req.query.data_de, 'data_de'), validarData(req.query.data_ate, 'data_ate'));
+      const usuario = req.usuario!;
+      const codigos = resolverVendedoresDoRelatorio(usuario, usuario.papel === 'vendedor' ? undefined : validarCodigoVendedor(req.query.vendedor));
+      const resultado = await gerarRelatorioFinanceiro(cliente, { ...periodo, codigosVendedor: codigos, busca: validarBusca(req.query.busca) });
+      const linhas = usuario.papel === 'vendedor' ? resultado.linhas.filter(l => (codigos ?? []).includes(l.codigoVendedor)) : resultado.linhas;
+      const filtrado = { ...resultado, linhas, resumo: resumirFinanceiro(linhas) };
+      const margemVisivel = podeVerMargemComissionamento(usuario);
+      if (req.path.endsWith('/excel')) {
+        res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="financeiro-comissao.xlsx"');
+        res.send(gerarExcelFinanceiro(filtrado, periodo, margemVisivel));
+        return;
+      }
+      res.json({ ...filtrado, margemVisivel,
+        linhas: margemVisivel ? linhas : linhas.map(l => ({ ...l, detalhe: ocultarMargem(l.detalhe) })),
+      });
+    }));
 
   rotas.get(
     '/api/relatorios/comissionamento',

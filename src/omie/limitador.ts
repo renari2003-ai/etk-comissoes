@@ -82,10 +82,14 @@ export class Limitador {
       } catch (erro) {
         ultimoErro = erro;
         const podeTentarNovamente = erro instanceof OmieErroLimiteExcedido || erro instanceof OmieErroTransitorio;
-        if (!podeTentarNovamente || tentativa === MAX_TENTATIVAS - 1) {
+        // Não manter uma requisição HTTP esperando bloqueios longos (ex.: bloqueio de 30min).
+        // Para REDUNDANT, permite só uma nova tentativa, após toda a janela de 60 segundos.
+        const esperaMinima = erro instanceof OmieErroLimiteExcedido ? erro.esperaMinimaMs : 0;
+        if (!podeTentarNovamente || tentativa === MAX_TENTATIVAS - 1 ||
+            esperaMinima > 61000 || (esperaMinima > 0 && tentativa > 0)) {
           throw erro;
         }
-        const espera = ESPERAS_BACKOFF_MS[tentativa] ?? ESPERAS_BACKOFF_MS[ESPERAS_BACKOFF_MS.length - 1] ?? 2000;
+        const espera = Math.max(esperaMinima, ESPERAS_BACKOFF_MS[tentativa] ?? ESPERAS_BACKOFF_MS[ESPERAS_BACKOFF_MS.length - 1] ?? 2000);
         await new Promise((resolve) => setTimeout(resolve, espera));
       }
     }

@@ -1,5 +1,5 @@
 /**
- * Área de Relatórios: Vendas, Orçamentos e Comissionamento — três telas
+ * Área de Relatórios: Vendas, Orçamentos, Comissionamento e Financeiro / Comissão — telas
  * independentes, nunca misturadas (regra crítica de separação Pedido vs
  * Orçamento; comissionamento é calculado exclusivamente sobre Vendas).
  * Toda renderização usa textContent/criação de nós DOM, nunca innerHTML,
@@ -26,6 +26,7 @@ const CAMINHO_POR_TIPO = {
     vendas: '/api/relatorios/vendas',
     orcamentos: '/api/relatorios/orcamentos',
     comissionamento: '/api/relatorios/comissionamento',
+    'financeiro-comissao': '/api/relatorios/financeiro-comissao',
 };
 function el(id) {
     const elemento = document.getElementById(id);
@@ -97,6 +98,7 @@ export function inicializarRelatorios() {
     const abaVendas = el('aba-relatorio-vendas');
     const abaOrcamentos = el('aba-relatorio-orcamentos');
     const abaComissionamento = el('aba-relatorio-comissionamento');
+    const abaFinanceiro = el('aba-relatorio-financeiro-comissao');
     const formFiltros = el('form-filtros-relatorio');
     const campoDataDe = el('filtro-data-de');
     const campoDataAte = el('filtro-data-ate');
@@ -106,6 +108,8 @@ export function inicializarRelatorios() {
     const botaoCalendarioAte = el('filtro-data-ate-calendario-botao');
     const campoVendedor = el('filtro-vendedor');
     const campoBusca = el('filtro-busca');
+    const legendaPeriodo = el('filtro-data-legenda');
+    const legendaOriginal = Array.from(legendaPeriodo.childNodes).map(n => n.cloneNode(true));
     const avisoRelatorio = el('relatorio-aviso');
     const indicadores = el('relatorio-indicadores');
     const areaTabela = el('relatorio-area-tabela');
@@ -116,6 +120,7 @@ export function inicializarRelatorios() {
     const areaErro = el('relatorio-area-erro');
     const indicadorCarregamento = el('indicador-carregamento');
     const botaoBaixarPdf = el('botao-baixar-pdf-comissao');
+    const botaoBaixarExcel = el('botao-baixar-excel-comissao');
     const modalLinhaFundo = el('relatorio-modal-linha-fundo');
     const modalLinha = el('relatorio-modal-linha');
     const modalLinhaTitulo = el('relatorio-modal-linha-titulo');
@@ -124,6 +129,8 @@ export function inicializarRelatorios() {
     let tipoAtivo = 'vendas';
     let vendedoresCarregados = false;
     let ativado = false;
+    let requisicaoAtual = 0;
+    let parametrosExcel = null;
     function mostrarCarregando(mostrar) {
         indicadorCarregamento.hidden = !mostrar;
     }
@@ -136,6 +143,8 @@ export function inicializarRelatorios() {
         areaErro.hidden = true;
         areaVazia.hidden = true;
         botaoBaixarPdf.hidden = true;
+        botaoBaixarExcel.hidden = true;
+        parametrosExcel = null;
         fecharModalLinha();
     }
     function mostrarErro(mensagem) {
@@ -150,12 +159,24 @@ export function inicializarRelatorios() {
         abaOrcamentos.setAttribute('aria-selected', String(tipoAtivo === 'orcamentos'));
         abaComissionamento.classList.toggle('aba-ativa', tipoAtivo === 'comissionamento');
         abaComissionamento.setAttribute('aria-selected', String(tipoAtivo === 'comissionamento'));
+        abaFinanceiro.classList.toggle('aba-ativa', tipoAtivo === 'financeiro-comissao');
+        abaFinanceiro.setAttribute('aria-selected', String(tipoAtivo === 'financeiro-comissao'));
+        if (tipoAtivo === 'financeiro-comissao') {
+            legendaPeriodo.textContent = 'Selecione o período de baixa/recebimento da empresa. Vendas anteriores também são consideradas quando recebidas nesse intervalo.';
+            campoBusca.placeholder = 'Nº, nota fiscal, cliente ou vendedor…';
+        }
+        else {
+            legendaPeriodo.replaceChildren(...legendaOriginal.map(n => n.cloneNode(true)));
+            campoBusca.placeholder = 'Nº, cliente ou vendedor…';
+        }
         textoVazio.textContent =
             tipoAtivo === 'vendas'
                 ? 'Nenhuma venda encontrada para os filtros selecionados.'
                 : tipoAtivo === 'orcamentos'
                     ? 'Nenhum orçamento encontrado para os filtros selecionados.'
-                    : 'Nenhum pedido elegível a comissionamento para os filtros selecionados.';
+                    : tipoAtivo === 'financeiro-comissao'
+                        ? 'Nenhum recebimento com comissão a pagar no período selecionado.'
+                        : 'Nenhum pedido elegível a comissionamento para os filtros selecionados.';
     }
     async function carregarVendedores() {
         if (vendedoresCarregados)
@@ -487,7 +508,53 @@ export function inicializarRelatorios() {
             });
         }
     }
+    function renderizarFinanceiro(dados) {
+        indicadores.textContent = '';
+        indicadores.appendChild(montarIndicador('Pedidos', String(dados.resumo.quantidadePedidos)));
+        indicadores.appendChild(montarIndicador('Recebimentos', String(dados.resumo.quantidadeRecebimentos)));
+        indicadores.appendChild(montarIndicador('Valor recebido no período', formatarMoeda(dados.resumo.valorRecebido)));
+        indicadores.appendChild(montarIndicador('Comissão a pagar', formatarMoeda(dados.resumo.comissaoAPagar), true));
+        indicadores.hidden = false;
+        const titulos = ['Pedido', 'Cliente', 'Vendedor', 'Nota fiscal', 'Parcela', 'Data de recebimento',
+            ...(dados.margemVisivel ? ['Margem'] : []), 'Comissão %', 'Valor recebido', 'Comissão a pagar'];
+        cabecalhoTabela.textContent = '';
+        const cabecalho = document.createElement('tr');
+        for (const titulo of titulos) {
+            const th = document.createElement('th');
+            th.scope = 'col';
+            th.textContent = titulo;
+            cabecalho.appendChild(th);
+        }
+        cabecalhoTabela.appendChild(cabecalho);
+        corpoTabela.textContent = '';
+        for (const linha of dados.linhas) {
+            const tr = document.createElement('tr');
+            tr.className = 'linha-comissionamento-clicavel';
+            tr.tabIndex = 0;
+            tr.setAttribute('aria-expanded', 'false');
+            tr.title = 'Ver composição da comissão e dados do pedido';
+            const valores = [linha.numeroPedido, linha.nomeCliente ?? 'Não localizado', linha.nomeVendedor ?? 'Não identificado',
+                linha.numeroNotaFiscal ?? 'Não informado', linha.numeroParcela ?? '—', linha.dataRecebimento,
+                ...(dados.margemVisivel ? [formatarPercentual(linha.detalhe.margemComissionamentoPercentual ?? null)] : []),
+                formatarPercentual(linha.comissaoPercentual), formatarMoeda(linha.valorRecebido), formatarMoeda(linha.comissaoAPagar)];
+            valores.forEach((valor, i) => tr.appendChild(celula(valor, i >= 6 ? 'col-num' : undefined)));
+            corpoTabela.appendChild(tr);
+            const detalhe = renderizarLinhaParcelas(linha.detalhe, dados.margemVisivel, titulos.length);
+            const nota = document.createElement('p');
+            nota.textContent = `Recebido em ${linha.dataRecebimento}: ${formatarMoeda(linha.valorRecebido)}. Comissão a pagar: ${formatarMoeda(linha.comissaoAPagar)}. A composição do pedido é apresentada como referência; a parcela abaixo corresponde somente a este recebimento.`;
+            detalhe.firstElementChild?.prepend(nota);
+            detalhe.hidden = true;
+            corpoTabela.appendChild(detalhe);
+            const alternar = () => { detalhe.hidden = !detalhe.hidden; tr.setAttribute('aria-expanded', String(!detalhe.hidden)); };
+            tr.addEventListener('click', alternar);
+            tr.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                alternar();
+            } });
+        }
+    }
     async function carregarRelatorio() {
+        const idRequisicao = ++requisicaoAtual;
         limparResultado();
         mostrarCarregando(true);
         try {
@@ -502,6 +569,8 @@ export function inicializarRelatorios() {
                 parametros.set('busca', campoBusca.value.trim());
             const resposta = await fetch(`${CAMINHO_POR_TIPO[tipoAtivo]}?${parametros.toString()}`);
             const corpo = await resposta.json().catch(() => null);
+            if (idRequisicao !== requisicaoAtual)
+                return;
             if (!resposta.ok) {
                 const corpoErro = corpo && typeof corpo === 'object' ? corpo : null;
                 const erroBase = typeof corpoErro?.erro === 'string' ? corpoErro.erro : 'Não foi possível consultar a Omie neste momento.';
@@ -509,7 +578,21 @@ export function inicializarRelatorios() {
                 throw new Error(motivo ? `${erroBase} ${motivo}` : erroBase);
             }
             const avisos = [];
-            if (tipoAtivo === 'comissionamento') {
+            if (tipoAtivo === 'financeiro-comissao') {
+                const dados = corpo;
+                avisoRelatorio.textContent = ['Comissão apurada pela data de recebimento da empresa. Não comprova pagamento ao funcionário.', ...dados.avisos].join(' ');
+                avisoRelatorio.hidden = false;
+                renderizarFinanceiro(dados);
+                parametrosExcel = parametros.toString();
+                botaoBaixarExcel.hidden = false;
+                if (dados.linhas.length === 0)
+                    areaVazia.hidden = false;
+                else {
+                    areaTabela.hidden = false;
+                    botaoBaixarPdf.hidden = false;
+                }
+            }
+            else if (tipoAtivo === 'comissionamento') {
                 const dados = corpo;
                 if (dados.pedidosSemVendedorExcluidos > 0) {
                     const numeros = dados.numerosPedidosSemVendedor.map((n) => `nº ${n}`).join(', ');
@@ -566,10 +649,13 @@ export function inicializarRelatorios() {
             }
         }
         catch (erro) {
+            if (idRequisicao !== requisicaoAtual)
+                return;
             mostrarErro(erro instanceof Error ? erro.message : 'Erro desconhecido.');
         }
         finally {
-            mostrarCarregando(false);
+            if (idRequisicao === requisicaoAtual)
+                mostrarCarregando(false);
         }
     }
     function trocarAbaRelatorio(tipo) {
@@ -582,7 +668,36 @@ export function inicializarRelatorios() {
     abaVendas.addEventListener('click', () => trocarAbaRelatorio('vendas'));
     abaOrcamentos.addEventListener('click', () => trocarAbaRelatorio('orcamentos'));
     abaComissionamento.addEventListener('click', () => trocarAbaRelatorio('comissionamento'));
+    abaFinanceiro.addEventListener('click', () => trocarAbaRelatorio('financeiro-comissao'));
     botaoBaixarPdf.addEventListener('click', () => window.print());
+    botaoBaixarExcel.addEventListener('click', () => {
+        if (parametrosExcel === null)
+            return;
+        const consulta = parametrosExcel;
+        botaoBaixarExcel.disabled = true;
+        void (async () => {
+            try {
+                const resposta = await fetch(`/api/relatorios/financeiro-comissao/excel?${consulta}`);
+                if (!resposta.ok) {
+                    const erro = await resposta.json().catch(() => ({}));
+                    throw new Error(erro.erro ?? 'Não foi possível baixar o Excel.');
+                }
+                const url = URL.createObjectURL(await resposta.blob());
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'financeiro-comissao.xlsx';
+                link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+            catch (erro) {
+                avisoRelatorio.textContent = erro instanceof Error ? erro.message : 'Erro ao baixar Excel.';
+                avisoRelatorio.hidden = false;
+            }
+            finally {
+                botaoBaixarExcel.disabled = false;
+            }
+        })();
+    });
     /**
      * Máscara automática dd/mm/aaaa: o usuário digita só números, sem precisar
      * da barra (ex.: "01012026" vira "01/01/2026" enquanto digita). Se parar

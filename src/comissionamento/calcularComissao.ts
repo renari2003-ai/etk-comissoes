@@ -136,6 +136,7 @@ export function calcularComissaoTotal(baseComissao: number, percentualComissao: 
 export type SituacaoComissaoParcela = 'AGUARDANDO_TITULO' | 'PENDENTE_DE_BAIXA' | 'ELEGIVEL';
 
 export interface ParcelaFinanceira {
+  codigoLancamentoOmie?: number;
   numeroParcela: string | null;
   valorBruto: number;
   /** null = nenhum título localizado na Omie para esta parcela (seção 40: nunca inventar). */
@@ -149,6 +150,7 @@ export interface ParcelaFinanceira {
 }
 
 export interface ParcelaComissao {
+  codigoLancamentoOmie?: number;
   numeroParcela: string | null;
   valorBrutoParcela: number;
   /** Fração da base de comissão do pedido atribuída a esta parcela, proporcional ao seu peso no valor bruto total das parcelas (seção 14/16). */
@@ -208,6 +210,7 @@ export function distribuirComissaoPorParcelas(
     }
 
     return {
+      ...(parcela.codigoLancamentoOmie !== undefined ? { codigoLancamentoOmie: parcela.codigoLancamentoOmie } : {}),
       numeroParcela: parcela.numeroParcela,
       valorBrutoParcela: parcela.valorBruto,
       valorBaseParcela,

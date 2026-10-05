@@ -59,7 +59,7 @@ function linhaParaUsuario(linha: LinhaUsuario): Usuario {
     nome: linha.nome,
     papel: linha.papel,
     senhaHash: linha.senha_hash,
-    permissoes: linha.permissoes,
+    permissoes: { ...PERMISSOES_VAZIAS, ...linha.permissoes },
     senhaProvisoria: linha.senha_provisoria,
     mestre: linha.mestre,
     vendedorOmieId: linha.vendedor_omie_id === null ? null : Number(linha.vendedor_omie_id),

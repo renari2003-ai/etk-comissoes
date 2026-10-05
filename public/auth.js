@@ -100,6 +100,7 @@ function aplicarPermissoes(usuarioLogado) {
         ['aba-relatorio-vendas', p.relatorioVendas],
         ['aba-relatorio-orcamentos', p.relatorioOrcamentos],
         ['aba-relatorio-comissionamento', p.relatorioComissionamento],
+        ['aba-relatorio-financeiro-comissao', p.relatorioFinanceiroComissao],
     ];
     for (const [id, liberado] of secoesPorId) {
         const elemento = document.getElementById(id);
@@ -107,7 +108,7 @@ function aplicarPermissoes(usuarioLogado) {
             elemento.hidden = !liberado;
     }
     const consultaLiberada = p.consultaPedidos || p.consultaOrcamentos;
-    const relatoriosLiberados = p.relatorioVendas || p.relatorioOrcamentos || p.relatorioComissionamento;
+    const relatoriosLiberados = p.relatorioVendas || p.relatorioOrcamentos || p.relatorioComissionamento || p.relatorioFinanceiroComissao;
     modoConsultaBotao.hidden = !consultaLiberada;
     modoRelatoriosBotao.hidden = !relatoriosLiberados;
     if (!consultaLiberada && !relatoriosLiberados) {
@@ -124,8 +125,9 @@ function aplicarPermissoes(usuarioLogado) {
     const abaVendas = document.getElementById('aba-relatorio-vendas');
     const abaOrcamentosRel = document.getElementById('aba-relatorio-orcamentos');
     const abaComissao = document.getElementById('aba-relatorio-comissionamento');
-    if (abaVendas !== null && abaOrcamentosRel !== null && abaComissao !== null) {
-        garantirAbaAtivaVisivel([abaVendas, abaOrcamentosRel, abaComissao], 'aba-ativa');
+    const abaFinanceiro = document.getElementById('aba-relatorio-financeiro-comissao');
+    if (abaVendas !== null && abaOrcamentosRel !== null && abaComissao !== null && abaFinanceiro !== null) {
+        garantirAbaAtivaVisivel([abaVendas, abaOrcamentosRel, abaComissao, abaFinanceiro], 'aba-ativa');
     }
 }
 function mostrarOverlayLogin() {

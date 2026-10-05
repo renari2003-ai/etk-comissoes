@@ -102,6 +102,7 @@
           <label><input type="checkbox" name="relatorioVendas" /> Relatórios — Vendas</label>
           <label><input type="checkbox" name="relatorioOrcamentos" /> Relatórios — Orçamentos</label>
           <label><input type="checkbox" name="relatorioComissionamento" /> Relatórios — Comissionamento</label>
+          <label><input type="checkbox" name="relatorioFinanceiroComissao" /> Relatórios — Financeiro / Comissão</label>
           <label><input type="checkbox" name="fretes" /> Fretes</label>
           <label><input type="checkbox" name="fretesLogistica" /> Fretes — Central da Logística</label>
           <label><input type="checkbox" name="fretesComercial" /> Fretes — Central do Vendedor</label>
@@ -1193,6 +1194,9 @@
       <button type="button" id="aba-relatorio-comissionamento" class="aba-tipo-documento" role="tab" aria-selected="false">
         Comissionamento
       </button>
+      <button type="button" id="aba-relatorio-financeiro-comissao" class="aba-tipo-documento" role="tab" aria-selected="false">
+        Financeiro / Comissão
+      </button>
     </nav>
 
     <form id="form-filtros-relatorio" class="filtros-relatorio" autocomplete="off">
@@ -1224,6 +1228,7 @@
       </div>
       <button type="submit" class="botao-secundario botao-aplicar-filtro">Aplicar filtros</button>
       <button type="button" id="botao-baixar-pdf-comissao" class="botao-secundario botao-baixar-pdf" hidden>Baixar PDF</button>
+      <button type="button" id="botao-baixar-excel-comissao" class="botao-secundario" hidden>Baixar Excel</button>
     </form>
     <p id="filtro-data-legenda" class="filtro-data-legenda">
       Período filtrado pela <strong>data de previsão do pedido</strong> informada na Omie.

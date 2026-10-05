@@ -23,6 +23,7 @@ export interface Permissoes {
   relatorioVendas: boolean;
   relatorioOrcamentos: boolean;
   relatorioComissionamento: boolean;
+  relatorioFinanceiroComissao: boolean;
   /** Módulo de Fretes (Fase 1) — cotação/transportadoras/propostas/fechamento. */
   fretes: boolean;
   /** Fase 4A.6 — Central da Logística (triagem/liberação de propostas). */
@@ -148,6 +149,7 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
     ['aba-relatorio-vendas', p.relatorioVendas],
     ['aba-relatorio-orcamentos', p.relatorioOrcamentos],
     ['aba-relatorio-comissionamento', p.relatorioComissionamento],
+    ['aba-relatorio-financeiro-comissao', p.relatorioFinanceiroComissao],
   ];
   for (const [id, liberado] of secoesPorId) {
     const elemento = document.getElementById(id);
@@ -155,7 +157,7 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
   }
 
   const consultaLiberada = p.consultaPedidos || p.consultaOrcamentos;
-  const relatoriosLiberados = p.relatorioVendas || p.relatorioOrcamentos || p.relatorioComissionamento;
+  const relatoriosLiberados = p.relatorioVendas || p.relatorioOrcamentos || p.relatorioComissionamento || p.relatorioFinanceiroComissao;
   modoConsultaBotao.hidden = !consultaLiberada;
   modoRelatoriosBotao.hidden = !relatoriosLiberados;
 
@@ -173,8 +175,9 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
   const abaVendas = document.getElementById('aba-relatorio-vendas') as HTMLButtonElement | null;
   const abaOrcamentosRel = document.getElementById('aba-relatorio-orcamentos') as HTMLButtonElement | null;
   const abaComissao = document.getElementById('aba-relatorio-comissionamento') as HTMLButtonElement | null;
-  if (abaVendas !== null && abaOrcamentosRel !== null && abaComissao !== null) {
-    garantirAbaAtivaVisivel([abaVendas, abaOrcamentosRel, abaComissao], 'aba-ativa');
+  const abaFinanceiro = document.getElementById('aba-relatorio-financeiro-comissao') as HTMLButtonElement | null;
+  if (abaVendas !== null && abaOrcamentosRel !== null && abaComissao !== null && abaFinanceiro !== null) {
+    garantirAbaAtivaVisivel([abaVendas, abaOrcamentosRel, abaComissao, abaFinanceiro], 'aba-ativa');
   }
 }
 

@@ -19,6 +19,7 @@ export interface Permissoes {
   relatorioVendas: boolean;
   relatorioOrcamentos: boolean;
   relatorioComissionamento: boolean;
+  relatorioFinanceiroComissao: boolean;
   /** Módulo de Fretes (Fase 1, 2026-09-15) — cotação/transportadoras/propostas/fechamento. Chave nova, aditiva: usuários existentes simplesmente começam com `false` (opt-in). */
   fretes: boolean;
   /** Fase 4A.6 — "LOGISTICA_APROVA": triagem de propostas na Central da Logística (liberar/descartar). */
@@ -37,6 +38,7 @@ export const PERMISSOES_VAZIAS: Permissoes = {
   relatorioVendas: false,
   relatorioOrcamentos: false,
   relatorioComissionamento: false,
+  relatorioFinanceiroComissao: false,
   fretes: false,
   fretesLogistica: false,
   fretesComercial: false,

@@ -9,6 +9,7 @@ import {
 } from './classificacaoDocumento.js';
 import { OmieError, OmieErroLimiteExcedido, OmieErroTransitorio, indicaLimiteExcedido, verificarFalhaNoCorpo } from './erros.js';
 import { Limitador } from './limitador.js';
+import { normalizarBaixas, type BaixaRecebimento, type MovimentoFinanceiroOmie } from './recebimentos.js';
 
 const URL_BASE = 'https://app.omie.com.br/api/v1';
 
@@ -229,6 +230,8 @@ export class ClienteOmie {
   private readonly cacheVendedores = new CachePostgres('vendedores', 60 * MINUTOS);
   private readonly cacheClientes = new CachePostgres('clientes', 60 * MINUTOS);
   private readonly cacheContasReceber = new CachePostgres('contas-receber', 5 * MINUTOS);
+  private readonly cacheBaixasReceber = new CachePostgres('baixas-receber', 5 * MINUTOS);
+  private readonly cachePedidos = new CachePostgres('pedido-consulta', 5 * MINUTOS);
 
   constructor(intervaloMinimoMs: number = config.intervaloMinimoMs) {
     this.limitador = new Limitador(intervaloMinimoMs);
@@ -243,6 +246,8 @@ export class ClienteOmie {
       this.cacheVendedores.limpar(),
       this.cacheClientes.limpar(),
       this.cacheContasReceber.limpar(),
+      this.cacheBaixasReceber.limpar(),
+      this.cachePedidos.limpar(),
     ]);
   }
 
@@ -276,7 +281,7 @@ export class ClienteOmie {
       if (falha !== null) {
         const mensagem = falha.faultstring ?? `Erro desconhecido da Omie (${call})`;
         if (indicaLimiteExcedido(falha.faultcode, falha.faultstring)) {
-          throw new OmieErroLimiteExcedido(mensagem);
+          throw new OmieErroLimiteExcedido(mensagem, falha.faultcode);
         }
         throw new OmieError(mensagem, falha.faultcode);
       }
@@ -637,17 +642,47 @@ export class ClienteOmie {
     });
   }
 
+  /** Somente leitura. BXCR seleciona cada baixa, inclusive recebimentos parciais.
+   * Nunca usa emissão, vencimento ou o total acumulado pago para decidir o período.
+   */
+  async listarBaixasReceber(dataDe: string, dataAte: string): Promise<BaixaRecebimento[]> {
+    return this.cacheBaixasReceber.obterOuBuscar(`${dataDe}:${dataAte}`, async () => {
+      const movimentos: MovimentoFinanceiroOmie[] = [];
+      let pagina = 1;
+      let totalPaginas = 1;
+      do {
+        const resposta = await this.chamar<{
+          nTotPaginas: number; movimentos?: MovimentoFinanceiroOmie[];
+        }>('/financas/mf/', 'ListarMovimentos', {
+          nPagina: pagina, nRegPorPagina: 500,
+          cNatureza: 'R', cTpLancamento: 'BXCR',
+          dDtPagtoDe: dataDe, dDtPagtoAte: dataAte,
+        });
+        if (!Number.isSafeInteger(resposta.nTotPaginas) || resposta.nTotPaginas < 0) {
+          throw new OmieError('Paginação de baixas financeiras inválida.');
+        }
+        movimentos.push(...(resposta.movimentos ?? []));
+        totalPaginas = resposta.nTotPaginas;
+        pagina += 1;
+      } while (pagina <= totalPaginas);
+      try { return normalizarBaixas(movimentos); }
+      catch (erro) { throw new OmieError(erro instanceof Error ? erro.message : 'Baixas financeiras inválidas.'); }
+    });
+  }
+
   async consultarPedido(identificador: { numeroPedido?: string; codigoPedido?: number }): Promise<PedidoOmie> {
     const param: Record<string, unknown> = {};
     if (identificador.numeroPedido !== undefined) param.numero_pedido = identificador.numeroPedido;
     if (identificador.codigoPedido !== undefined) param.codigo_pedido = identificador.codigoPedido;
 
-    const resposta = await this.chamar<{ pedido_venda_produto: PedidoOmie }>(
-      '/produtos/pedido/',
-      'ConsultarPedido',
-      param,
-    );
-    return resposta.pedido_venda_produto;
+    // Número consulta o original; código pode consultar uma fatura filha. Chaves separadas
+    // preservam essa distinção e evitam repetir a leitura ao mudar período ou baixar Excel.
+    return this.cachePedidos.obterOuBuscar(JSON.stringify(param), async () => {
+      const resposta = await this.chamar<{ pedido_venda_produto: PedidoOmie }>(
+        '/produtos/pedido/', 'ConsultarPedido', param,
+      );
+      return resposta.pedido_venda_produto;
+    });
   }
 
   async consultarProduto(codigoProduto: number): Promise<ProdutoOmie> {
