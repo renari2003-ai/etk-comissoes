@@ -4,7 +4,7 @@
  * orquestrador só DESPACHA para os serviços que já existem — nenhuma implementação nova de
  * e-mail, WhatsApp ou Braspress:
  *   - API (só Braspress)  → `servicoCotarBraspress`
- *   - EMAIL / WHATSAPP    → `servicoSolicitarCotacoes` (EMAIL por SMTP direto, WHATSAPP pelo n8n; e-mail resolvido MANUAL > CADASTRO > OMIE > bloqueio)
+ *   - EMAIL / WHATSAPP    → `servicoSolicitarCotacoes` (EMAIL por SMTP direto, WHATSAPP pela YCloud direto; e-mail resolvido MANUAL > CADASTRO > OMIE > bloqueio)
  * Cadastro e canal são sempre revalidados aqui (nunca confia no navegador). Uma
  * transportadora com problema não impede as demais: cada uma recebe seu resultado.
  */
@@ -364,9 +364,11 @@ async function processarItemEnvio(
       usuarioId,
     );
     if (solicitacao === undefined || solicitacao.status === 'ERRO') {
-      // Destinatário recusado pelo servidor SMTP = e-mail inválido para o operador corrigir.
-      const destinatarioRecusado = item.canal === 'EMAIL' && (solicitacao?.erroUltimaTentativa ?? '').startsWith('SMTP_DESTINATARIO_RECUSADO');
-      const mensagem = destinatarioRecusado ? MENSAGENS_ENVIO.EMAIL_INVALIDO : MENSAGEM_FALHA_ENVIO[item.canal];
+      // Destinatário recusado (SMTP) / número recusado (YCloud) = cadastro para o operador corrigir.
+      const erro = solicitacao?.erroUltimaTentativa ?? '';
+      const destinatarioRecusado =
+        (item.canal === 'EMAIL' && erro.startsWith('SMTP_DESTINATARIO_RECUSADO')) || (item.canal === 'WHATSAPP' && erro.startsWith('YCLOUD_DESTINO_INVALIDO'));
+      const mensagem = destinatarioRecusado ? MENSAGEM_CADASTRO_INVALIDO[item.canal] : MENSAGEM_FALHA_ENVIO[item.canal];
       return falha(nome, mensagem, solicitacao?.erroUltimaTentativa ?? 'Envio não confirmado.', {
         solicitacaoId: solicitacao?.id ?? null,
       });

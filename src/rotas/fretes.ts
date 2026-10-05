@@ -107,6 +107,10 @@ import {
 import { assincrono } from './erroHttp.js';
 import { servicoProcessarEmailsResposta } from '../fretes/jobEmailsRespostaServico.js';
 import { listarEmailsParaRevisao } from '../fretes/emailsRespostaRepositorio.js';
+import { validarEventoYCloud, verificarAssinaturaYCloud } from '../fretes/webhookYCloud.js';
+import { servicoProcessarEventoYCloud } from '../fretes/webhookYCloudServico.js';
+import { listarWhatsappParaRevisao } from '../fretes/whatsappRecebidasRepositorio.js';
+import { obterCorpoBruto } from './corpoBruto.js';
 
 const MODALIDADES_EXECUCAO_VALIDAS: readonly ModalidadeExecucao[] = ['TRANSPORTADORA', 'VEICULO_PROPRIO', 'RETIRA'];
 function validarModalidadeExecucaoOpcional(valor: unknown): ModalidadeExecucao | undefined {
@@ -1142,6 +1146,32 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     ...protegida,
     assincrono(async (_req, res) => {
       res.json(await listarEmailsParaRevisao());
+    }),
+  );
+
+  // --- Fase 3 da migração n8n → backend: webhook direto da YCloud --------------------
+  // Sem sessão de usuário: autenticidade só pela assinatura oficial `YCloud-Signature`
+  // (HMAC-SHA256 do corpo bruto com `YCLOUD_WEBHOOK_SECRET`). Assinatura ausente/errada/antiga
+  // → 401 sem tocar o banco; payload malformado → 400.
+  rotas.post(
+    '/api/fretes/integracoes/ycloud/webhook',
+    assincrono(async (req, res) => {
+      const valida = verificarAssinaturaYCloud(req.header('ycloud-signature'), obterCorpoBruto(req), config.ycloudWebhookSecret, Math.floor(Date.now() / 1000));
+      if (!valida) {
+        res.status(401).json({ erro: 'Assinatura do webhook inválida.' });
+        return;
+      }
+      const evento = validarEventoYCloud(req.body);
+      res.status(200).json(await servicoProcessarEventoYCloud(evento));
+    }),
+  );
+
+  // Fila de revisão manual do WhatsApp recebido (sem correlação, valor ausente/ambíguo, mídia).
+  rotas.get(
+    '/api/fretes/whatsapp-recebidas/revisao',
+    ...protegida,
+    assincrono(async (_req, res) => {
+      res.json(await listarWhatsappParaRevisao());
     }),
   );
 

@@ -274,6 +274,56 @@ export async function registrarWamidOutbound(dados: DadosRegistroWamidOutbound):
   }
 }
 
+/**
+ * Fase 3 (YCloud direto): a YCloud aceitou a mensagem mas ainda não devolveu o WAMID — grava o
+ * id da YCloud e o telefone usado; o WAMID chega depois pelo webhook de status
+ * (`buscarSolicitacaoPorYcloudMessageId` + `registrarWamidOutbound`).
+ */
+export async function registrarYcloudMessageIdPendente(id: string, ycloudMessageId: string, telefoneDestino: string): Promise<SolicitacaoCotacao> {
+  await garantirEsquemaFretes();
+  const { rows } = await obterPool().query<LinhaSolicitacao>(
+    `UPDATE ${nomeTabelaSolicitacoes()} SET ycloud_message_id = $2, telefone_destino = $3, atualizado_em = now() WHERE id = $1 RETURNING *`,
+    [id, ycloudMessageId, telefoneDestino],
+  );
+  const linha = rows[0];
+  if (linha === undefined) throw new ErroValidacao('Solicitação de cotação não encontrada.');
+  return linhaParaSolicitacao(linha);
+}
+
+export async function buscarSolicitacaoPorYcloudMessageId(ycloudMessageId: string): Promise<SolicitacaoCotacao | null> {
+  await garantirEsquemaFretes();
+  const { rows } = await obterPool().query<LinhaSolicitacao>(`SELECT * FROM ${nomeTabelaSolicitacoes()} WHERE ycloud_message_id = $1`, [ycloudMessageId]);
+  const linha = rows[0];
+  return linha === undefined ? null : linhaParaSolicitacao(linha);
+}
+
+/**
+ * Confirmação REAL de entrega (webhook de status da YCloud `delivered`/`read`). Só promove
+ * `ENVIADA → ENTREGUE`; nunca rebaixa uma solicitação já `RESPONDIDA`/`ERRO`/`CANCELADA`.
+ */
+export async function marcarSolicitacaoEntregue(id: string): Promise<SolicitacaoCotacao | null> {
+  await garantirEsquemaFretes();
+  const { rows } = await obterPool().query<LinhaSolicitacao>(
+    `UPDATE ${nomeTabelaSolicitacoes()} SET status = 'ENTREGUE', atualizado_em = now() WHERE id = $1 AND status = 'ENVIADA' RETURNING *`,
+    [id],
+  );
+  return rows[0] === undefined ? null : linhaParaSolicitacao(rows[0]);
+}
+
+/**
+ * Falha de entrega informada depois pela YCloud (`failed`): `ENVIADA`/`ENTREGUE → ERRO` com o
+ * motivo, para o operador ver e usar "Reenviar". Não mexe em solicitação já respondida.
+ */
+export async function marcarSolicitacaoFalhaEntrega(id: string, motivo: string): Promise<SolicitacaoCotacao | null> {
+  await garantirEsquemaFretes();
+  const { rows } = await obterPool().query<LinhaSolicitacao>(
+    `UPDATE ${nomeTabelaSolicitacoes()} SET status = 'ERRO', erro_ultima_tentativa = $2, atualizado_em = now()
+      WHERE id = $1 AND status IN ('ENVIADA','ENTREGUE') RETURNING *`,
+    [id, motivo],
+  );
+  return rows[0] === undefined ? null : linhaParaSolicitacao(rows[0]);
+}
+
 /** Resolução por `context.id` (Etapa 3, seção 3) — nunca adivinha: `null` quando o WAMID não foi registrado por nenhuma solicitação. */
 export async function buscarSolicitacaoPorWamidOutbound(wamidOutbound: string): Promise<SolicitacaoCotacao | null> {
   await garantirEsquemaFretes();

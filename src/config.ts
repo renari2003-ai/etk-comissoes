@@ -90,6 +90,25 @@ export const config = {
    * Vercel Cron, usar o mesmo valor em `CRON_SECRET`.
    */
   fretesJobSecret: process.env.FRETES_JOB_SECRET ?? '',
+  /**
+   * Fase 3 da migração n8n → backend: WhatsApp direto pela YCloud
+   * (`src/fretes/integracoes/ycloudCliente.ts`). API key e segredo do webhook só do ambiente,
+   * nunca logados. `YCLOUD_WHATSAPP_FROM` = número remetente (E.164, ex.: +5511...).
+   * Vazios → envio recusado / webhook recusa tudo (fail closed).
+   */
+  ycloudApiKey: process.env.YCLOUD_API_KEY ?? '',
+  ycloudWhatsappFrom: process.env.YCLOUD_WHATSAPP_FROM ?? '',
+  ycloudWebhookSecret: process.env.YCLOUD_WEBHOOK_SECRET ?? '',
+  ycloudApiUrl: (process.env.YCLOUD_API_URL ?? '').trim() || 'https://api.ycloud.com/v2',
+  ycloudTimeoutMs: numeroDoAmbiente('YCLOUD_TIMEOUT_MS', 15000),
+  /**
+   * Template aprovado na Meta para iniciar conversa fora da janela de 24h. Vazio → envia texto
+   * livre (só entregue se a transportadora tiver falado com o número nas últimas 24h).
+   */
+  ycloudTemplateNome: (process.env.YCLOUD_TEMPLATE_NOME ?? '').trim(),
+  ycloudTemplateIdioma: (process.env.YCLOUD_TEMPLATE_IDIOMA ?? '').trim() || 'pt_BR',
+  /** Caminho do canal WHATSAPP: `ycloud` (padrão, direto) ou `n8n` (rollback). */
+  fretesWhatsapp: (process.env.FRETES_WHATSAPP ?? '').trim().toLowerCase() === 'n8n' ? ('n8n' as const) : ('ycloud' as const),
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

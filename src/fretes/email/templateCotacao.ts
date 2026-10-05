@@ -43,7 +43,11 @@ function local(cidade: string | null, cep: string | null): string | null {
   return [c, z !== null ? `CEP ${fmtCep(z)}` : null].filter(Boolean).join(' - ');
 }
 
-export function montarEmailCotacao(payload: PayloadSolicitacaoN8n): EmailCotacao {
+/**
+ * Linhas "rótulo: valor" da cotação, já filtradas (sem vazios) — fonte única para o e-mail e
+ * para o WhatsApp (`src/fretes/whatsapp/mensagemCotacao.ts`).
+ */
+export function linhasDadosCotacao(payload: PayloadSolicitacaoN8n): [string, string][] {
   const L = payload.logistica;
   const ref = payload.referencia;
 
@@ -71,7 +75,12 @@ export function montarEmailCotacao(payload: PayloadSolicitacaoN8n): EmailCotacao
     ['Embalagens', embalagens.length > 0 ? embalagens.join('\n') : null],
     ['Observações', L.observacoes],
   ];
-  const rows = linhas.filter((r): r is [string, string] => r[1] !== null && r[1].trim() !== '');
+  return linhas.filter((r): r is [string, string] => r[1] !== null && r[1].trim() !== '');
+}
+
+export function montarEmailCotacao(payload: PayloadSolicitacaoN8n): EmailCotacao {
+  const ref = payload.referencia;
+  const rows = linhasDadosCotacao(payload);
 
   const td = 'padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;vertical-align:top;';
   const cell = (label: string, value: string): string => {

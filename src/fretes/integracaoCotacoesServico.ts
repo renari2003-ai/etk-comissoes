@@ -41,11 +41,14 @@ import {
   marcarSolicitacaoErro,
   marcarSolicitacaoRespondida,
   registrarWamidOutbound,
+  registrarYcloudMessageIdPendente,
 } from './solicitacoesRepositorio.js';
 import { buscarTransportadoraPorId } from './transportadorasRepositorio.js';
 import { enviarSolicitacaoAoN8n, type PayloadSolicitacaoN8n } from './integracoes/n8nCliente.js';
 import { enviarEmailSmtp, ErroEnvioSmtpFalhou } from './integracoes/smtpCliente.js';
 import { montarEmailCotacao } from './email/templateCotacao.js';
+import { enviarWhatsappYCloud, telefoneE164, type MensagemWhatsapp } from './integracoes/ycloudCliente.js';
+import { montarTextoWhatsapp, parametrosTemplateWhatsapp } from './whatsapp/mensagemCotacao.js';
 import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, EmbalagemSolicitacao, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
 import type { PayloadCorrelacionarWhatsapp, PayloadOutboundWhatsapp, PayloadRespostaWebhook } from './webhookCotacoes.js';
 
@@ -188,7 +191,8 @@ async function resolverEmailDestino(
  * criar proposta nenhuma. Usada tanto no envio inicial quanto no reenvio manual.
  *
  * Canal EMAIL vai por SMTP direto (padrão, Fase 1 da migração) ou pelo n8n quando
- * `FRETES_EMAIL_OUTBOUND=n8n` (rollback). WHATSAPP continua sempre pelo n8n.
+ * `FRETES_EMAIL_OUTBOUND=n8n` (rollback). WHATSAPP vai direto pela YCloud (padrão, Fase 3)
+ * ou pelo n8n quando `FRETES_WHATSAPP=n8n` (rollback).
  */
 async function tentarEnviarSolicitacao(
   cotacao: CotacaoFrete,
@@ -199,6 +203,9 @@ async function tentarEnviarSolicitacao(
 ): Promise<SolicitacaoCotacao> {
   if (solicitacao.canal === 'EMAIL' && config.fretesEmailOutbound === 'smtp') {
     return tentarEnviarPorSmtp(cotacao, solicitacao, cnpjs, usuarioId);
+  }
+  if (solicitacao.canal === 'WHATSAPP' && config.fretesWhatsapp === 'ycloud') {
+    return tentarEnviarPorYCloud(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
   }
   return tentarEnviarAoN8n(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
 }
@@ -242,6 +249,78 @@ async function tentarEnviarPorSmtp(
     });
     return atualizada;
   }
+}
+
+/**
+ * WhatsApp direto pela YCloud: destino SEMPRE `whatsappCotacao` do cadastro (já validado por
+ * `exigirWhatsappDestino`; nunca `telefone`). `ENVIADA` só quando a YCloud aceita (nunca
+ * "entregue" — entrega real só chega pelo webhook de status). O WAMID devolvido é gravado na
+ * solicitação para correlacionar o reply (`context.id`); se a YCloud ainda não o devolveu, o
+ * webhook de status completa depois pelo id da YCloud.
+ */
+async function tentarEnviarPorYCloud(
+  cotacao: CotacaoFrete,
+  solicitacao: SolicitacaoCotacao,
+  cnpjs: CnpjsPayloadN8n,
+  whatsapp: string | null,
+  usuarioId: string | null,
+): Promise<SolicitacaoCotacao> {
+  try {
+    const para = telefoneE164(whatsapp);
+    if (para === null) {
+      throw new ErroValidacao('YCLOUD_DESTINO_INVALIDO: WhatsApp para cotação do cadastro fora do formato DDD + número — nada foi enviado.');
+    }
+    const payload = montarPayloadN8n(cotacao, solicitacao, cnpjs, whatsapp);
+    const mensagem: MensagemWhatsapp =
+      config.ycloudTemplateNome !== ''
+        ? { tipo: 'template', para, nome: config.ycloudTemplateNome, idioma: config.ycloudTemplateIdioma, parametros: parametrosTemplateWhatsapp(payload) }
+        : { tipo: 'texto', para, texto: montarTextoWhatsapp(payload) };
+    const enviado = await enviarWhatsappYCloud(mensagem);
+    let atualizada = await marcarSolicitacaoEnviada(solicitacao.id, enviado.ycloudMessageId);
+    atualizada = await gravarRastreioWhatsapp(atualizada, enviado.ycloudMessageId, enviado.wamid, para);
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'SOLICITACAO_ENVIADA_YCLOUD',
+      entidade: 'solicitacao_cotacao_frete',
+      entidadeId: solicitacao.id,
+      valorNovo: {
+        status: atualizada.status,
+        tentativas: atualizada.tentativas,
+        statusYCloud: enviado.status,
+        ycloudMessageId: enviado.ycloudMessageId,
+        wamid: enviado.wamid,
+        tipoMensagem: mensagem.tipo,
+      },
+    });
+    return atualizada;
+  } catch (erro) {
+    // Mensagem já sanitizada por `ycloudCliente.ts` (nunca inclui a API key).
+    const motivo = erro instanceof Error ? erro.message : 'Falha desconhecida ao enviar WhatsApp pela YCloud.';
+    const atualizada = await marcarSolicitacaoErro(solicitacao.id, motivo);
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'SOLICITACAO_ERRO_YCLOUD',
+      entidade: 'solicitacao_cotacao_frete',
+      entidadeId: solicitacao.id,
+      valorNovo: { status: atualizada.status, tentativas: atualizada.tentativas, erro: motivo },
+    });
+    return atualizada;
+  }
+}
+
+/** Grava id YCloud + telefone (+ WAMID quando já conhecido) — mesma persistência da Etapa 3 do n8n. */
+async function gravarRastreioWhatsapp(solicitacao: SolicitacaoCotacao, ycloudMessageId: string, wamid: string | null, telefone: string): Promise<SolicitacaoCotacao> {
+  if (wamid !== null) {
+    const r = await registrarWamidOutbound({
+      solicitacaoId: solicitacao.id,
+      wamidOutbound: wamid,
+      ycloudMessageId,
+      telefoneDestino: telefone,
+      enviadoEm: new Date().toISOString(),
+    });
+    return r.solicitacao;
+  }
+  return registrarYcloudMessageIdPendente(solicitacao.id, ycloudMessageId, telefone);
 }
 
 async function tentarEnviarAoN8n(

@@ -12,6 +12,7 @@ import { criarRotaCache } from './rotas/cache.js';
 import { criarRotaFretes } from './rotas/fretes.js';
 import { criarRotaSaude } from './rotas/saude.js';
 import { tratadorDeErros } from './rotas/erroHttp.js';
+import { capturarCorpoBruto } from './rotas/corpoBruto.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const diretorioPublico = path.join(__dirname, '..', 'public');
@@ -34,7 +35,8 @@ const cliente = new ClienteOmie();
 
 // Nunca logar corpo de requisições (pode conter dados de pedidos) nem headers sensíveis.
 app.disable('x-powered-by');
-app.use(express.json({ limit: '100kb' }));
+// `verify` guarda os bytes exatos só dos webhooks que exigem assinatura HMAC (ver `rotas/corpoBruto.ts`).
+app.use(express.json({ limit: '100kb', verify: capturarCorpoBruto }));
 
 // Cada rota já leva `exigirAutenticacao`/`exigirPermissao` diretamente nela (dentro do respectivo
 // arquivo em `rotas/`), nunca aqui via `app.use(middleware, router)` — essas rotas usam caminhos

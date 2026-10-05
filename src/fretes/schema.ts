@@ -106,6 +106,10 @@ export function nomeTabelaEmailsResposta(): string {
 export function nomeTabelaCursoresImap(): string {
   return nomeValidado(process.env.CURSORES_IMAP_FRETE_TABELA ?? 'cursores_imap_frete');
 }
+// Fase 3 da migração n8n → backend — WhatsApp recebido direto da YCloud.
+export function nomeTabelaWhatsappRecebidas(): string {
+  return nomeValidado(process.env.WHATSAPP_RECEBIDAS_FRETE_TABELA ?? 'whatsapp_recebidas_frete');
+}
 
 /**
  * Cria (se ainda não existirem) todas as tabelas novas do módulo de Fretes — nunca toca
@@ -608,6 +612,31 @@ export function garantirEsquemaFretes(): Promise<void> {
         atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+
+    // Fase 3 da migração n8n → backend: mensagens de WhatsApp recebidas pelo webhook da YCloud.
+    // `chave_mensagem` = WAMID (ou `ycloud:<id>` sem WAMID), UNIQUE — o mesmo evento reentregue
+    // pela YCloud nunca é processado duas vezes. Só mensagens recebidas; texto guardado para a
+    // revisão manual. Tabela nova, aditiva.
+    const whatsappRecebidas = nomeTabelaWhatsappRecebidas();
+    await executarDdlIdempotente(`
+      CREATE TABLE IF NOT EXISTS ${whatsappRecebidas} (
+        id UUID PRIMARY KEY,
+        chave_mensagem TEXT NOT NULL UNIQUE,
+        ycloud_id TEXT,
+        telefone_origem TEXT,
+        contexto_id TEXT,
+        tipo TEXT,
+        texto TEXT,
+        enviada_em TIMESTAMPTZ,
+        referencia TEXT,
+        solicitacao_id UUID,
+        resposta_id UUID,
+        status TEXT NOT NULL CHECK (status IN ('PROCESSADO','REVISAO_MANUAL')),
+        motivo TEXT,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS idx_${whatsappRecebidas}_status ON ${whatsappRecebidas} (status)`);
 
     // Mesma autocura de `${solicitacoes}` (ver `repararFkSeApontarParaTabelaErrada`): em
     // 2026-09-23 as 4 FKs abaixo foram encontradas em produção apontando para tabelas
