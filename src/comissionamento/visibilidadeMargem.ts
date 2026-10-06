@@ -3,7 +3,9 @@ import type { LinhaComissionamento } from './relatorioComissionamento.js';
 
 /**
  * Visibilidade da margem no relatório de Comissionamento (regra de 2026-09-28): só o papel
- * "administrador" recebe a margem. Para qualquer outro papel (usuario/vendedor/convidado), o
+ * "administrador" recebe a margem — e, desde 2026-10-06, também a composição por item da comissão
+ * por tabela de preços (`composicaoItens`: Preço da Tabela, custo de referência, multiplicador,
+ * acréscimo). Para qualquer outro papel (usuario/vendedor/convidado), o
  * servidor remove do payload a margem de comissionamento e todo campo que permitiria recompô-la
  * por conta própria (despesas, resultado após despesas e a métrica de custo/margem de venda) — a
  * decisão é sempre do backend, a partir do usuário autenticado, nunca de parâmetro do navegador.
@@ -28,6 +30,7 @@ export const CAMPOS_MARGEM_RESTRITOS = [
   'margemTotal',
   'margemVendaPercentual',
   'markupCustoPercentual',
+  'composicaoItens',
 ] as const satisfies ReadonlyArray<keyof LinhaComissionamento>;
 
 type CampoMargemRestrito = (typeof CAMPOS_MARGEM_RESTRITOS)[number];

@@ -26,6 +26,7 @@ import {
   type FiltrosCotacao,
 } from './cotacoesRepositorio.js';
 import { CEP_ORIGEM_ETK } from './origemEtk.js';
+import { problemaCanalPrincipal } from './canaisTransportadora.js';
 import { formatarDestinoTexto, prepararCotacaoDeOmie, type PreparacaoCotacaoOmie } from './omieFretes.js';
 import type { DestinoManualInformado } from './validacao.js';
 import { buscarFechamentoPorCotacao, inserirFechamento, resumirFechamentos, resumirFechamentosPorModalidade, type ResumoFechamentos } from './fechamentosRepositorio.js';
@@ -53,6 +54,7 @@ import {
 import {
   atualizarTransportadora,
   buscarTransportadoraPorCnpj,
+  buscarTransportadoraPorId,
   criarTransportadora,
   definirAtivaTransportadora,
   listarTransportadoras,
@@ -98,7 +100,35 @@ export async function servicoListarTransportadoras(somenteAtivas: boolean): Prom
   return listarTransportadoras(somenteAtivas);
 }
 
+/** Transportadora "como ficará" após gravar `dados` sobre `base` — só para validar o canal antes de salvar. */
+function transportadoraProjetada(base: Transportadora | null, dados: Partial<DadosTransportadora>): Transportadora {
+  const vazio: Transportadora = {
+    id: '', nomeRazaoSocial: '', nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, ativo: true,
+    observacoes: null, codigoClienteOmie: null, canalPrincipal: null, urlPortal: null, whatsappCotacao: null, criadoEm: '', atualizadoEm: '',
+  } as Transportadora;
+  const atual = base ?? vazio;
+  const definido = Object.fromEntries(Object.entries(dados).filter(([, v]) => v !== undefined));
+  return { ...atual, ...definido } as Transportadora;
+}
+
+/**
+ * Canal principal editável (2026-10-06): só é salvo se a transportadora — com os dados que serão
+ * gravados — consegue usá-lo (`problemaCanalPrincipal`). Também barra uma edição que torna
+ * inutilizável o canal principal que ANTES funcionava (ex.: apagar o WhatsApp do canal WhatsApp).
+ * Cadastros antigos já inconsistentes não bloqueiam edições que não mexem no canal.
+ */
+function validarCanalPrincipalAoSalvar(anterior: Transportadora | null, dados: Partial<DadosTransportadora>): void {
+  const projetada = transportadoraProjetada(anterior, dados);
+  const canal = projetada.canalPrincipal;
+  const problemaDepois = problemaCanalPrincipal(projetada, canal);
+  if (problemaDepois === null) return;
+  const canalInformado = dados.canalPrincipal !== undefined;
+  const funcionavaAntes = anterior !== null && problemaCanalPrincipal(anterior, anterior.canalPrincipal) === null;
+  if (canalInformado || funcionavaAntes) throw new ErroValidacao(problemaDepois);
+}
+
 export async function servicoCriarTransportadora(dados: DadosTransportadora, usuarioId: string): Promise<Transportadora> {
+  validarCanalPrincipalAoSalvar(null, dados);
   if (dados.cnpj !== null) {
     const existente = await buscarTransportadoraPorCnpj(dados.cnpj);
     if (existente !== null) {
@@ -121,12 +151,16 @@ export async function servicoAtualizarTransportadora(
   dados: Partial<DadosTransportadora>,
   usuarioId: string,
 ): Promise<Transportadora> {
+  const anterior = await buscarTransportadoraPorId(id);
+  if (anterior !== null) validarCanalPrincipalAoSalvar(anterior, dados);
+  // Só os campos enviados são gravados (ex.: mudar o canal nunca apaga e-mail/WhatsApp/código Omie).
   const transportadora = await atualizarTransportadora(id, dados);
   await registrarAuditoria({
     usuarioId,
     acao: 'TRANSPORTADORA_EDITADA',
     entidade: 'transportadora',
     entidadeId: transportadora.id,
+    valorAnterior: anterior,
     valorNovo: transportadora,
   });
   return transportadora;
@@ -226,8 +260,37 @@ export async function servicoAtualizarCotacao(id: string, dados: DadosAtualizaca
   const veiculoIdFinal = dados.veiculoId !== undefined ? dados.veiculoId : anterior.veiculoId;
   await validarCamposPorModalidadeExecucao(modalidadeExecucaoFinal, veiculoIdFinal);
 
-  const cotacao = await atualizarCotacao(id, dados);
+  // Destino editado em texto livre (2026-10-06): é uma intervenção explícita do operador — passa a
+  // ser MANUAL e a estrutura anterior (ex.: endereço da Omie) é descartada, para nunca enviar à
+  // transportadora um endereço estruturado antigo junto com o texto novo (nem misturar os dois).
+  const destinoEditado =
+    (dados.destino !== undefined && dados.destino !== anterior.destino) ||
+    (dados.cepDestino !== undefined && dados.cepDestino !== anterior.cepDestino);
+  const dadosFinais: DadosAtualizacaoCotacao = destinoEditado
+    ? {
+        ...dados,
+        origemDestino: 'MANUAL',
+        logradouroDestino: null,
+        numeroDestino: null,
+        complementoDestino: null,
+        bairroDestino: null,
+        cidadeDestino: null,
+        ufDestino: null,
+        codigoMunicipioDestino: null,
+      }
+    : dados;
+  const cotacao = await atualizarCotacao(id, dadosFinais);
   await registrarAuditoria({ usuarioId, acao: 'COTACAO_EDITADA', entidade: 'cotacao_frete', entidadeId: cotacao.id, valorNovo: cotacao });
+  if (destinoEditado) {
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'DESTINO_ALTERADO_MANUALMENTE',
+      entidade: 'cotacao_frete',
+      entidadeId: cotacao.id,
+      valorAnterior: { origemDestino: anterior.origemDestino, destino: anterior.destino, cepDestino: anterior.cepDestino },
+      valorNovo: { origemDestino: cotacao.origemDestino, destino: cotacao.destino, cepDestino: cotacao.cepDestino },
+    });
+  }
   if (dados.modalidadeExecucao !== undefined && dados.modalidadeExecucao !== anterior.modalidadeExecucao) {
     await registrarAuditoria({
       usuarioId,

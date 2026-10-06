@@ -58,6 +58,12 @@ export interface PayloadSolicitacaoN8n {
      * (registros antigos). `volumes` acima continua sendo o total já existente da cotação.
      */
     embalagens: { altura: number; largura: number; comprimento: number; quantidade: number }[];
+    /**
+     * Aditivo (compatível com `versao: 1`, 2026-10-06): "Observações para a transportadora" DESTA
+     * solicitação — instrução só desta transportadora (snapshot gravado na solicitação; o
+     * "Reenviar" manda a mesma). `null` quando não informada. Nunca contém dado interno.
+     */
+    observacoesTransportadora: string | null;
   };
 }
 

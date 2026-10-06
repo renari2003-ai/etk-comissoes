@@ -2,44 +2,37 @@
  * Regras de cálculo de comissão — exclusivas de PEDIDO (compra concreta).
  * Nunca aplicadas a ORÇAMENTO (intenção de compra) — ver `classificacaoDocumento.ts`.
  *
- * REGRA CRÍTICA (confirmada explicitamente com o usuário em 2026-09-05): o
- * CUSTO DO PRODUTO NUNCA é abatido para determinar a margem de
- * comissionamento nem a base da comissão. A margem usada aqui é
- * `margemComissionamentoPercentual` = (valor da venda − despesas) ÷ valor
- * da venda, calculada em `calcularMargemComissionamento.ts` — uma métrica
- * DIFERENTE da margem de custo/venda já existente no sistema
- * (`margemVendaTotal`), que continua disponível apenas para análise
- * comercial. A base sobre a qual o percentual final é aplicado é o valor
- * total dos PRODUTOS (`receitaTotal`) — nunca o valor bruto da nota, nunca
- * o custo (decisão de negócio de 2026-09-08).
+ * ORIGEM DO PERCENTUAL (regra de 2026-10-06, substitui a margem global do pedido): a comissão
+ * normal é determinada POR ITEM, a partir do percentual de acréscimo sobre o custo de referência
+ * derivado do Preço da Tabela da Omie — ver `comissaoPorTabela.ts`. A margem de comissionamento
+ * (`calcularMargemComissionamento.ts`) continua calculada só como informação para administradores;
+ * nunca mais define a faixa. O custo do produto (estoque/contábil) nunca entra no cálculo.
  */
 
 /**
- * Comissão normal, determinada pela Margem de Comissionamento (regra de
- * negócio confirmada em 2026-09-08 — NUNCA arredondar a margem antes deste
- * cálculo):
+ * Progressão da comissão normal (regra de negócio confirmada em 2026-09-08 — NUNCA arredondar a
+ * entrada antes deste cálculo). Desde 2026-10-06 a entrada é o PERCENTUAL DE ACRÉSCIMO do item,
+ * (multiplicador realizado − 1) × 100, e não mais a margem do pedido:
  *
- *   margem < 70%        -> 1,00% (piso)
- *   70% <= margem < 90%  -> progressiva: 1,00% + ((margem - 70) × 0,10)
- *   margem >= 90%        -> 3,00% (teto)
+ *   acréscimo < 70%        -> 1,00% (piso)          — multiplicador até 1,70
+ *   70% <= acréscimo < 90%  -> 1,00% + ((acréscimo - 70) × 0,10)
+ *   acréscimo >= 90%        -> 3,00% (teto)          — multiplicador 1,90 ou mais
  *
- * A progressão soma 0,10 ponto percentual de comissão para cada 1 ponto
- * percentual de margem acima de 70% (ex.: margem 82,50% -> comissão 2,25%).
- * Valores fora de [0, 100] (margem negativa ou acima de 100%) usam o mesmo
- * piso/teto — nunca extrapolam a fórmula linear além dos limites de negócio.
+ * Ex.: multiplicador 1,8421 -> acréscimo 84,21% -> comissão 2,421%. Valores fora da faixa usam o
+ * mesmo piso/teto — nunca extrapolam a fórmula linear.
  */
-export function determinarComissaoNormal(margemComissionamentoPercentual: number): number {
-  if (margemComissionamentoPercentual < 70) return 1;
-  if (margemComissionamentoPercentual >= 90) return 3;
-  return 1 + (margemComissionamentoPercentual - 70) * 0.1;
+export function determinarComissaoNormal(percentualAcrescimo: number): number {
+  if (percentualAcrescimo < 70) return 1;
+  if (percentualAcrescimo >= 90) return 3;
+  return 1 + (percentualAcrescimo - 70) * 0.1;
 }
 
 /**
  * Vendedores que recebem +1,00 ponto percentual de adicional sobre a
  * comissão normal (regra de negócio confirmada em 2026-09-08). O adicional
- * NUNCA influencia a margem de comissionamento nem a comissão normal — é
- * somado por último, depois que a comissão normal já foi determinada pela
- * margem.
+ * NUNCA influencia a comissão normal — é somado por último, item a item,
+ * depois que a comissão normal do item já foi determinada (inclusive sobre a
+ * comissão fixa da tabela 001, como já era com a família CTO Promocional).
  *
  * A Omie não expõe um campo de "vendedor com adicional" no cadastro —
  * comparação por nome normalizado (sem acento, minúsculo, por trecho). Se um
@@ -65,9 +58,10 @@ export function ehVendedorComAdicional(nomeVendedor: string | null): boolean {
 
 /**
  * Vendedores com comissão FIXA, independente de qualquer outra regra
- * (margem, família do produto, adicional) — confirmado com o usuário em
- * 2026-09-10. Prioridade máxima: se o vendedor está aqui, a comissão do
- * pedido inteiro é este percentual, ponto final.
+ * (tabela de preços, adicional) — confirmado com o usuário em 2026-09-10.
+ * Prioridade máxima: se o vendedor está aqui, a comissão do pedido inteiro é
+ * este percentual sobre o valor dos produtos, ponto final — nem consulta as
+ * tabelas de preço.
  */
 export const VENDEDORES_COMISSAO_FIXA: ReadonlyArray<{ nome: string; percentual: number }> = [
   { nome: 'renato pinto', percentual: 4 },
@@ -81,28 +75,8 @@ export function comissaoFixaDoVendedor(nomeVendedor: string | null): number | nu
   return encontrado?.percentual ?? null;
 }
 
-/**
- * Famílias de produto com comissão FIXA (regra de negócio de 2026-09-10):
- * quando um pedido tem item(ns) dessa família, esses itens são segregados do
- * cálculo por margem — a comissão sobre eles é este percentual fixo, e o
- * restante do pedido (produtos de outras famílias) segue a regra normal de
- * margem (ver `relatorioComissionamento.ts`). NUNCA recebe o adicional de
- * vendedor especial — é um valor fixo, não uma "comissão normal" que soma.
- */
-export const FAMILIAS_COMISSAO_FIXA: ReadonlyArray<{ nome: string; percentual: number }> = [
-  { nome: 'cto promocional', percentual: 1 },
-];
-
-/** Retorna o percentual fixo da família, ou `null` se ela não tem regra de comissão fixa. */
-export function comissaoFixaDaFamilia(descricaoFamilia: string | null | undefined): number | null {
-  if (descricaoFamilia === null || descricaoFamilia === undefined) return null;
-  const normalizado = normalizarTexto(descricaoFamilia);
-  const encontrado = FAMILIAS_COMISSAO_FIXA.find((f) => normalizado.includes(f.nome));
-  return encontrado?.percentual ?? null;
-}
-
 export interface ResultadoComissaoVendedor {
-  /** Determinada exclusivamente pela margem de comissionamento (seção 1/2). */
+  /** Determinada exclusivamente pelo percentual de entrada (acréscimo do item) — seção 1/2. */
   comissaoNormalPercentual: number;
   /** +1,00 quando o vendedor está em `VENDEDORES_COM_ADICIONAL`, senão 0. */
   adicionalVendedorPercentual: number;
@@ -111,15 +85,15 @@ export interface ResultadoComissaoVendedor {
 }
 
 /**
- * Fluxo completo (seção 7 do requisito): margem -> comissão normal ->
+ * Fluxo (seção 7 do requisito): percentual de acréscimo -> comissão normal ->
  * identifica vendedor especial -> soma o adicional -> comissão final. Nunca
  * usa o adicional para influenciar a comissão normal (seção 3).
  */
 export function calcularComissaoVendedor(
-  margemComissionamentoPercentual: number,
+  percentualAcrescimo: number,
   nomeVendedor: string | null,
 ): ResultadoComissaoVendedor {
-  const comissaoNormalPercentual = determinarComissaoNormal(margemComissionamentoPercentual);
+  const comissaoNormalPercentual = determinarComissaoNormal(percentualAcrescimo);
   const adicionalVendedorPercentual = ehVendedorComAdicional(nomeVendedor) ? 1 : 0;
   return {
     comissaoNormalPercentual,

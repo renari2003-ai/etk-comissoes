@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { obterPool } from '../db.js';
 import { ErroValidacao } from '../validacao.js';
 import { garantirEsquemaFretes, nomeTabelaSolicitacoes } from './schema.js';
-import type { CanalOrigemProposta, EmailOrigem, EmbalagemSolicitacao, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
+import type { CanalOrigemProposta, DestinoEnviado, EmailOrigem, EmbalagemSolicitacao, OrigemEndereco, SolicitacaoCotacao, StatusSolicitacaoCotacao } from './tipos.js';
 
 interface LinhaSolicitacao {
   id: string;
@@ -23,6 +23,9 @@ interface LinhaSolicitacao {
   telefone_destino: string | null;
   /** JSONB (já desserializado pelo `pg`); ausente/`NULL` em registros anteriores à coluna. */
   embalagens?: unknown;
+  /** Ausente/`NULL` em registros anteriores às colunas de 2026-10-06. */
+  observacoes_transportadora?: string | null;
+  destino_enviado?: unknown;
   criado_por: string;
   criado_em: Date;
   atualizado_em: Date;
@@ -47,6 +50,8 @@ function linhaParaSolicitacao(l: LinhaSolicitacao): SolicitacaoCotacao {
     ycloudMessageId: l.ycloud_message_id,
     telefoneDestino: l.telefone_destino,
     embalagens: lerEmbalagensPersistidas(l.embalagens),
+    observacoesTransportadora: l.observacoes_transportadora ?? null,
+    destinoEnviado: lerDestinoEnviadoPersistido(l.destino_enviado),
     criadoPor: l.criado_por,
     criadoEm: l.criado_em.toISOString(),
     atualizadoEm: l.atualizado_em.toISOString(),
@@ -72,6 +77,35 @@ export function lerEmbalagensPersistidas(valor: unknown): EmbalagemSolicitacao[]
   });
 }
 
+const ORIGENS_ENDERECO: readonly OrigemEndereco[] = ['PEDIDO', 'CLIENTE_ENTREGA', 'CLIENTE_CADASTRAL', 'MANUAL'];
+const CAMPOS_TEXTO_DESTINO = ['cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf', 'texto'] as const;
+
+/**
+ * Lê o snapshot do destino enviado. `NULL` (registro anterior) → `null`. Formato diferente do
+ * gravado por `criarSolicitacao` é estado inconsistente e falha alto — nunca é "consertado".
+ */
+export function lerDestinoEnviadoPersistido(valor: unknown): DestinoEnviado | null {
+  if (valor === undefined || valor === null) return null;
+  const d = valor as Record<string, unknown>;
+  const invalido =
+    typeof d !== 'object' ||
+    Array.isArray(d) ||
+    !(d.origem === null || ORIGENS_ENDERECO.includes(d.origem as OrigemEndereco)) ||
+    !CAMPOS_TEXTO_DESTINO.every((c) => d[c] === null || typeof d[c] === 'string');
+  if (invalido) throw new Error('Destino enviado da solicitação em formato inválido — estado inconsistente.');
+  return {
+    origem: d.origem as OrigemEndereco | null,
+    cep: d.cep as string | null,
+    logradouro: d.logradouro as string | null,
+    numero: d.numero as string | null,
+    complemento: d.complemento as string | null,
+    bairro: d.bairro as string | null,
+    cidade: d.cidade as string | null,
+    uf: d.uf as string | null,
+    texto: d.texto as string | null,
+  };
+}
+
 export interface DadosNovaSolicitacao {
   cotacaoFreteId: string;
   transportadoraId: string;
@@ -83,6 +117,10 @@ export interface DadosNovaSolicitacao {
   emailOrigem?: EmailOrigem | null;
   /** Snapshot das embalagens do envio (canais EMAIL/WHATSAPP); `undefined`/`null`/vazio → `NULL`. */
   embalagens?: EmbalagemSolicitacao[] | null;
+  /** "Observações para a transportadora" desta solicitação (já validada/normalizada); `undefined`/`null` → `NULL`. */
+  observacoesTransportadora?: string | null;
+  /** Snapshot do destino usado no envio; `undefined`/`null` → `NULL`. */
+  destinoEnviado?: DestinoEnviado | null;
 }
 
 export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<SolicitacaoCotacao> {
@@ -91,8 +129,9 @@ export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<Sol
   const id = randomUUID();
   const { rows } = await pool.query<LinhaSolicitacao>(
     `INSERT INTO ${nomeTabelaSolicitacoes()}
-       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por, email_destino, email_origem, embalagens)
-     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6, $7, $8, $9::jsonb)
+       (id, cotacao_frete_id, transportadora_id, canal, status, codigo_referencia, tentativas, criado_por, email_destino, email_origem, embalagens,
+        observacoes_transportadora, destino_enviado)
+     VALUES ($1, $2, $3, $4, 'PENDENTE_ENVIO', $5, 0, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
      RETURNING *`,
     [
       id,
@@ -104,6 +143,8 @@ export async function criarSolicitacao(dados: DadosNovaSolicitacao): Promise<Sol
       dados.emailDestino ?? null,
       dados.emailOrigem ?? null,
       dados.embalagens !== undefined && dados.embalagens !== null && dados.embalagens.length > 0 ? JSON.stringify(dados.embalagens) : null,
+      dados.observacoesTransportadora ?? null,
+      dados.destinoEnviado !== undefined && dados.destinoEnviado !== null ? JSON.stringify(dados.destinoEnviado) : null,
     ],
   );
   const linha = rows[0];

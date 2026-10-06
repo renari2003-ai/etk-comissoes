@@ -70,7 +70,7 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
   it('cria transportadora com canalPrincipal = EMAIL', async () => {
     vi.resetModules();
     const servico = await import('../../src/fretes/fretesServico.js');
-    const t = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp Email', canalPrincipal: 'EMAIL' }, USUARIO_TESTE);
+    const t = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp Email', email: 'cotacao@transpemail.com.br', canalPrincipal: 'EMAIL' }, USUARIO_TESTE);
     expect(t.canalPrincipal).toBe('EMAIL');
     expect(t.urlPortal).toBeNull();
   });
@@ -78,7 +78,7 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
   it('cria transportadora com canalPrincipal = WHATSAPP', async () => {
     vi.resetModules();
     const servico = await import('../../src/fretes/fretesServico.js');
-    const t = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp WhatsApp', canalPrincipal: 'WHATSAPP' }, USUARIO_TESTE);
+    const t = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp WhatsApp', whatsappCotacao: '11999990000', canalPrincipal: 'WHATSAPP' }, USUARIO_TESTE);
     expect(t.canalPrincipal).toBe('WHATSAPP');
   });
 
@@ -93,11 +93,30 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
     expect(t.urlPortal).toBe('https://portal.transportadora.com.br/cotacao');
   });
 
-  it('cria transportadora com canalPrincipal = API', async () => {
+  // Regra de 2026-10-06: API só para integração cadastrada E configurada (hoje, só a Braspress).
+  // Credenciais FICTÍCIAS no ambiente do teste (nenhuma chamada à Braspress acontece aqui).
+  it('cria transportadora com canalPrincipal = API (Braspress com integração configurada)', async () => {
+    const anteriores = { cnpj: process.env.BRASPRESS_CNPJ, senha: process.env.BRASPRESS_PASSWORD };
+    process.env.BRASPRESS_CNPJ = 'cnpj-teste';
+    process.env.BRASPRESS_PASSWORD = 'senha-teste';
+    try {
+      vi.resetModules();
+      const servico = await import('../../src/fretes/fretesServico.js');
+      const t = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'BRASPRESS Api', canalPrincipal: 'API' }, USUARIO_TESTE);
+      expect(t.canalPrincipal).toBe('API');
+    } finally {
+      if (anteriores.cnpj === undefined) delete process.env.BRASPRESS_CNPJ;
+      else process.env.BRASPRESS_CNPJ = anteriores.cnpj;
+      if (anteriores.senha === undefined) delete process.env.BRASPRESS_PASSWORD;
+      else process.env.BRASPRESS_PASSWORD = anteriores.senha;
+    }
+  });
+
+  it('recusa canalPrincipal = API para transportadora sem integração (nada é gravado)', async () => {
     vi.resetModules();
     const servico = await import('../../src/fretes/fretesServico.js');
-    const t = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp Api', canalPrincipal: 'API' }, USUARIO_TESTE);
-    expect(t.canalPrincipal).toBe('API');
+    await expect(servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp Api', canalPrincipal: 'API' }, USUARIO_TESTE)).rejects.toThrow(/API só pode ser o canal principal de uma transportadora com integração existente e configurada/);
+    expect((await servico.servicoListarTransportadoras(false)).some((t) => t.nomeRazaoSocial === 'Transp Api')).toBe(false);
   });
 
   it('cria transportadora sem canalPrincipal (opcional, nenhum canal inferido automaticamente)', async () => {
@@ -118,7 +137,7 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
   it('edita canalPrincipal de uma transportadora existente', async () => {
     vi.resetModules();
     const servico = await import('../../src/fretes/fretesServico.js');
-    const criada = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp Editar Canal' }, USUARIO_TESTE);
+    const criada = await servico.servicoCriarTransportadora({ ...base, nomeRazaoSocial: 'Transp Editar Canal', whatsappCotacao: '11999990000' }, USUARIO_TESTE);
     expect(criada.canalPrincipal).toBeNull();
     const editada = await servico.servicoAtualizarTransportadora(criada.id, { canalPrincipal: 'WHATSAPP' }, USUARIO_TESTE);
     expect(editada.canalPrincipal).toBe('WHATSAPP');
@@ -161,7 +180,8 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
         contato: 'Fulano',
         observacoes: 'obs',
         codigoClienteOmie: 555,
-        canalPrincipal: 'API',
+        whatsappCotacao: '11977776666',
+        canalPrincipal: 'EMAIL',
         urlPortal: null,
       },
       USUARIO_TESTE,
@@ -172,16 +192,18 @@ describe('CRUD de transportadora — canalPrincipal/urlPortal (Fase 1)', () => {
       cnpj: '11222333000181',
       email: 'contato@completa.com.br',
       codigoClienteOmie: 555,
-      canalPrincipal: 'API',
+      canalPrincipal: 'EMAIL',
       urlPortal: null,
     });
     // Editar só canalPrincipal não deve apagar nenhum campo antigo.
-    const editada = await servico.servicoAtualizarTransportadora(criada.id, { canalPrincipal: 'EMAIL' }, USUARIO_TESTE);
+    const editada = await servico.servicoAtualizarTransportadora(criada.id, { canalPrincipal: 'WHATSAPP' }, USUARIO_TESTE);
     expect(editada).toMatchObject({
       nomeRazaoSocial: 'Transp Completa',
       cnpj: '11222333000181',
+      email: 'contato@completa.com.br',
+      whatsappCotacao: '11977776666',
       codigoClienteOmie: 555,
-      canalPrincipal: 'EMAIL',
+      canalPrincipal: 'WHATSAPP',
     });
   });
 });

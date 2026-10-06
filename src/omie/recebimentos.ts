@@ -8,6 +8,12 @@ export interface BaixaRecebimento {
   valorRecebido: number;
   juros: number;
   multa: number;
+  /**
+   * `detalhes.cCodVendedor` do movimento (documentação oficial de ListarMovimentos). Só orienta quais
+   * vendedores têm títulos a buscar no Financeiro; `null` quando ausente/inválido — nunca inventado
+   * (e, nesse caso, o Financeiro volta à busca completa de títulos).
+   */
+  codigoVendedor?: number | null;
 }
 
 export interface MovimentoFinanceiroOmie {
@@ -22,6 +28,7 @@ export interface MovimentoFinanceiroOmie {
     nMulta?: number;
     nDesconto?: number;
     nCodMovCC?: number;
+    cCodVendedor?: number;
   };
   resumo?: { nValPago?: number };
 }
@@ -54,6 +61,7 @@ export function normalizarBaixas(movimentos: MovimentoFinanceiroOmie[]): BaixaRe
       codigoBaixa: d.nCodBaixa!, codigoLancamentoOmie: d.nCodTitulo!,
       dataRecebimento: d.dDtPagamento, valorRecebido: d.nValorMovCC!,
       juros: d.nJuros ?? 0, multa: d.nMulta ?? 0,
+      codigoVendedor: Number.isSafeInteger(d.cCodVendedor) && d.cCodVendedor! > 0 ? d.cCodVendedor! : null,
     };
     const anterior = baixas.get(baixa.codigoBaixa);
     if (anterior && JSON.stringify(anterior) !== JSON.stringify(baixa)) {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClienteOmie } from '../../src/omie/cliente.js';
+import { config } from '../../src/config.js';
 import {
   canaisDisponiveis,
   canalSugerido,
@@ -50,6 +51,18 @@ const ABC = transportadora({
   nomeRazaoSocial: 'Transportadora ABC',
   telefone: '(11) 99999-0000',
   canalPrincipal: 'WHATSAPP',
+});
+
+// Regra de 2026-10-06: API só com integração cadastrada E configurada. Aqui a integração Braspress
+// é dada como configurada com valores FICTÍCIOS (a chamada real é sempre mock) — nunca as credenciais reais.
+const credenciaisOriginais = { cnpj: config.braspressCnpj, senha: config.braspressPassword };
+beforeEach(() => {
+  config.braspressCnpj = 'cnpj-teste';
+  config.braspressPassword = 'senha-teste';
+});
+afterEach(() => {
+  config.braspressCnpj = credenciaisOriginais.cnpj;
+  config.braspressPassword = credenciaisOriginais.senha;
 });
 
 describe('canais disponíveis', () => {
@@ -107,7 +120,32 @@ describe('dedupe por CNPJ normalizado (sem apagar nada)', () => {
 
 describe('orquestrador de envio (serviços existentes mockados)', () => {
   function cotacao(parcial: Partial<CotacaoFrete> = {}): CotacaoFrete {
-    return { id: COTACAO_ID, codigo: 'FR-1', status: 'AGUARDANDO_PROPOSTAS', modalidadeExecucao: 'TRANSPORTADORA', ...parcial } as CotacaoFrete;
+    // Cotação completa (como vem do banco): o envio por WhatsApp mede a mensagem real antes de criar a solicitação.
+    return {
+      id: COTACAO_ID,
+      codigo: 'FR-1',
+      status: 'AGUARDANDO_PROPOSTAS',
+      modalidadeExecucao: 'TRANSPORTADORA',
+      origem: null,
+      cepOrigem: '13295-000',
+      destino: 'Curitiba/PR',
+      cepDestino: '80000-000',
+      origemDestino: null,
+      logradouroDestino: null,
+      numeroDestino: null,
+      complementoDestino: null,
+      bairroDestino: null,
+      cidadeDestino: null,
+      ufDestino: null,
+      peso: 80,
+      pesoBruto: 80,
+      pesoLiquido: null,
+      volumes: 3,
+      especieVolumes: null,
+      modalidade: 'CIF',
+      observacoes: null,
+      ...parcial,
+    } as CotacaoFrete;
   }
 
   function deps(extra: Partial<DependenciasEnvio> = {}) {
@@ -201,6 +239,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
             { altura: 0.5, largura: 0.4, comprimento: 0.6, quantidade: 5 },
             { altura: 1.2, largura: 0.8, comprimento: 1, quantidade: 2 },
           ],
+          observacoesTransportadora: null,
         },
       ],
       'EMAIL',
@@ -315,7 +354,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
       USUARIO_TESTE,
       d,
     );
-    expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, emailManual: null, embalagens: null }], 'WHATSAPP', USUARIO_TESTE);
+    expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: ABC.id, emailManual: null, embalagens: null, observacoesTransportadora: null }], 'WHATSAPP', USUARIO_TESTE);
     expect(r).toMatchObject({ canal: 'WHATSAPP', status: 'ENVIADO', mensagem: MENSAGENS_ENVIO.WHATSAPP_ENVIADO });
   });
 
@@ -461,7 +500,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
         expect.objectContaining({ transportadoraId: comWhatsapp.id, status: 'FALHOU', mensagem: MENSAGENS_ENVIO.EMAIL_INVALIDO }),
       ]);
       expect(d.solicitar).toHaveBeenCalledTimes(1);
-      expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: comEmail.id, emailManual: null, embalagens: null }], 'EMAIL', USUARIO_TESTE);
+      expect(d.solicitar).toHaveBeenCalledWith(cliente, COTACAO_ID, [{ transportadoraId: comEmail.id, emailManual: null, embalagens: null, observacoesTransportadora: null }], 'EMAIL', USUARIO_TESTE);
     });
 
     it('lote: falha de uma transportadora não bloqueia as demais (A ok, B WhatsApp inválido, C sem API, D ok)', async () => {
@@ -573,6 +612,11 @@ describe('busca de transportadoras (Postgres real, tabelas isoladas)', () => {
 
   it('por nome/fantasia e por CNPJ com ou sem máscara; só ativas; mesmo CNPJ não duplica; nada é apagado', async () => {
     vi.resetModules();
+    // API só é canal disponível com as credenciais da Braspress presentes no servidor (regra de
+    // 2026-10-06, `canaisTransportadora.ts`) — valores fictícios no `config` desta cópia do módulo.
+    const { config } = await import('../../src/config.js');
+    config.braspressCnpj = 'cnpj-teste';
+    config.braspressPassword = 'senha-teste';
     const repo = await import('../../src/fretes/transportadorasRepositorio.js');
     const envio = await import('../../src/fretes/envioSolicitacoesServico.js');
     const base = { nomeFantasia: null, cnpj: null, email: null, telefone: null, contato: null, observacoes: null };

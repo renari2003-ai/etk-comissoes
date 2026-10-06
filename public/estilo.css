@@ -472,6 +472,9 @@ input:focus-visible {
   letter-spacing: 0.03em;
   color: var(--cor-texto-suave);
   font-weight: 700;
+  /* A linha de detalhe herda `nowrap` da célula da tabela: rótulos longos (ex.: "Percentual da venda
+     após despesas — informativo") quebram dentro do item em vez de invadir o item vizinho. */
+  white-space: normal;
 }
 
 .detalhe-item-valor {
@@ -1274,6 +1277,79 @@ tfoot tr td:first-child {
   box-shadow: var(--sombra-2);
 }
 
+/* Indicador de carregamento dos Relatórios — mesmo local do "Carregando…" (canto inferior direito),
+   mesmo porte compacto: logo ETK 3D PARADO (~90 px) com uma luz branca suave passando por trás, em
+   repetição. Fundo escuro nos dois temas: sobre o fundo claro do tema claro a luz branca sumiria.
+   O texto existe só para leitores de tela (role="status" no HTML). */
+.carregamento-logo-etk {
+  color-scheme: only light;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  width: 116px;
+  height: 70px;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: var(--raio-sm);
+  background: #121722;
+  border: 1px solid #2a3040;
+  box-shadow: var(--sombra-2);
+}
+
+.carregamento-logo-etk[hidden] {
+  display: none;
+}
+
+.carregamento-logo-etk-texto {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.carregamento-logo-etk-imagem {
+  position: relative;
+  z-index: 1;
+  width: 90px;
+  height: auto;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.55));
+}
+
+.carregamento-logo-etk-luz {
+  position: absolute;
+  z-index: 0;
+  top: 6px;
+  left: -40px;
+  width: 30px;
+  height: 58px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+  filter: blur(8px);
+  transform: skewX(-18deg);
+  opacity: 0;
+  animation: carregamento-logo-etk-varredura 3.5s ease-in-out infinite;
+}
+
+@keyframes carregamento-logo-etk-varredura {
+  0% { left: -40px; opacity: 0; }
+  15% { opacity: 0.65; }
+  50% { opacity: 0.8; }
+  85% { opacity: 0.65; }
+  100% { left: 126px; opacity: 0; }
+}
+
+/* Sem movimento: logo estático, sem a luz animada. */
+@media (prefers-reduced-motion: reduce) {
+  .carregamento-logo-etk-luz {
+    animation: none;
+    display: none;
+  }
+}
+
 /* Responsividade */
 @media (max-width: 1080px) {
   .area-principal {
@@ -1552,7 +1628,8 @@ tfoot tr td:first-child {
   #form-filtros-relatorio,
   #filtro-data-legenda,
   .botao-baixar-pdf,
-  #indicador-carregamento {
+  #indicador-carregamento,
+  #relatorio-carregamento {
     display: none !important;
   }
 
@@ -1585,6 +1662,11 @@ tfoot tr td:first-child {
   #relatorio-tabela th,
   #relatorio-tabela td {
     padding: 4px 5px !important;
+  }
+  /* Cabeçalhos longos (ex.: "Venda após despesas (%)") quebram em linhas no PDF em vez de alargar a
+     tabela além da página — na tela continuam em uma linha só. */
+  #relatorio-tabela thead th {
+    white-space: normal;
   }
   #relatorio-tabela .col-nome {
     max-width: 140px;
@@ -2105,4 +2187,70 @@ tfoot tr td:first-child {
   #fretes-secao-parametros-fiscais .filtros-relatorio > button {
     flex: 1 1 100%;
   }
+}
+
+/* Nova cotação com documento Omie — endereço de entrega manual (estruturado, só desta cotação). */
+.fretes-destino-manual {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex-basis: 100%;
+  border: 1px solid var(--cor-borda);
+  border-radius: var(--raio-sm);
+  padding: 10px 14px;
+  margin: 0;
+}
+.fretes-destino-manual legend {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0 4px;
+}
+
+/* "Observações para a transportadora" — um campo por transportadora selecionada, junto do canal. */
+.fretes-selecionada-observacoes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  min-width: 180px;
+  max-width: 360px;
+}
+.fretes-selecionada-observacoes label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+}
+.fretes-selecionada-observacoes textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+}
+.fretes-selecionada-aviso-api {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--cor-texto);
+  border-left: 3px solid #d97706;
+  padding-left: 8px;
+}
+.fretes-selecionada-aviso-api[hidden] {
+  display: none;
+}
+.fretes-selecionada-aviso-api p {
+  margin: 0;
+}
+.fretes-selecionada-aviso-api label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.fretes-texto-alerta {
+  color: #b42318;
+  font-weight: 600;
 }

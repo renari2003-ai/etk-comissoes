@@ -55,6 +55,11 @@ describe('rotas Financeiro / Comissão — JSON e Excel', () => {
     expect(usuario.margemVisivel).toBe(false);
     expect(usuario.linhas[0].detalhe.margemComissionamentoPercentual).toBeUndefined();
     expect(usuario.linhas[0].detalhe.despesasTotal).toBeUndefined();
+    // Composição por tabela (Preço da Tabela, custo de referência, multiplicador) também só para administrador.
+    expect(admin.linhas[0].detalhe.composicaoItens[0]).toMatchObject({ tabelaCodigo: '003', precoTabela: 190, custoReferencia: 100 });
+    expect(usuario.linhas[0].detalhe.composicaoItens).toBeUndefined();
+    expect(JSON.stringify(usuario)).not.toMatch(/precoTabela|custoReferencia|multiplicador|acrescimo/);
+    expect(usuario.linhas[0].comissaoAPagar).toBe(admin.linhas[0].comissaoAPagar);
   });
   it('ignora vendedor solicitado pelo vendedor autenticado e recalcula resumo', async () => {
     const dados = await (await consultar('vendedor', false, `${query}&vendedor=200`)).json();
@@ -75,6 +80,7 @@ describe('rotas Financeiro / Comissão — JSON e Excel', () => {
     const dados = Buffer.from(await resposta.arrayBuffer());
     expect(dados.subarray(0, 2).toString()).toBe('PK');
     expect(dados.toString()).toContain('00025739');
+    expect(dados.toString()).not.toContain('Venda após despesas (%)');
     expect(dados.toString()).not.toContain('Margem de comissionamento');
   });
   it('recusa período incompleto ou invertido também no Excel', async () => {

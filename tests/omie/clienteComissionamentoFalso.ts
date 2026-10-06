@@ -3,6 +3,33 @@ import type { ClienteInfo, VendedorInfo } from '../../src/relatorio/relatorioVen
 import type { ClienteOmieParaComissionamento } from '../../src/comissionamento/relatorioComissionamento.js';
 import type { ProdutoOmie, TituloContaReceber } from '../../src/omie/cliente.js';
 import type { EtapaFaturamento } from '../../src/omie/classificacaoDocumento.js';
+import type { ItemTabelaPreco, TabelaPreco } from '../../src/omie/tabelasPreco.js';
+
+/** IDs internos reais (`nCodTabPreco`) das tabelas da conta, conferidos em 2026-10-06. */
+export const ID_TABELA_001 = 2400087453;
+export const ID_TABELA_002 = 2400097871;
+export const ID_TABELA_003 = 2404412334;
+
+export function itemTabela(codigoProduto: number, precoTabela: number | null, dataAlteracao = '01/01/2020', horaAlteracao: string | null = '08:00:00'): ItemTabelaPreco {
+  return { codigoProduto, codigoProdutoTexto: `P${codigoProduto}`, precoTabela, dataAlteracao, horaAlteracao };
+}
+
+export function tabelaPreco(codigoComercial: '001' | '002' | '003' | string, itens: ItemTabelaPreco[], extras: Partial<TabelaPreco> = {}): TabelaPreco {
+  const idInterno = codigoComercial === '001' ? ID_TABELA_001 : codigoComercial === '002' ? ID_TABELA_002 : codigoComercial === '003' ? ID_TABELA_003 : 1000 + Number(codigoComercial);
+  const nome = codigoComercial === '001' ? 'CTO PROMOCIONAL.' : codigoComercial === '002' ? 'LINHA PREMIUM' : codigoComercial === '003' ? 'TABELA DE VENDA - 07/26' : `TABELA ${codigoComercial}`;
+  // Tabela alterada pela última vez em 01/01/2020 08:00 (antes de qualquer venda de teste), salvo `extras`.
+  return { idInterno, codigoComercial, nome, ativa: true, dataAlteracao: '01/01/2020', horaAlteracao: '08:00:00', itens, ...extras };
+}
+
+/**
+ * Padrão dos testes que não tratam de tabela: produtos 1 a 9 na tabela 003 com Preço da Tabela
+ * 190 (custo de referência 100), alterados em 01/01/2020 — vender a 190 = multiplicador 1,90 = 3%.
+ */
+export const TABELAS_PRECO_PADRAO_TESTE: TabelaPreco[] = [
+  tabelaPreco('001', []),
+  tabelaPreco('002', []),
+  tabelaPreco('003', [1, 2, 3, 4, 5, 6, 7, 8, 9].map((codigo) => itemTabela(codigo, 190))),
+];
 
 /**
  * Configuração REAL de etapas de Venda de Produto da conta (`ListarEtapasFaturamento`, verificada
@@ -29,7 +56,15 @@ export class ClienteComissionamentoOmieFalso implements ClienteOmieParaComission
     private readonly etapas: EtapaFaturamento[] = ETAPAS_VENDA_PRODUTO_CONTA_REAL,
     /** Família por produto, usada pelo custo estimado (`custoEstimado.ts`). Produto não configurado -> `consultarProduto` rejeita (cai no divisor padrão). */
     private readonly produtosPorCodigo: Map<number, ProdutoOmie> = new Map(),
+    /** Tabelas de preço (`ListarTabelasPreco` + `ListarTabelaItens`) — ver `TABELAS_PRECO_PADRAO_TESTE`. */
+    public tabelasPreco: TabelaPreco[] = TABELAS_PRECO_PADRAO_TESTE,
   ) {}
+
+  consultasTabelasPreco = 0;
+  async listarTabelasPreco(): Promise<TabelaPreco[]> {
+    this.consultasTabelasPreco += 1;
+    return this.tabelasPreco;
+  }
 
   async consultarProduto(codigoProduto: number): Promise<ProdutoOmie> {
     const registro = this.produtosPorCodigo.get(codigoProduto);

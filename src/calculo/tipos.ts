@@ -8,8 +8,15 @@ export interface ProdutoItemPedidoOmie {
   descricao: string;
   quantidade: number;
   valor_unitario: number;
+  /** Valor BRUTO do item (quantidade × valor unitário), ANTES do desconto — confirmado contra a API real em 2026-10-06 (pedido 60: mercadoria 82,90, desconto 4,15, base do IPI 78,75). */
   valor_mercadoria?: number;
   valor_desconto?: number;
+  /**
+   * "Código da tabela de preço (interno)". Confirmado contra a API real em 2026-10-06: às vezes é o
+   * `nCodTabPreco` da tabela usada no item, mas em muitos itens vem `1`/`2` para produtos de
+   * qualquer uma das tabelas — nunca usado sozinho como identificação (ver `comissaoPorTabela.ts`).
+   */
+  codigo_tabela_preco?: number;
 }
 
 export interface ItemPedidoOmie {

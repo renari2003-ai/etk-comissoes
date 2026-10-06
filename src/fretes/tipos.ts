@@ -104,9 +104,39 @@ export interface SolicitacaoCotacao {
    * informadas (sem conversão). `null` em registros antigos ou envios sem embalagens.
    */
   embalagens: EmbalagemSolicitacao[] | null;
+  /**
+   * "Observações para a transportadora" (2026-10-06) — instrução EXCLUSIVA desta solicitação
+   * (desta transportadora nesta cotação), nunca da cotação inteira nem do cadastro. Enviada à
+   * transportadora; distinta de qualquer observação interna. `null` quando não informada e em
+   * registros anteriores (histórico nunca reescrito).
+   */
+  observacoesTransportadora: string | null;
+  /**
+   * Snapshot do endereço de destino efetivamente usado no envio (2026-10-06) — gravado na
+   * criação e reutilizado no "Reenviar" (mesmo espírito de `emailDestino`/`embalagens`). `null`
+   * em registros anteriores: o reenvio desses usa o destino atual da cotação, como antes.
+   */
+  destinoEnviado: DestinoEnviado | null;
   criadoPor: string;
   criadoEm: string;
   atualizadoEm: string;
+}
+
+/**
+ * Endereço de destino enviado numa solicitação. `origem` = de onde veio na cotação (`MANUAL`
+ * quando o operador informou; `null` em cotações antigas de texto livre, sem estrutura).
+ * `texto` = linha completa usada nas mensagens (inclui complemento e UF quando existem).
+ */
+export interface DestinoEnviado {
+  origem: OrigemEndereco | null;
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  texto: string | null;
 }
 
 /** Um tipo de embalagem da solicitação: medidas em metros (como informadas) e quantidade de volumes desse tipo. */

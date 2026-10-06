@@ -33,6 +33,7 @@ function resultadoVazio(): ResultadoComissionamento {
     numerosPedidosSemVendedor: [],
     numerosPedidosAnterioresNaoLocalizados: [],
     excecoesRevisaoManual: [],
+    excecoesApuracao: [],
   };
 }
 
@@ -56,6 +57,7 @@ async function gerarParaCodigos(
     total.documentosAmbiguosExcluidos = Math.max(total.documentosAmbiguosExcluidos, parcial.documentosAmbiguosExcluidos);
     total.numerosPedidosAnterioresNaoLocalizados.push(...parcial.numerosPedidosAnterioresNaoLocalizados);
     total.excecoesRevisaoManual.push(...(parcial.excecoesRevisaoManual ?? []));
+    total.excecoesApuracao.push(...(parcial.excecoesApuracao ?? []));
   }
   return total;
 }
@@ -76,7 +78,10 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
       const codigos = resolverVendedoresDoRelatorio(usuario, usuario.papel === 'vendedor' ? undefined : validarCodigoVendedor(req.query.vendedor));
       const resultado = await gerarRelatorioFinanceiro(cliente, { ...periodo, codigosVendedor: codigos, busca: validarBusca(req.query.busca) });
       const linhas = usuario.papel === 'vendedor' ? resultado.linhas.filter(l => (codigos ?? []).includes(l.codigoVendedor)) : resultado.linhas;
-      const filtrado = { ...resultado, linhas, resumo: resumirFinanceiro(linhas) };
+      const excecoesApuracao = usuario.papel === 'vendedor'
+        ? resultado.excecoesApuracao.filter(e => e.codigoVendedor !== null && (codigos ?? []).includes(e.codigoVendedor))
+        : resultado.excecoesApuracao;
+      const filtrado = { ...resultado, linhas, excecoesApuracao, resumo: resumirFinanceiro(linhas) };
       const margemVisivel = podeVerMargemComissionamento(usuario);
       if (req.path.endsWith('/excel')) {
         res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -120,6 +125,12 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
       const excecoesRevisaoManual = ehVendedor
         ? excecoes.filter((e) => e.codigoVendedor !== null && (codigos ?? []).includes(e.codigoVendedor))
         : excecoes;
+      // Pedidos fora da apuração automática (tabela, regra, preço ou dados do item): mesma restrição por vendedor. Não
+      // trazem preço nem custo, então são exibidos a todos os papéis com acesso ao relatório.
+      const excecoesApuracaoTodas = resultado.excecoesApuracao ?? [];
+      const excecoesApuracao = ehVendedor
+        ? excecoesApuracaoTodas.filter((e) => e.codigoVendedor !== null && (codigos ?? []).includes(e.codigoVendedor))
+        : excecoesApuracaoTodas;
 
       res.json({
         margemVisivel,
@@ -130,6 +141,7 @@ export function criarRotaComissionamento(cliente: ClienteOmie): Router {
         numerosPedidosSemVendedor: ehVendedor ? [] : resultado.numerosPedidosSemVendedor,
         numerosPedidosAnterioresNaoLocalizados: resultado.numerosPedidosAnterioresNaoLocalizados,
         excecoesRevisaoManual,
+        excecoesApuracao,
       });
     }),
   );

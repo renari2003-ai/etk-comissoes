@@ -37,8 +37,13 @@ describe('Excel Financeiro / Comissão', () => {
     const resultado = await gerarRelatorioFinanceiro(clienteFinanceiro([baixaFinanceiro()]), periodo);
     resultado.linhas[0]!.nomeCliente = '=HYPERLINK("https://example.com") & <cliente>';
     const planilha = arquivosDoZip(gerarExcelFinanceiro(resultado, periodo, false)).get('xl/worksheets/sheet1.xml')!;
+    expect(planilha).not.toContain('Venda após despesas (%)');
     expect(planilha).not.toContain('Margem de comissionamento');
     expect(planilha).not.toContain('<f>');
+    // Administrador: mesma coluna, com o rótulo novo.
+    const planilhaAdmin = arquivosDoZip(gerarExcelFinanceiro(resultado, periodo, true)).get('xl/worksheets/sheet1.xml')!;
+    expect(planilhaAdmin).toContain('<t xml:space="preserve">Venda após despesas (%)</t>');
+    expect(planilhaAdmin).not.toContain('Margem de comissionamento');
     expect(planilha).toContain('=HYPERLINK(&quot;https://example.com&quot;) &amp; &lt;cliente&gt;');
   });
 });

@@ -49,6 +49,7 @@ import { enviarEmailSmtp, ErroEnvioSmtpFalhou } from './integracoes/smtpCliente.
 import { montarEmailCotacao } from './email/templateCotacao.js';
 import { enviarWhatsappYCloud, telefoneE164, type MensagemWhatsapp } from './integracoes/ycloudCliente.js';
 import { montarTextoWhatsapp, parametrosTemplateWhatsapp } from './whatsapp/mensagemCotacao.js';
+import { montarDestinoEnviado } from './destinoEnviado.js';
 import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, EmbalagemSolicitacao, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
 import type { PayloadCorrelacionarWhatsapp, PayloadOutboundWhatsapp, PayloadRespostaWebhook } from './webhookCotacoes.js';
 
@@ -65,7 +66,10 @@ function gerarCodigoReferencia(codigoCotacao: string): string {
  * esses conceitos nem existem neste objeto. Fase 4A.4.1 (seção 9): `transportadora.email`/
  * `fonteEmail` são o SNAPSHOT já gravado na solicitação — o n8n nunca decide/consulta Omie.
  * `embalagens` também vem do snapshot da solicitação: envio inicial e "Reenviar" mandam as
- * mesmas medidas/quantidades, nunca relidas da tela.
+ * mesmas medidas/quantidades, nunca relidas da tela. O destino (2026-10-06) também: endereço
+ * completo gravado em `destinoEnviado` na criação; só registros anteriores (sem snapshot) usam o
+ * destino atual da cotação, como antes. `observacoesTransportadora` é a instrução só desta
+ * solicitação (transportadora) — nunca de outra.
  */
 export function montarPayloadN8n(
   cotacao: CotacaoFrete,
@@ -73,6 +77,7 @@ export function montarPayloadN8n(
   cnpjs: CnpjsPayloadN8n,
   whatsapp: string | null,
 ): PayloadSolicitacaoN8n {
+  const destino = solicitacao.destinoEnviado ?? montarDestinoEnviado(cotacao);
   return {
     versao: 1,
     evento: 'SOLICITACAO_COTACAO',
@@ -88,9 +93,9 @@ export function montarPayloadN8n(
     canal: solicitacao.canal,
     logistica: {
       origem: cotacao.origem,
-      destino: cotacao.destino,
+      destino: destino.texto,
       cepOrigem: cotacao.cepOrigem,
-      cepDestino: cotacao.cepDestino,
+      cepDestino: destino.cep,
       pesoBruto: cotacao.pesoBruto,
       pesoLiquido: cotacao.pesoLiquido,
       peso: cotacao.peso,
@@ -106,6 +111,10 @@ export function montarPayloadN8n(
         comprimento: e.comprimento,
         quantidade: e.quantidade,
       })),
+      observacoesTransportadora:
+        typeof solicitacao.observacoesTransportadora === 'string' && solicitacao.observacoesTransportadora.trim() !== ''
+          ? solicitacao.observacoesTransportadora
+          : null,
     },
   };
 }
@@ -362,6 +371,8 @@ export interface ItemSolicitacaoCotacao {
   emailManual?: string | null;
   /** Embalagens do envio (uma por tipo) — gravadas como snapshot na solicitação e reusadas no "Reenviar". */
   embalagens?: EmbalagemSolicitacao[] | null;
+  /** "Observações para a transportadora" só desta solicitação (já validada); gravada como snapshot e reusada no "Reenviar". */
+  observacoesTransportadora?: string | null;
 }
 
 export async function servicoSolicitarCotacoes(
@@ -406,6 +417,9 @@ export async function servicoSolicitarCotacoes(
       emailDestino,
       emailOrigem,
       embalagens: item.embalagens ?? null,
+      observacoesTransportadora: item.observacoesTransportadora ?? null,
+      // Snapshot do endereço efetivamente usado — o "Reenviar" manda o mesmo, mesmo que a cotação mude depois.
+      destinoEnviado: montarDestinoEnviado(cotacao),
     });
     await registrarAuditoria({
       usuarioId,
@@ -434,9 +448,25 @@ const LIMITE_REENVIOS = 5;
  * cria uma segunda linha. Só permitido quando o envio anterior falhou (`status = 'ERRO'`);
  * limitado a `LIMITE_REENVIOS` tentativas totais para nunca virar um loop, mesmo manual.
  */
+/**
+ * Modo de contingência n8n (FRETES_EMAIL_OUTBOUND=n8n / FRETES_WHATSAPP=n8n): os workflows do n8n
+ * montam a mensagem sozinhos e NÃO leem `observacoesTransportadora` (campo aditivo do contrato v1).
+ * Para nunca descartar a observação em silêncio, o envio/reenvio com observação por esse caminho é
+ * recusado com erro explícito. Devolve a mensagem do problema ou `null`.
+ */
+export function problemaObservacaoViaN8n(canal: string, observacoesTransportadora: string | null | undefined): string | null {
+  if (typeof observacoesTransportadora !== 'string' || observacoesTransportadora.trim() === '') return null;
+  const viaN8n = (canal === 'EMAIL' && config.fretesEmailOutbound === 'n8n') || (canal === 'WHATSAPP' && config.fretesWhatsapp === 'n8n');
+  if (!viaN8n) return null;
+  const rotulo = canal === 'EMAIL' ? 'E-mail' : 'WhatsApp';
+  return `O envio por ${rotulo} está no modo de contingência (n8n), que não transmite "Observações para a transportadora" — apague a observação desta transportadora ou envie quando o envio direto estiver ativo.`;
+}
+
 export async function servicoReenviarSolicitacao(cliente: ClienteOmie, solicitacaoId: string, usuarioId: string): Promise<SolicitacaoCotacao> {
   const solicitacao = await buscarSolicitacaoPorId(solicitacaoId);
   if (solicitacao === null) throw new ErroValidacao('Solicitação de cotação não encontrada.');
+  const problemaN8n = problemaObservacaoViaN8n(solicitacao.canal, solicitacao.observacoesTransportadora);
+  if (problemaN8n !== null) throw new ErroValidacao(problemaN8n);
   if (solicitacao.status !== 'ERRO') {
     throw new ErroValidacao(`Só é possível reenviar uma solicitação com status ERRO (atual: ${solicitacao.status}).`);
   }

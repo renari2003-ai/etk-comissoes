@@ -240,6 +240,8 @@ export function formatarDestinoTexto(destino: EnderecoDestino): string | null {
   const partes = [
     destino.logradouro,
     destino.numero !== null ? `nº ${destino.numero}` : null,
+    // Complemento entra no texto enviado às transportadoras (2026-10-06) — antes era descartado.
+    destino.complemento,
     destino.bairro,
     destino.cidade !== null && destino.uf !== null ? `${destino.cidade}/${destino.uf}` : destino.cidade ?? destino.uf,
   ].filter((parte): parte is string => parte !== null && parte.trim() !== '');

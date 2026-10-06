@@ -7,9 +7,24 @@ import {
   type EtapaFaturamento,
   type ResultadoClassificacao,
 } from './classificacaoDocumento.js';
-import { OmieError, OmieErroLimiteExcedido, OmieErroTransitorio, indicaLimiteExcedido, verificarFalhaNoCorpo } from './erros.js';
+import {
+  OmieError,
+  OmieErroLimiteExcedido,
+  OmieErroMetodoEmExecucao,
+  OmieErroTransitorio,
+  indicaLimiteExcedido,
+  indicaMetodoEmExecucao,
+  verificarFalhaNoCorpo,
+} from './erros.js';
 import { Limitador } from './limitador.js';
 import { normalizarBaixas, type BaixaRecebimento, type MovimentoFinanceiroOmie } from './recebimentos.js';
+import {
+  normalizarItemTabela,
+  normalizarTabela,
+  type ItemTabelaPrecoOmie,
+  type TabelaPreco,
+  type TabelaPrecoOmie,
+} from './tabelasPreco.js';
 
 const URL_BASE = 'https://app.omie.com.br/api/v1';
 
@@ -213,8 +228,8 @@ export interface TituloContaReceber {
 
 /**
  * Cliente HTTP somente leitura para a API da Omie. Toda chamada de escrita é
- * proibida por design: apenas os métodos ListarPedidos, ConsultarPedido,
- * ConsultarProduto e ObterEstoqueProduto são implementados.
+ * proibida por design: só métodos de consulta (Listar..., Consultar..., Obter...) são implementados —
+ * inclusive ListarTabelasPreco/ListarTabelaItens; nunca Alterar/Incluir/Atualizar.
  */
 const MINUTOS = 60 * 1000;
 
@@ -232,6 +247,8 @@ export class ClienteOmie {
   private readonly cacheContasReceber = new CachePostgres('contas-receber', 5 * MINUTOS);
   private readonly cacheBaixasReceber = new CachePostgres('baixas-receber', 5 * MINUTOS);
   private readonly cachePedidos = new CachePostgres('pedido-consulta', 5 * MINUTOS);
+  // Preço da Tabela define a comissão: TTL curto, para uma alteração de preço aparecer logo.
+  private readonly cacheTabelasPreco = new CachePostgres('tabelas-preco', 10 * MINUTOS);
 
   constructor(intervaloMinimoMs: number = config.intervaloMinimoMs) {
     this.limitador = new Limitador(intervaloMinimoMs);
@@ -248,6 +265,7 @@ export class ClienteOmie {
       this.cacheContasReceber.limpar(),
       this.cacheBaixasReceber.limpar(),
       this.cachePedidos.limpar(),
+      this.cacheTabelasPreco.limpar(),
     ]);
   }
 
@@ -280,6 +298,10 @@ export class ClienteOmie {
       const falha = verificarFalhaNoCorpo(corpo);
       if (falha !== null) {
         const mensagem = falha.faultstring ?? `Erro desconhecido da Omie (${call})`;
+        // Antes do limite: "método em execução" (Client-1880) tem política de retry própria.
+        if (indicaMetodoEmExecucao(falha.faultcode, falha.faultstring)) {
+          throw new OmieErroMetodoEmExecucao(`${mensagem} [${call}]`, falha.faultcode);
+        }
         if (indicaLimiteExcedido(falha.faultcode, falha.faultstring)) {
           throw new OmieErroLimiteExcedido(mensagem, falha.faultcode);
         }
@@ -683,6 +705,65 @@ export class ClienteOmie {
       );
       return resposta.pedido_venda_produto;
     });
+  }
+
+  /**
+   * Somente leitura: `ListarTabelasPreco` (todas as tabelas, ativas ou não) e `ListarTabelaItens`
+   * (só das ativas) — ver `tabelasPreco.ts`. Sequencial: a Omie rejeita chamadas sobrepostas do
+   * mesmo método. Usado pela comissão por tabela de preços (`comissaoPorTabela.ts`).
+   */
+  async listarTabelasPreco(): Promise<TabelaPreco[]> {
+    // "v3": inclui a data de alteração da tabela e o momento da consulta — nunca reaproveita entrada
+    // antiga sem esses campos.
+    return this.cacheTabelasPreco.obterOuBuscar('tabelas-com-itens-v3', async () => {
+      const consultadoEm = new Date().toISOString();
+      const cabecalhos: TabelaPrecoOmie[] = [];
+      let pagina = 1;
+      let totalDePaginas = 1;
+      do {
+        const resposta = await this.chamar<{ nTotPaginas: number; listaTabelasPreco?: TabelaPrecoOmie[] }>(
+          '/produtos/tabelaprecos/', 'ListarTabelasPreco', { nPagina: pagina, nRegPorPagina: 50 },
+        );
+        if (!Number.isSafeInteger(resposta.nTotPaginas) || resposta.nTotPaginas < 0) {
+          throw new OmieError('Paginação de tabelas de preço inválida.');
+        }
+        cabecalhos.push(...(resposta.listaTabelasPreco ?? []));
+        totalDePaginas = resposta.nTotPaginas;
+        pagina += 1;
+      } while (pagina <= totalDePaginas);
+
+      const tabelas: TabelaPreco[] = [];
+      for (const registro of cabecalhos) {
+        let tabela: Omit<TabelaPreco, 'itens'>;
+        try { tabela = normalizarTabela(registro); }
+        catch (erro) { throw new OmieError(erro instanceof Error ? erro.message : 'Tabela de preços inválida.'); }
+        const itens: ItemTabelaPrecoOmie[] = [];
+        if (tabela.ativa) {
+          let paginaItens = 1;
+          let totalItens = 1;
+          do {
+            const resposta = await this.chamar<{ nTotPaginas: number; listaTabelaPreco?: { itensTabela?: ItemTabelaPrecoOmie[] } }>(
+              '/produtos/tabelaprecos/', 'ListarTabelaItens',
+              { nPagina: paginaItens, nRegPorPagina: 200, nCodTabPreco: tabela.idInterno },
+            );
+            if (!Number.isSafeInteger(resposta.nTotPaginas) || resposta.nTotPaginas < 0) {
+              throw new OmieError('Paginação de itens da tabela de preços inválida.');
+            }
+            itens.push(...(resposta.listaTabelaPreco?.itensTabela ?? []));
+            totalItens = resposta.nTotPaginas;
+            paginaItens += 1;
+          } while (paginaItens <= totalItens);
+        }
+        try { tabelas.push({ ...tabela, consultadoEm, itens: itens.map(normalizarItemTabela) }); }
+        catch (erro) { throw new OmieError(erro instanceof Error ? erro.message : 'Item de tabela de preços inválido.'); }
+      }
+      return tabelas;
+    });
+  }
+
+  /** Invalida SÓ o cache das tabelas de preço (ex.: após o responsável corrigir um Preço da Tabela). */
+  async limparCacheTabelasPreco(): Promise<void> {
+    await this.cacheTabelasPreco.limpar();
   }
 
   async consultarProduto(codigoProduto: number): Promise<ProdutoOmie> {

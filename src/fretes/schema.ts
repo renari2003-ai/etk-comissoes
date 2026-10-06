@@ -1,4 +1,5 @@
 import { executarDdlIdempotente } from '../db.js';
+import { LIMITE_OBSERVACOES_TRANSPORTADORA } from './validacao.js';
 
 /**
  * Correção cirúrgica (homologação 2026-09-16, Fase 4A.3): três FKs do domínio de Fretes
@@ -437,6 +438,16 @@ export function garantirEsquemaFretes(): Promise<void> {
     // Snapshot das embalagens (altura/largura/comprimento/quantidade por tipo) usado no envio
     // e no "Reenviar". Aditivo/nullable: registros antigos ficam `NULL` e continuam legíveis.
     await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS embalagens JSONB`);
+
+    // 2026-10-06 (autorizado pelo usuário): "Observações para a transportadora" POR SOLICITAÇÃO
+    // (nunca da cotação nem do cadastro) e snapshot do destino efetivamente enviado, reutilizado
+    // no "Reenviar". Aditivos/nullable: registros existentes ficam `NULL` e nunca são reescritos.
+    // O limite do CHECK é o mesmo da tela e da validação HTTP (`LIMITE_OBSERVACOES_TRANSPORTADORA`).
+    await executarDdlIdempotente(
+      `ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS observacoes_transportadora TEXT` +
+        ` CHECK (observacoes_transportadora IS NULL OR char_length(observacoes_transportadora) <= ${LIMITE_OBSERVACOES_TRANSPORTADORA})`,
+    );
+    await executarDdlIdempotente(`ALTER TABLE ${solicitacoes} ADD COLUMN IF NOT EXISTS destino_enviado JSONB`);
 
     // Material bruto — NUNCA alterado depois de criado (seção 18); correções humanas
     // alteram só a proposta estruturada. UNIQUE (canal, identificador_mensagem) é a

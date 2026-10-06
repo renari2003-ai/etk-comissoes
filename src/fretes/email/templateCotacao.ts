@@ -47,6 +47,9 @@ function local(cidade: string | null, cep: string | null): string | null {
  * Linhas "rótulo: valor" da cotação, já filtradas (sem vazios) — fonte única para o e-mail e
  * para o WhatsApp (`src/fretes/whatsapp/mensagemCotacao.ts`).
  */
+/** Rótulo exato exibido à transportadora (mesmo texto do campo na tela). */
+export const ROTULO_OBSERVACOES_TRANSPORTADORA = 'Observações para a transportadora';
+
 export function linhasDadosCotacao(payload: PayloadSolicitacaoN8n): [string, string][] {
   const L = payload.logistica;
   const ref = payload.referencia;
@@ -74,6 +77,8 @@ export function linhasDadosCotacao(payload: PayloadSolicitacaoN8n): [string, str
     ['Total de volumes', volTotal === null ? null : `${fmtN(volTotal)}${L.especie ? ` (${L.especie})` : ''}`],
     ['Embalagens', embalagens.length > 0 ? embalagens.join('\n') : null],
     ['Observações', L.observacoes],
+    // Instrução só desta transportadora (2026-10-06) — linha omitida quando vazia (filtro abaixo).
+    [ROTULO_OBSERVACOES_TRANSPORTADORA, L.observacoesTransportadora ?? null],
   ];
   return linhas.filter((r): r is [string, string] => r[1] !== null && r[1].trim() !== '');
 }

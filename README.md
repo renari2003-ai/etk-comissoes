@@ -352,9 +352,13 @@ adivinhar, as seguintes definições foram fixadas no código
     - *Frete/seguro/outras despesas*: `frete.valor_frete` +
       `frete.valor_seguro` + `frete.outras_despesas` do pedido (sempre 0
       nesta conta até o momento, mas somados por completude).
-- **Faixas de comissão** (fixas, não configuráveis pela interface), aplicadas
-  sobre a margem de comissionamento acima: margem ≤ 60% → 1%; 60% < margem
-  < 71% → 2%; margem ≥ 71% → 3%.
+- **Percentual de comissão — por produto, pela tabela de preços da Omie**
+  (desde 2026-10-06, substitui a faixa pela margem): tabela 001 = 1% fixo;
+  002/003 = progressão pelo acréscimo sobre o custo de referência (Preço da
+  Tabela ÷ 1,75 ou ÷ 1,90), usando o **preço atual da tabela ativa** (não é
+  preço histórico). A margem acima continua só como informação para
+  administradores. Regra completa, exceções e orientação ao responsável pelas
+  tabelas: `Arquitetura/Comissão por Tabela de Preços.md`.
 - **Vínculo pedido ↔ título financeiro**: apenas títulos de
   `ListarContasReceber` com `id_origem: "VENR"` (gerados a partir de um
   Pedido de Venda) trazem `nCodPedido`/`numero_parcela` — títulos lançados

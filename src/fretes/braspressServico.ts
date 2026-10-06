@@ -5,6 +5,7 @@
  * sem regra nova. Não escreve na Omie nem dispara e-mail/WhatsApp.
  */
 import { ErroValidacao } from '../validacao.js';
+import { ehTransportadoraBraspress } from './canaisTransportadora.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
 import { definirStatusCotacao } from './cotacoesRepositorio.js';
 import { servicoBuscarCotacao } from './fretesServico.js';
@@ -74,9 +75,8 @@ export class ErroDadosCotacaoIncompletos extends ErroValidacao {
 }
 
 /** Critério único de "esta transportadora é a Braspress" (a única com integração API nesta fase). */
-export function ehTransportadoraBraspress(t: Pick<Transportadora, 'nomeRazaoSocial' | 'nomeFantasia'>): boolean {
-  return /braspress/i.test(t.nomeRazaoSocial) || /braspress/i.test(t.nomeFantasia ?? '');
-}
+// Regra movida para `canaisTransportadora.ts` (módulo puro, sem dependência circular); reexportada aqui.
+export { ehTransportadoraBraspress };
 
 async function obterTransportadoraBraspress(): Promise<string> {
   const todas = await listarTransportadoras(false);

@@ -49,7 +49,7 @@ function zip(arquivos: Record<string, string>): Buffer {
 }
 
 export function gerarExcelFinanceiro(resultado: ResultadoFinanceiro, periodo: { dataDe: string; dataAte: string }, margemVisivel: boolean): Buffer {
-  const cabecalho = ['Pedido', 'Cliente', 'Vendedor', 'Nota fiscal', 'Parcela', 'Data de recebimento', 'Valor recebido', 'Base de comissão recebida', 'Comissão %', 'Comissão a pagar', ...(margemVisivel ? ['Margem de comissionamento %'] : [])];
+  const cabecalho = ['Pedido', 'Cliente', 'Vendedor', 'Nota fiscal', 'Parcela', 'Data de recebimento', 'Valor recebido', 'Base de comissão recebida', 'Comissão %', 'Comissão a pagar', ...(margemVisivel ? ['Venda após despesas (%)'] : [])];
   const linhas: Celula[][] = [
     ['Financeiro / Comissão'], ['Período de recebimento', periodo.dataDe, periodo.dataAte],
     ['Comissão devida por recebimento; não comprova pagamento ao funcionário.'], cabecalho,

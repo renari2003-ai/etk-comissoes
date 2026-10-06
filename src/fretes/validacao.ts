@@ -130,23 +130,68 @@ export interface DestinoManualInformado {
  */
 export function validarDestinoManualOpcional(valor: unknown): DestinoManualInformado | null {
   if (valor === undefined || valor === null) return null;
-  if (typeof valor !== 'object') throw new ErroValidacao('O campo "destinoOverride" deve ser um objeto.');
+  if (typeof valor !== 'object' || Array.isArray(valor)) throw new ErroValidacao('O campo "destinoOverride" deve ser um objeto.');
   const bruto = valor as Record<string, unknown>;
   const destino: DestinoManualInformado = {
-    cep: validarTextoOpcional(bruto.cep, 'destinoOverride.cep'),
-    logradouro: validarTextoOpcional(bruto.logradouro, 'destinoOverride.logradouro'),
-    numero: validarTextoOpcional(bruto.numero, 'destinoOverride.numero'),
-    complemento: validarTextoOpcional(bruto.complemento, 'destinoOverride.complemento'),
-    bairro: validarTextoOpcional(bruto.bairro, 'destinoOverride.bairro'),
-    cidade: validarTextoOpcional(bruto.cidade, 'destinoOverride.cidade'),
-    uf: validarTextoOpcional(bruto.uf, 'destinoOverride.uf'),
+    cep: validarTextoComTamanhoMaximo(bruto.cep, 'destinoOverride.cep', 9),
+    logradouro: validarTextoComTamanhoMaximo(bruto.logradouro, 'destinoOverride.logradouro', 200),
+    numero: validarTextoComTamanhoMaximo(bruto.numero, 'destinoOverride.numero', 20),
+    complemento: validarTextoComTamanhoMaximo(bruto.complemento, 'destinoOverride.complemento', 120),
+    bairro: validarTextoComTamanhoMaximo(bruto.bairro, 'destinoOverride.bairro', 120),
+    cidade: validarTextoComTamanhoMaximo(bruto.cidade, 'destinoOverride.cidade', 120),
+    uf: validarTextoComTamanhoMaximo(bruto.uf, 'destinoOverride.uf', 2),
   };
+  // Formato conferido na borda (2026-10-06): CEP com 8 dígitos e UF com 2 letras — nunca
+  // "aproveitado" pela metade nem completado com outro endereço.
+  if (destino.cep !== null) {
+    const digitos = destino.cep.replace(/\D/g, '');
+    if (digitos.length !== 8 || !/^[\d.\-\s]+$/.test(destino.cep)) throw new ErroValidacao('O CEP de destino informado deve ter 8 dígitos.');
+    destino.cep = `${digitos.slice(0, 5)}-${digitos.slice(5)}`;
+  }
+  if (destino.uf !== null) {
+    if (!/^[A-Za-z]{2}$/.test(destino.uf)) throw new ErroValidacao('A UF de destino informada deve ter 2 letras.');
+    destino.uf = destino.uf.toUpperCase();
+  }
   const temCep = destino.cep !== null;
   const temLogradouroECidade = destino.logradouro !== null && destino.cidade !== null;
   if (!temCep && !temLogradouroECidade) {
     throw new ErroValidacao('O destino informado manualmente precisa de ao menos CEP, ou logradouro e cidade.');
   }
   return destino;
+}
+
+/** Booleano estrito: ausente/`null` = `false`; qualquer valor que não seja `true`/`false` é rejeitado (nunca "truthy"). */
+export function validarBooleanoOpcional(valor: unknown, campo: string): boolean {
+  if (valor === undefined || valor === null) return false;
+  if (typeof valor !== 'boolean') throw new ErroValidacao(`O campo "${campo}" deve ser verdadeiro ou falso.`);
+  return valor;
+}
+
+/**
+ * "Observações para a transportadora" (2026-10-06): limite único para tela (`maxlength`), HTTP e
+ * banco (CHECK em `schema.ts`). 900 caracteres para caber, junto do rótulo, no parâmetro {{6}} do
+ * template aprovado do WhatsApp (limite de 1024 por parâmetro, ver `mensagemCotacao.ts`).
+ */
+export const LIMITE_OBSERVACOES_TRANSPORTADORA = 900;
+
+/**
+ * Opcional; preserva acentos e quebras de linha (CRLF/CR viram LF). Espaços nas pontas são
+ * removidos; vazio vira `null` (nunca gera seção vazia na mensagem). Caracteres de controle
+ * (exceto quebra de linha e tab) são rejeitados — nunca removidos em silêncio.
+ */
+export function validarObservacoesTransportadoraOpcional(valor: unknown, campo: string): string | null {
+  if (valor === undefined || valor === null) return null;
+  if (typeof valor !== 'string') throw new ErroValidacao(`O campo "${campo}" deve ser um texto.`);
+  const texto = valor.replace(/\r\n?/g, '\n').trim();
+  if (texto === '') return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(texto)) {
+    throw new ErroValidacao(`O campo "${campo}" contém caracteres de controle não permitidos.`);
+  }
+  if (texto.length > LIMITE_OBSERVACOES_TRANSPORTADORA) {
+    throw new ErroValidacao(`O campo "${campo}" excede o tamanho máximo de ${LIMITE_OBSERVACOES_TRANSPORTADORA} caracteres.`);
+  }
+  return texto;
 }
 
 // --- Fase 4A.1 — automação de cotações com transportadoras ----------------------------

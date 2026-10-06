@@ -235,6 +235,39 @@
           <label for="fretes-cotacao-cep-destino">CEP destino</label>
           <input id="fretes-cotacao-cep-destino" name="cepDestino" type="text" />
         </div>
+        <p id="fretes-cotacao-destino-origem" class="filtro-data-legenda campo-filtro-checkbox" hidden aria-live="polite"></p>
+        <label class="campo-filtro-checkbox" id="fretes-cotacao-destino-outro-campo" hidden><input type="checkbox" id="fretes-cotacao-destino-outro" /> Informar outro endereço de entrega (vale só para esta cotação; não altera a Omie nem o cadastro)</label>
+        <fieldset class="fretes-destino-manual" id="fretes-cotacao-destino-manual" hidden>
+          <legend>Endereço de entrega informado manualmente</legend>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-cep">CEP</label>
+            <input id="fretes-cotacao-destino-manual-cep" name="destinoManualCep" type="text" inputmode="numeric" maxlength="9" placeholder="00000-000" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-logradouro">Logradouro</label>
+            <input id="fretes-cotacao-destino-manual-logradouro" name="destinoManualLogradouro" type="text" maxlength="200" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-numero">Número</label>
+            <input id="fretes-cotacao-destino-manual-numero" name="destinoManualNumero" type="text" maxlength="20" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-complemento">Complemento</label>
+            <input id="fretes-cotacao-destino-manual-complemento" name="destinoManualComplemento" type="text" maxlength="120" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-bairro">Bairro</label>
+            <input id="fretes-cotacao-destino-manual-bairro" name="destinoManualBairro" type="text" maxlength="120" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-cidade">Cidade</label>
+            <input id="fretes-cotacao-destino-manual-cidade" name="destinoManualCidade" type="text" maxlength="120" />
+          </div>
+          <div class="campo-filtro">
+            <label for="fretes-cotacao-destino-manual-uf">UF</label>
+            <input id="fretes-cotacao-destino-manual-uf" name="destinoManualUf" type="text" maxlength="2" />
+          </div>
+        </fieldset>
         <div class="campo-filtro">
           <label for="fretes-cotacao-peso">Peso (kg)</label>
           <input id="fretes-cotacao-peso" name="peso" type="number" min="0" step="0.01" />
@@ -1269,6 +1302,13 @@
   </main>
 
   <div id="indicador-carregamento" class="indicador-carregamento" hidden aria-live="polite">Carregando…</div>
+  <!-- Relatórios: mesmo local do indicador acima; logo ETK 3D parado com luz branca passando por trás.
+       O texto fica só para leitores de tela (role="status"). -->
+  <div id="relatorio-carregamento" class="carregamento-logo-etk" role="status" hidden>
+    <span class="carregamento-logo-etk-texto">Carregando relatório</span>
+    <span class="carregamento-logo-etk-luz" aria-hidden="true"></span>
+    <img class="carregamento-logo-etk-imagem" src="logos/logo-etk-3d.png" alt="" width="90" height="51" decoding="async">
+  </div>
 
   <script src="app.js" type="module"></script>
   <script>

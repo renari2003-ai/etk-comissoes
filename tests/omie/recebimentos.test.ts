@@ -5,7 +5,7 @@ const movimento: MovimentoFinanceiroOmie = { detalhes: { nCodBaixa: 1, nCodTitul
 
 describe('normalizarBaixas — contrato BXCR Omie', () => {
   it('usa o valor de cada baixa e deduplica pelo código de baixa', () => {
-    expect(normalizarBaixas([movimento, movimento])).toEqual([{ codigoBaixa: 1, codigoLancamentoOmie: 10, dataRecebimento: '10/09/2026', valorRecebido: 200, juros: 0, multa: 0 }]);
+    expect(normalizarBaixas([movimento, movimento])).toEqual([{ codigoBaixa: 1, codigoLancamentoOmie: 10, dataRecebimento: '10/09/2026', valorRecebido: 200, juros: 0, multa: 0, codigoVendedor: null }]);
   });
   it('nunca substitui valor ausente pelo acumulado do título e rejeita identificadores ausentes', () => {
     expect(() => normalizarBaixas([{ detalhes: { ...movimento.detalhes, nValorMovCC: undefined } }])).toThrow('sem valor recebido');
@@ -31,5 +31,11 @@ describe('normalizarBaixas — contrato BXCR Omie', () => {
   it('bloqueia estornos e baixas conflitantes para revisão', () => {
     expect(() => normalizarBaixas([{ detalhes: { ...movimento.detalhes, nValorMovCC: -200 } }])).toThrow('estorno');
     expect(() => normalizarBaixas([movimento, { detalhes: { ...movimento.detalhes, nValorMovCC: 300 } }])).toThrow('conflitantes');
+  });
+  it('guarda cCodVendedor do movimento; ausente ou inválido vira null (nunca inventado)', () => {
+    expect(normalizarBaixas([{ detalhes: { ...movimento.detalhes, cCodVendedor: 2386248166 } }])[0]?.codigoVendedor).toBe(2386248166);
+    for (const invalido of [undefined, 0, -1, 1.5]) {
+      expect(normalizarBaixas([{ detalhes: { ...movimento.detalhes, cCodVendedor: invalido } }])[0]?.codigoVendedor).toBeNull();
+    }
   });
 });

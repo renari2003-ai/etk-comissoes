@@ -47,6 +47,25 @@ export class OmieErroLimiteExcedido extends OmieError {
   }
 }
 
+/**
+ * "Já existe uma requisição desse método sendo executada" — faultcode `SOAP-ENV:Client-1880`, HTTP
+ * 500 (confirmado contra a API real em 2026-10-06, em `ListarContasReceber`). A Omie recusa a MESMA
+ * consulta (método + parâmetros) enquanto considera outra igual em execução — outras consultas do
+ * mesmo método passam normalmente. Temporário: medido ao vivo, a mesma consulta voltou a 1880 após
+ * 10 s e respondeu após ~60 s. Candidato a retry com política própria (ver `Limitador.executar`):
+ * a 3ª consulta idêntica em menos de 60 s vira REDUNDANT, então as esperas são 10 s e depois 61 s.
+ */
+export class OmieErroMetodoEmExecucao extends OmieError {
+  constructor(message: string, faultcode?: string) {
+    super(message, faultcode);
+    this.name = 'OmieErroMetodoEmExecucao';
+  }
+}
+
+export function indicaMetodoEmExecucao(faultcode?: string, faultstring?: string): boolean {
+  return /Client-1880\b/.test(faultcode ?? '') || /j[áa] existe uma requisi[çc][ãa]o desse m[ée]todo sendo executada/i.test(faultstring ?? '');
+}
+
 /** Verifica no corpo JSON da resposta se a Omie sinalizou erro, mesmo com HTTP 200. */
 export function verificarFalhaNoCorpo(corpo: unknown): { faultcode?: string; faultstring?: string } | null {
   if (typeof corpo !== 'object' || corpo === null) return null;

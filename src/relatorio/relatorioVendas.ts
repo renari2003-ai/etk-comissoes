@@ -75,8 +75,24 @@ export interface LinhaRelatorio {
     ibs: number;
     cbs: number;
   };
-  /** Itens do pedido (código do produto + receita) — usado para segregar comissão fixa por família (ver `relatorioComissionamento.ts`). */
-  itens: Array<{ codigoProduto: number; receita: number }>;
+  /** Itens do pedido — usados pela comissão por tabela de preços (ver `comissaoPorTabela.ts`). */
+  itens: ItemLinhaRelatorio[];
+}
+
+export interface ItemLinhaRelatorio {
+  codigoProduto: number;
+  /** Código do produto (ex.: "PA00000001"). */
+  codigo: string;
+  descricao: string;
+  quantidade: number;
+  /** Mesma receita de sempre (valor de mercadoria, bruto) — análise de custo/margem. */
+  receita: number;
+  /** `valor_mercadoria` bruto, antes do desconto (0 quando ausente). */
+  valorMercadoria: number;
+  /** `valor_desconto` do item (0 quando ausente). */
+  valorDesconto: number;
+  /** `codigo_tabela_preco` do item; `null` quando ausente. */
+  codigoTabelaPreco: number | null;
 }
 
 export interface ResumoRelatorio {
@@ -328,7 +344,19 @@ export async function montarLinhasDePedidos(
         ibs: pedido.total_pedido?.valor_ibs ?? 0,
         cbs: pedido.total_pedido?.valor_cbs ?? 0,
       },
-      itens: itens.map((item) => ({ codigoProduto: item.codigoProduto, receita: item.receita })),
+      itens: itens.map((item, indice) => {
+        const produto = pedido.det[indice]?.produto;
+        return {
+          codigoProduto: item.codigoProduto,
+          codigo: item.codigo,
+          descricao: item.descricao,
+          quantidade: item.quantidade,
+          receita: item.receita,
+          valorMercadoria: produto?.valor_mercadoria ?? item.receita,
+          valorDesconto: produto?.valor_desconto ?? 0,
+          codigoTabelaPreco: produto?.codigo_tabela_preco ?? null,
+        };
+      }),
     });
   }
 

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   calcularComissaoTotal,
   calcularComissaoVendedor,
-  comissaoFixaDaFamilia,
   comissaoFixaDoVendedor,
   determinarComissaoNormal,
   distribuirComissaoPorParcelas,
@@ -115,22 +114,8 @@ describe('comissaoFixaDoVendedor — vendedor com comissão fixa (regra de 2026-
   });
 });
 
-describe('comissaoFixaDaFamilia — família de produto com comissão fixa (regra de 2026-09-10)', () => {
-  it('CTO Promocional -> 1%', () => {
-    expect(comissaoFixaDaFamilia('CTO Promocional')).toBe(1);
-  });
-  it('reconhece sem diferenciar caixa/acento', () => {
-    expect(comissaoFixaDaFamilia('cto promocional')).toBe(1);
-  });
-  it('família comum não tem comissão fixa (null — segue a regra normal)', () => {
-    expect(comissaoFixaDaFamilia('Produto Acabado')).toBeNull();
-    expect(comissaoFixaDaFamilia('Linha Premium')).toBeNull();
-  });
-  it('família ausente (undefined/null) não tem comissão fixa', () => {
-    expect(comissaoFixaDaFamilia(undefined)).toBeNull();
-    expect(comissaoFixaDaFamilia(null)).toBeNull();
-  });
-});
+// A antiga comissão fixa por FAMÍLIA (CTO Promocional) foi substituída em 2026-10-06 pela tabela
+// de preços 001 — ver `comissaoPorTabela.test.ts`.
 
 describe('calcularComissaoVendedor — vendedores normais (seção 5, testes 1-7 do requisito)', () => {
   it.each([

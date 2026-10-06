@@ -55,7 +55,39 @@ const LINHA: LinhaComissionamento = {
   valorIPI: 50,
   valorIcmsSt: 30,
   impostosEmbutidos: { icms: 1, pis: 1, cofins: 1, ibs: 0, cbs: 0 },
-  itens: [{ codigoProduto: 1, receita: 900 }],
+  itens: [{ codigoProduto: 1, codigo: 'PA00000001', descricao: 'Produto', quantidade: 9, receita: 900, valorMercadoria: 900, valorDesconto: 0, codigoTabelaPreco: 2 }],
+  baseComissao: 900,
+  composicaoItens: [
+    {
+      codigoProduto: 1,
+      codigo: 'PA00000001',
+      descricao: 'Produto',
+      quantidade: 9,
+      tabelaId: 2404412334,
+      tabelaCodigo: '003',
+      tabelaNome: 'TABELA DE VENDA - 07/26',
+      origemTabela: 'UNICA_TABELA_DO_PRODUTO',
+      referencia: 'PRECO_ATUAL_TABELA_ATIVA',
+      precoConsultadoEm: '2026-10-06T14:55:00.000Z',
+      apuradoEm: '2026-10-06T15:00:00.000Z',
+      itemAlteradoEm: '27/08/2026 10:36:07',
+      tabelaAlteradaEm: '27/08/2026 10:55:09',
+      regra: 'MULTIPLICADOR',
+      valorMercadoria: 900,
+      valorDesconto: 0,
+      baseComissao: 900,
+      precoUnitarioVendido: 100,
+      precoTabela: 77.7777,
+      multiplicadorTabela: 1.9,
+      custoReferencia: 40.9356,
+      multiplicadorRealizado: 2.442857,
+      acrescimoPercentual: 144.2857,
+      comissaoNormalPercentual: 3,
+      adicionalVendedorPercentual: 0,
+      comissaoFinalPercentual: 3,
+      comissaoValor: 27,
+    },
+  ],
   despesasIPI: 50,
   despesasIcmsSt: 30,
   despesasFreteSeguroOutras: 20,
@@ -102,6 +134,27 @@ const RESULTADO: ResultadoComissionamento = {
   pedidosSemVendedorExcluidos: 0,
   numerosPedidosSemVendedor: [],
   numerosPedidosAnterioresNaoLocalizados: [],
+  excecoesRevisaoManual: [],
+  excecoesApuracao: [
+    {
+      codigoPedido: 2,
+      numeroPedido: '300',
+      codigoVendedor: 42,
+      nomeVendedor: 'Maria',
+      nomeCliente: 'Cliente Alfa',
+      valorProdutos: 500,
+      problemas: [{ codigoProduto: 7, codigo: 'PA7', descricao: 'Produto 7', tabela: '003 — TABELA DE VENDA - 07/26', motivo: 'PRECO_TABELA_AUSENTE', detalhe: 'O produto está sem Preço da Tabela (ausente ou zero) na tabela 003 — TABELA DE VENDA - 07/26.' }],
+    },
+    {
+      codigoPedido: 3,
+      numeroPedido: '301',
+      codigoVendedor: 99,
+      nomeVendedor: 'Outro',
+      nomeCliente: 'Cliente Beta',
+      valorProdutos: 800,
+      problemas: [{ codigoProduto: 8, codigo: 'PA8', descricao: 'Produto 8', tabela: null, motivo: 'TABELA_NAO_IDENTIFICADA', detalhe: 'O produto não consta em nenhuma tabela de preços ativa e o item não indica uma tabela válida.' }],
+    },
+  ],
 };
 
 const gerarRelatorioMock = vi.fn(async () => structuredClone(RESULTADO));
@@ -149,6 +202,13 @@ describe('API do relatório de comissionamento — margem só para administrador
       const [linha] = corpo.linhas as Array<Record<string, unknown>>;
       for (const campo of CAMPOS_MARGEM_RESTRITOS) expect(linha, campo).not.toHaveProperty(campo);
       expect(texto.replace('"margemVisivel":false', '')).not.toMatch(/margem/i);
+      // Composição interna da comissão por tabela (Preço da Tabela, custo de referência, multiplicador) nunca sai.
+      expect(linha).not.toHaveProperty('composicaoItens');
+      expect(texto).not.toMatch(/precoTabela|custoReferencia|multiplicador|acrescimo|referencia|ConsultadoEm|apuradoEm|PRECO_ATUAL|77[.,]7777|40[.,]9356/i);
+      expect(linha!.baseComissao).toBe(900);
+      // Exceções de apuração: produto, tabela e motivo (sem preço); vendedor só vê as próprias.
+      const excecoes = corpo.excecoesApuracao as Array<{ numeroPedido: string }>;
+      expect(excecoes.map((e) => e.numeroPedido)).toEqual(papel === 'vendedor' ? ['300'] : ['300', '301']);
 
       // Comissão, parcelas, valores e resumo preservados, idênticos ao do administrador.
       expect(linha!.comissaoTotal).toBe(27);
@@ -179,21 +239,30 @@ describe('API do relatório de comissionamento — margem só para administrador
   });
 });
 
-describe('tela e PDF (impressão da mesma tabela) — coluna Margem', () => {
-  it('administrador vê a coluna Margem', () => {
-    expect(titulosTabelaComissionamento(true)).toContain('Margem');
+describe('tela e PDF (impressão da mesma tabela) — coluna "Venda após despesas (%)" (antiga "Margem")', () => {
+  it('administrador vê a coluna com o rótulo novo, na mesma posição', () => {
+    expect(titulosTabelaComissionamento(true)[4]).toBe('Venda após despesas (%)');
+    expect(titulosTabelaComissionamento(true)).not.toContain('Margem');
     expect(titulosTabelaComissionamento(true)).toHaveLength(11);
   });
 
-  it('demais papéis: coluna Margem removida, sem coluna vazia (demais na mesma ordem)', () => {
+  it('demais papéis: coluna removida, sem coluna vazia (demais na mesma ordem)', () => {
     const titulos = titulosTabelaComissionamento(false);
-    expect(titulos).not.toContain('Margem');
-    expect(titulos).toEqual(titulosTabelaComissionamento(true).filter((t) => t !== 'Margem'));
+    expect(titulos).not.toContain('Venda após despesas (%)');
+    expect(titulos).toEqual(titulosTabelaComissionamento(true).filter((t) => t !== 'Venda após despesas (%)'));
+  });
+
+  it('detalhe expandido e Financeiro usam os rótulos novos, só nos trechos de administrador', () => {
+    const codigo = readFileSync('public-src/relatorios.ts', 'utf8');
+    expect(codigo).toContain("par('Percentual da venda após despesas — informativo', formatarPercentual(linha.margemComissionamentoPercentual");
+    expect(codigo).not.toContain('Margem de comissionamento (informativa)');
+    expect(codigo).toContain('...(dados.margemVisivel ? [ROTULO_COLUNA_VENDA_APOS_DESPESAS] : [])');
   });
 
   it('detalhe expandido e colSpan seguem o mesmo flag vindo do servidor', () => {
     const codigo = readFileSync('public-src/relatorios.ts', 'utf8');
     expect(codigo).toMatch(/if \(margemVisivel && linha\.vendedorComissaoFixaPercentual === undefined\)/);
+    expect(codigo).toMatch(/if \(margemVisivel && linha\.composicaoItens !== undefined && linha\.composicaoItens\.length > 0\)/);
     expect(codigo).toMatch(/if \(margemVisivel\) tr\.appendChild\(celula\(formatarPercentual\(linha\.margemComissionamentoPercentual/);
     expect(codigo).toMatch(/td\.colSpan = totalColunas/);
     expect(codigo).toMatch(/renderizarTabelaComissionamento\(dados\.linhas, dados\.margemVisivel === true\)/);

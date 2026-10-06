@@ -118,19 +118,53 @@ interface LinhaComissionamento extends Omit<LinhaRelatorio, CamposCustoRelatorio
   datasFaturamento?: string[];
   valorFaturado: number;
   saldoAFaturar: number;
-  /** Presente quando o VENDEDOR tem comissão fixa própria (ex.: Renato Pinto = 4%) — ignora margem e família por completo. */
+  /** Presente quando o VENDEDOR tem comissão fixa própria (ex.: Renato Pinto = 4%) — ignora a tabela de preços por completo. */
   vendedorComissaoFixaPercentual?: number;
-  /** Presente quando o pedido tem item(ns) de família com comissão fixa (ex.: CTO Promocional) misturados com outros produtos. */
-  segregacaoComissaoFixa?: {
-    nomeFamilia: string;
-    percentualFixo: number;
-    /** +1,00 quando o vendedor é especial (Sandro/Horacio/Roberto Rocha) — já somado em `comissaoValorFixa`. */
-    adicionalVendedorPercentual: number;
-    receitaComissaoFixa: number;
-    comissaoValorFixa: number;
-    receitaNormal: number;
-    comissaoValorNormal: number;
-  };
+  /** Valor dos produtos após desconto — base da comissão (Renato Pinto: valor dos produtos). */
+  baseComissao: number;
+  /** Composição por item pela tabela de preços — o servidor só envia ao administrador. */
+  composicaoItens?: ComposicaoItemComissao[];
+}
+
+interface ComposicaoItemComissao {
+  codigo: string;
+  descricao: string;
+  quantidade: number;
+  tabelaId: number;
+  tabelaCodigo: string;
+  tabelaNome: string;
+  origemTabela: 'ID_INTERNO' | 'CODIGO_COMERCIAL' | 'UNICA_TABELA_DO_PRODUTO';
+  referencia: 'PRECO_ATUAL_TABELA_ATIVA' | 'COMISSAO_FIXA_DA_TABELA';
+  precoConsultadoEm: string | null;
+  apuradoEm: string;
+  regra: 'FIXA' | 'MULTIPLICADOR';
+  baseComissao: number;
+  precoUnitarioVendido: number;
+  precoTabela: number | null;
+  multiplicadorTabela: number | null;
+  custoReferencia: number | null;
+  multiplicadorRealizado: number | null;
+  acrescimoPercentual: number | null;
+  comissaoNormalPercentual: number;
+  adicionalVendedorPercentual: number;
+  comissaoFinalPercentual: number;
+  comissaoValor: number;
+}
+
+/** Pedido fora da apuração automática (tabela, regra ou preço) — sem preço nem custo. */
+interface ExcecaoApuracaoComissao {
+  numeroPedido: string;
+  nomeVendedor: string | null;
+  problemas: Array<{ codigoProduto: number; codigo: string; tabela: string | null; detalhe: string }>;
+}
+
+/** Aviso único com pedido, produto, tabela e motivo — os pedidos listados não entram nos totais. */
+export function descreverExcecoesApuracao(excecoes: readonly ExcecaoApuracaoComissao[]): string {
+  const itens = excecoes.map((e) => {
+    const problemas = e.problemas.map((p) => `${p.codigo || p.codigoProduto} (tabela ${p.tabela ?? 'não identificada'}): ${p.detalhe}`);
+    return `pedido nº ${e.numeroPedido} (vendedor ${e.nomeVendedor ?? 'não identificado'}) — ${problemas.join('; ')}`;
+  });
+  return `${excecoes.length} pedido(s) fora da apuração automática de comissão, sem valor calculado: ${itens.join(' | ')}.`;
 }
 
 interface ResumoRelatorio {
@@ -173,6 +207,8 @@ interface RespostaComissionamento {
   numerosPedidosAnterioresNaoLocalizados?: string[];
   /** Registros cancelados com título ativo/recebido — fora do cálculo, para revisão manual. */
   excecoesRevisaoManual?: ExcecaoRevisaoManual[];
+  /** Pedidos sem tabela, regra ou preço válidos — fora da apuração automática e dos totais. */
+  excecoesApuracao?: ExcecaoApuracaoComissao[];
 }
 
 interface ExcecaoRevisaoManual {
@@ -224,16 +260,20 @@ function el<T extends HTMLElement>(id: string): T {
 }
 
 /**
- * Colunas da tabela de Comissionamento. Sem "Margem" para quem não é administrador — a coluna
+ * Colunas da tabela de Comissionamento. Sem "Venda após despesas (%)" (o antigo indicador "margem
+ * de comissionamento", só informativo desde 2026-10-06) para quem não é administrador — a coluna
  * some de verdade (tela e PDF, que é a impressão desta mesma tabela), em vez de ficar vazia.
  */
+/** Mesmo indicador de `margemComissionamentoPercentual` (venda − despesas) ÷ venda — não define a comissão. */
+export const ROTULO_COLUNA_VENDA_APOS_DESPESAS = 'Venda após despesas (%)';
+
 export function titulosTabelaComissionamento(margemVisivel: boolean): string[] {
   return [
     'Nº',
     'Cliente',
     'Vendedor',
     'Data de faturamento',
-    ...(margemVisivel ? ['Margem'] : []),
+    ...(margemVisivel ? [ROTULO_COLUNA_VENDA_APOS_DESPESAS] : []),
     'Comissão %',
     'Valor da venda',
     'Comissão total',
@@ -307,7 +347,8 @@ export function inicializarRelatorios(): { ativar: () => void } {
   const areaVazia = el<HTMLElement>('relatorio-area-vazia');
   const textoVazio = el<HTMLElement>('relatorio-texto-vazio');
   const areaErro = el<HTMLElement>('relatorio-area-erro');
-  const indicadorCarregamento = el<HTMLElement>('indicador-carregamento');
+  // Indicador próprio dos Relatórios (logo ETK 3D com luz), no mesmo local do "Carregando…" da Consulta.
+  const indicadorCarregamento = el<HTMLElement>('relatorio-carregamento');
   const botaoBaixarPdf = el<HTMLButtonElement>('botao-baixar-pdf-comissao');
   const botaoBaixarExcel = el<HTMLButtonElement>('botao-baixar-excel-comissao');
   const modalLinhaFundo = el<HTMLElement>('relatorio-modal-linha-fundo');
@@ -486,27 +527,29 @@ export function inicializarRelatorios(): { ativar: () => void } {
     if (linha.vendedorComissaoFixaPercentual !== undefined) {
       const aviso = document.createElement('p');
       aviso.className = 'impostos-embutidos-titulo';
-      aviso.textContent = `Vendedor com comissão fixa: ${linha.vendedorComissaoFixaPercentual}% sobre todo o pedido — ignora margem de comissionamento e família de produto.`;
+      aviso.textContent = `Vendedor com comissão fixa: ${linha.vendedorComissaoFixaPercentual}% sobre todo o pedido — ignora a tabela de preços.`;
       td.appendChild(aviso);
     }
 
     par('Valor da venda (nota)', formatarMoeda(linha.valorBruto));
     par('Valor dos produtos', formatarMoeda(linha.receitaTotal));
-    // Despesas/resultado/margem só para administrador (o servidor nem envia esses campos aos demais papéis).
+    // Despesas/resultado/margem só para administrador (o servidor nem envia esses campos aos demais
+    // papéis). Desde 2026-10-06 a margem é apenas informativa — a comissão vem da tabela de preços.
     if (margemVisivel && linha.vendedorComissaoFixaPercentual === undefined) {
       par('Despesas — IPI', formatarMoeda(linha.despesasIPI ?? 0));
       par('Despesas — ICMS-ST', formatarMoeda(linha.despesasIcmsSt ?? 0));
       par('Despesas — frete/seguro/outras', formatarMoeda(linha.despesasFreteSeguroOutras ?? 0));
       par('Resultado após despesas', formatarMoeda(linha.resultadoAposDespesas ?? 0));
-      par(
-        linha.segregacaoComissaoFixa ? 'Margem de comissionamento (parte normal)' : 'Margem de comissionamento',
-        formatarPercentual(linha.margemComissionamentoPercentual ?? null),
-      );
+      par('Percentual da venda após despesas — informativo', formatarPercentual(linha.margemComissionamentoPercentual ?? null));
     }
-    par(linha.segregacaoComissaoFixa ? 'Comissão normal (parte normal)' : 'Comissão normal', formatarPercentual(linha.comissaoNormalPercentual));
+    const itensComTaxasDiferentes = new Set((linha.composicaoItens ?? []).map((i) => i.comissaoFinalPercentual)).size > 1;
+    par(itensComTaxasDiferentes ? 'Comissão normal (média ponderada dos itens)' : 'Comissão normal', formatarPercentual(linha.comissaoNormalPercentual));
     par('Adicional do vendedor', formatarPercentual(linha.adicionalVendedorPercentual));
-    par('Comissão final', formatarPercentual(linha.comissaoFinalPercentual));
-    par('Base da comissão (valor dos produtos)', formatarMoeda(linha.receitaTotal));
+    par(itensComTaxasDiferentes ? 'Comissão final (efetiva do pedido)' : 'Comissão final', formatarPercentual(linha.comissaoFinalPercentual));
+    par(
+      linha.vendedorComissaoFixaPercentual !== undefined ? 'Base da comissão (valor dos produtos)' : 'Base da comissão (produtos após desconto)',
+      formatarMoeda(linha.baseComissao),
+    );
     par('Valor da comissão', formatarMoeda(linha.comissaoTotal));
     td.appendChild(detalheCalculo);
 
@@ -520,39 +563,64 @@ export function inicializarRelatorios(): { ativar: () => void } {
       td.appendChild(saldo);
     }
 
-    if (linha.segregacaoComissaoFixa) {
-      const segTitulo = document.createElement('p');
-      segTitulo.className = 'impostos-embutidos-titulo';
-      const percentualFixoTotal = linha.segregacaoComissaoFixa.percentualFixo + linha.segregacaoComissaoFixa.adicionalVendedorPercentual;
-      segTitulo.textContent =
-        linha.segregacaoComissaoFixa.adicionalVendedorPercentual > 0
-          ? `Pedido misto: itens da família "${linha.segregacaoComissaoFixa.nomeFamilia}" foram segregados e recebem comissão fixa de ${linha.segregacaoComissaoFixa.percentualFixo}% + ${linha.segregacaoComissaoFixa.adicionalVendedorPercentual}% de adicional do vendedor = ${percentualFixoTotal}% — o restante do pedido segue a regra normal por margem.`
-          : `Pedido misto: itens da família "${linha.segregacaoComissaoFixa.nomeFamilia}" foram segregados e recebem comissão fixa de ${linha.segregacaoComissaoFixa.percentualFixo}% — o restante do pedido segue a regra normal por margem.`;
-      td.appendChild(segTitulo);
-
-      const detalheSeg = document.createElement('div');
-      detalheSeg.className = 'detalhe-calculo-comissao detalhe-impostos-embutidos';
-      const parSeg = (rotulo: string, valor: string) => {
-        const item = document.createElement('div');
-        item.className = 'detalhe-item';
-        const spanRotulo = document.createElement('span');
-        spanRotulo.className = 'detalhe-item-rotulo';
-        spanRotulo.textContent = rotulo;
-        const spanValor = document.createElement('span');
-        spanValor.className = 'detalhe-item-valor';
-        spanValor.textContent = valor;
-        item.appendChild(spanRotulo);
-        item.appendChild(spanValor);
-        detalheSeg.appendChild(item);
-      };
-      parSeg('Receita — parte normal', formatarMoeda(linha.segregacaoComissaoFixa.receitaNormal));
-      parSeg('Comissão — parte normal', formatarMoeda(linha.segregacaoComissaoFixa.comissaoValorNormal));
-      parSeg(`Receita — ${linha.segregacaoComissaoFixa.nomeFamilia}`, formatarMoeda(linha.segregacaoComissaoFixa.receitaComissaoFixa));
-      parSeg(
-        `Comissão — ${linha.segregacaoComissaoFixa.nomeFamilia} (${linha.segregacaoComissaoFixa.percentualFixo}% fixo${linha.segregacaoComissaoFixa.adicionalVendedorPercentual > 0 ? ` + ${linha.segregacaoComissaoFixa.adicionalVendedorPercentual}% adicional` : ''})`,
-        formatarMoeda(linha.segregacaoComissaoFixa.comissaoValorFixa),
-      );
-      td.appendChild(detalheSeg);
+    // Composição por item (tabela de preços) — só administrador; o servidor nem envia aos demais.
+    if (margemVisivel && linha.composicaoItens !== undefined && linha.composicaoItens.length > 0) {
+      const tituloItens = document.createElement('p');
+      tituloItens.className = 'impostos-embutidos-titulo';
+      const consultas = [...new Set(linha.composicaoItens.map((i) => i.precoConsultadoEm).filter((d): d is string => d !== null))];
+      const momento = consultas.length > 0 ? consultas.map((d) => new Date(d).toLocaleString('pt-BR')).join(', ') : 'não informado';
+      tituloItens.textContent =
+        `Comissão por item — referência: PREÇO ATUAL da tabela ativa (consultado em ${momento}), não preço histórico comprovado. ` +
+        'Custo de referência = Preço da Tabela ÷ multiplicador da tabela.';
+      td.appendChild(tituloItens);
+      const tabelaItens = document.createElement('table');
+      tabelaItens.className = 'tabela-parcelas';
+      const cabecalhoItens = document.createElement('tr');
+      for (const titulo of ['Produto', 'Tabela', 'Qtd.', 'Preço vendido', 'Preço da Tabela', 'Custo de referência', 'Multiplicador', 'Acréscimo', 'Comissão normal', 'Adicional', 'Base', 'Comissão']) {
+        const th = document.createElement('th');
+        th.textContent = titulo;
+        cabecalhoItens.appendChild(th);
+      }
+      const theadItens = document.createElement('thead');
+      theadItens.appendChild(cabecalhoItens);
+      tabelaItens.appendChild(theadItens);
+      const tbodyItens = document.createElement('tbody');
+      const numero = (valor: number | null, casas: number) =>
+        valor === null ? '—' : valor.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+      for (const item of linha.composicaoItens) {
+        const tri = document.createElement('tr');
+        const tdProduto = celula(item.codigo);
+        tdProduto.title = item.descricao;
+        tri.appendChild(tdProduto);
+        const tdTabela = celula(item.tabelaCodigo);
+        tdTabela.title =
+          `${item.tabelaNome} (ID ${item.tabelaId}) — ` +
+          (item.origemTabela === 'ID_INTERNO'
+            ? 'indicada no item do pedido'
+            : item.origemTabela === 'CODIGO_COMERCIAL'
+              ? 'código comercial indicado no item'
+              : 'única tabela ativa que contém o produto (o item não indica a tabela)');
+        tri.appendChild(tdTabela);
+        tri.appendChild(celula(numero(item.quantidade, 2)));
+        tri.appendChild(celula(formatarMoeda(item.precoUnitarioVendido)));
+        if (item.regra === 'FIXA') {
+          const tdFixa = celula('Comissão fixa da tabela');
+          tdFixa.colSpan = 4;
+          tri.appendChild(tdFixa);
+        } else {
+          tri.appendChild(celula(formatarMoeda(item.precoTabela)));
+          tri.appendChild(celula(`${formatarMoeda(item.custoReferencia)} (÷ ${numero(item.multiplicadorTabela, 2)})`));
+          tri.appendChild(celula(numero(item.multiplicadorRealizado, 4)));
+          tri.appendChild(celula(formatarPercentual(item.acrescimoPercentual)));
+        }
+        tri.appendChild(celula(formatarPercentual(item.comissaoNormalPercentual)));
+        tri.appendChild(celula(formatarPercentual(item.adicionalVendedorPercentual)));
+        tri.appendChild(celula(formatarMoeda(item.baseComissao)));
+        tri.appendChild(celula(formatarMoeda(item.comissaoValor)));
+        tbodyItens.appendChild(tri);
+      }
+      tabelaItens.appendChild(tbodyItens);
+      td.appendChild(tabelaItens);
     }
 
     const impostosEmbutidosTitulo = document.createElement('p');
@@ -689,23 +757,16 @@ export function inicializarRelatorios(): { ativar: () => void } {
       tdFaturamento.title = faturamento.titulo;
       tr.appendChild(tdFaturamento);
       if (margemVisivel) tr.appendChild(celula(formatarPercentual(linha.margemComissionamentoPercentual ?? null), 'col-num'));
-      // Em pedidos mistos (comissão fixa numa família + regra normal no resto), mostra a taxa EFETIVA
-      // (comissão total ÷ receita) na coluna — comissaoFinalPercentual sozinho só reflete a parte normal.
-      const percentualExibido = linha.segregacaoComissaoFixa
-        ? linha.receitaTotal === 0
-          ? linha.comissaoFinalPercentual
-          : Math.round((linha.comissaoTotal / linha.receitaTotal) * 10000) / 100
-        : linha.comissaoFinalPercentual;
-      const tdFaixa = celula(`${percentualExibido}%`, 'col-num');
+      // Percentual EFETIVO do pedido (comissão total ÷ base) — com itens de taxas diferentes é a
+      // média ponderada; cada item foi calculado com o próprio percentual, sem arredondar.
+      const tdFaixa = celula(formatarPercentual(linha.comissaoFinalPercentual), 'col-num');
       if (linha.vendedorComissaoFixaPercentual !== undefined) {
-        tdFaixa.title = `Comissão fixa do vendedor: ${linha.vendedorComissaoFixaPercentual}% (ignora margem e família de produto)`;
-      } else if (linha.segregacaoComissaoFixa) {
-        tdFaixa.title = `Pedido misto: ${linha.comissaoNormalPercentual}% na parte normal (+ ${linha.adicionalVendedorPercentual}% adicional) e ${linha.segregacaoComissaoFixa.percentualFixo}% fixo em "${linha.segregacaoComissaoFixa.nomeFamilia}" — % exibido é a média ponderada.`;
+        tdFaixa.title = `Comissão fixa do vendedor: ${formatarPercentual(linha.vendedorComissaoFixaPercentual)} (ignora a tabela de preços)`;
       } else {
         tdFaixa.title =
           linha.adicionalVendedorPercentual > 0
-            ? `Comissão normal ${linha.comissaoNormalPercentual}% + adicional do vendedor ${linha.adicionalVendedorPercentual}%`
-            : `Comissão normal ${linha.comissaoNormalPercentual}% (sem adicional)`;
+            ? `Comissão normal ${formatarPercentual(linha.comissaoNormalPercentual)} + adicional do vendedor ${formatarPercentual(linha.adicionalVendedorPercentual)} — calculada item a item pela tabela de preços`
+            : `Comissão normal ${formatarPercentual(linha.comissaoNormalPercentual)} (sem adicional) — calculada item a item pela tabela de preços`;
       }
       tr.appendChild(tdFaixa);
       // Pedido anterior: venda e comissão total aparecem para referência, mas não somam no período.
@@ -740,7 +801,7 @@ export function inicializarRelatorios(): { ativar: () => void } {
     indicadores.appendChild(montarIndicador('Comissão a pagar', formatarMoeda(dados.resumo.comissaoAPagar), true));
     indicadores.hidden = false;
     const titulos = ['Pedido', 'Cliente', 'Vendedor', 'Nota fiscal', 'Parcela', 'Data de recebimento',
-      ...(dados.margemVisivel ? ['Margem'] : []), 'Comissão %', 'Valor recebido', 'Comissão a pagar'];
+      ...(dados.margemVisivel ? [ROTULO_COLUNA_VENDA_APOS_DESPESAS] : []), 'Comissão %', 'Valor recebido', 'Comissão a pagar'];
     cabecalhoTabela.textContent = '';
     const cabecalho = document.createElement('tr');
     for (const titulo of titulos) {
@@ -824,6 +885,8 @@ export function inicializarRelatorios(): { ativar: () => void } {
         }
         const excecoes = dados.excecoesRevisaoManual ?? [];
         if (excecoes.length > 0) avisos.push(descreverExcecoesRevisaoManual(excecoes));
+        const excecoesApuracao = dados.excecoesApuracao ?? [];
+        if (excecoesApuracao.length > 0) avisos.push(descreverExcecoesApuracao(excecoesApuracao));
         const qtdAnteriores = dados.linhas.filter((l) => l.origem === 'PARCELA_PERIODO_ANTERIOR').length;
         if (qtdAnteriores > 0) {
           avisos.push(

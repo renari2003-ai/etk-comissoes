@@ -2,7 +2,7 @@
 // VERSAO: altere a cada deploy com mudança de frontend. O navegador só detecta nova versão
 // quando o conteúdo deste arquivo muda — aí o SW novo instala, fica em espera e a tela mostra
 // "Nova atualização disponível" / "ATUALIZAR AGORA" (ver index.html).
-const VERSAO = '2026-10-05.1';
+const VERSAO = '2026-10-06.1';
 const CACHE_NAME = `etk-comissoes-${VERSAO}`;
 const ASSETS_TO_CACHE = [
   '/index.html',
@@ -18,6 +18,7 @@ const ASSETS_TO_CACHE = [
   '/icon-512.png',
   '/apple-touch-icon.png',
   '/logos/logos-etk-lado-a-lado.png',
+  '/logos/logo-etk-3d.png',
   '/manifest.json'
 ];
 

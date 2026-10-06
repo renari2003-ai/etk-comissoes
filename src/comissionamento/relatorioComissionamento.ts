@@ -1,12 +1,16 @@
 import {
   calcularComissaoTotal,
-  calcularComissaoVendedor,
-  comissaoFixaDaFamilia,
   comissaoFixaDoVendedor,
   distribuirComissaoPorParcelas,
   ehVendedorComAdicional,
   type ParcelaComissao,
 } from './calcularComissao.js';
+import {
+  apurarComissaoPorTabela,
+  ErroApuracaoComissao,
+  type ComposicaoItemComissao,
+  type ExcecaoApuracaoComissao,
+} from './comissaoPorTabela.js';
 import {
   calcularMargemComissionamento,
   type ImpostosEmbutidos,
@@ -26,8 +30,12 @@ import {
 } from '../relatorio/relatorioVendas.js';
 import type { PedidoOmie } from '../calculo/tipos.js';
 import type { TituloContaReceber } from '../omie/cliente.js';
+import type { TabelaPreco } from '../omie/tabelasPreco.js';
+import { memorizarCadastrosDaGeracao } from './memoCadastros.js';
 
 export interface ClienteOmieParaComissionamento extends ClienteOmieParaRelatorioAgregado {
+  /** Somente leitura (`ListarTabelasPreco` + `ListarTabelaItens`) — origem do percentual de comissão por item. */
+  listarTabelasPreco(): Promise<TabelaPreco[]>;
   listarContasReceberPorVendedor(codigoVendedor: number): Promise<TituloContaReceber[]>;
   /** Somente leitura (`ConsultarPedido`) — usado só para os pedidos de períodos anteriores trazidos por parcela no período. */
   consultarPedido(identificador: { numeroPedido?: string; codigoPedido?: number }): Promise<PedidoOmie>;
@@ -46,55 +54,36 @@ export interface FiltrosComissionamento {
   codigoVendedor?: number;
 }
 
-/**
- * Presente apenas quando o pedido tem item(ns) de família com comissão fixa
- * (`FAMILIAS_COMISSAO_FIXA`, ver `calcularComissao.ts`) MISTURADOS com
- * produtos de outras famílias no mesmo pedido — decisão de negócio de
- * 2026-09-10: os itens da família são segregados do cálculo por margem; a
- * comissão sobre eles usa o percentual fixo da família, e o restante do
- * pedido segue a regra normal (margem + adicional do vendedor). Como a Omie
- * não discrimina impostos/frete por item, a parte "normal" reparte essas
- * despesas proporcionalmente à participação de cada grupo na receita do
- * pedido — a única forma de segregar a margem sem inventar dado que a Omie
- * não fornece por item.
- *
- * O adicional de vendedor especial (Sandro/Horacio/Roberto Rocha, +1%) SOMA
- * sobre a comissão fixa da família também — confirmado com o usuário em
- * 2026-09-10 (a comissão fixa "trava" o percentual base, mas nunca suprime
- * o adicional do vendedor).
- */
-export interface SegregacaoComissaoFixa {
-  nomeFamilia: string;
-  /** Percentual BASE da família (ex.: 1% para CTO Promocional), sem o adicional do vendedor. */
-  percentualFixo: number;
-  /** +1,00 quando o vendedor é especial (`ehVendedorComAdicional`), senão 0 — já somado em `comissaoValorFixa`. */
-  adicionalVendedorPercentual: number;
-  receitaComissaoFixa: number;
-  /** Valor da comissão sobre a parte fixa, já incluindo o adicional do vendedor quando aplicável. */
-  comissaoValorFixa: number;
-  receitaNormal: number;
-  comissaoValorNormal: number;
-}
-
 export interface LinhaComissionamento extends LinhaRelatorio {
-  /** total_pedido.valor_IPI — imposto somado "por fora" do valor dos produtos. Quando há `segregacaoComissaoFixa`, refere-se só à parte "normal" do pedido (repartição proporcional). */
+  /** total_pedido.valor_IPI — imposto somado "por fora" do valor dos produtos. */
   despesasIPI: number;
   /** total_pedido.valor_st (ICMS-ST/Substituição Tributária) — também somado "por fora". */
   despesasIcmsSt: number;
   despesasFreteSeguroOutras: number;
   despesasTotal: number;
   resultadoAposDespesas: number;
-  /** Margem de comissionamento = (valor da venda − despesas) ÷ valor da venda — NUNCA usa custo de produto. Distinta de `margemVendaPercentual` (métrica de custo, apenas exibida para análise). Quando há `segregacaoComissaoFixa`, é a margem só da parte "normal" do pedido. */
+  /** Margem de comissionamento = (valor da venda − despesas) ÷ valor da venda — NUNCA usa custo de produto. Desde 2026-10-06 é só INFORMATIVA (administrador): a comissão vem da tabela de preços, por item (`composicaoItens`). */
   margemComissionamentoPercentual: number | null;
   /** ICMS/PIS/COFINS/IBS/CBS já embutidos no valor dos produtos — apenas informativo, nunca subtraído de novo (ver `calcularMargemComissionamento.ts`). */
   impostosEmbutidos: ImpostosEmbutidos;
-  /** Determinada exclusivamente pela margem de comissionamento — piso 1%, teto 3% (seção 1/2 da regra de 2026-09-08). Quando `vendedorComissaoFixaPercentual` está presente, é igual a ele (comissão fixa do vendedor). */
+  /**
+   * Comissão normal EFETIVA do pedido = Σ (base do item × comissão normal do item) ÷ base da
+   * comissão — com itens de taxas diferentes é a média ponderada (exibição; arredondada só na
+   * saída, cada item é calculado sem arredondar). Igual ao fixo do vendedor quando
+   * `vendedorComissaoFixaPercentual` está presente.
+   */
   comissaoNormalPercentual: number;
-  /** +1,00 quando o vendedor está na lista de vendedores com adicional (`VENDEDORES_COM_ADICIONAL`), senão 0 (seção 3). Sempre 0 quando `vendedorComissaoFixaPercentual` está presente — a comissão fixa DO VENDEDOR (ex.: Renato Pinto) nunca recebe adicional, mas a comissão fixa DA FAMÍLIA (`segregacaoComissaoFixa`) recebe normalmente. */
+  /** +1,00 quando o vendedor está em `VENDEDORES_COM_ADICIONAL`, senão 0 (seção 3) — somado em cada item, inclusive nos da tabela 001. Sempre 0 com `vendedorComissaoFixaPercentual` (Renato Pinto nunca recebe adicional). */
   adicionalVendedorPercentual: number;
-  /** comissaoNormalPercentual + adicionalVendedorPercentual — percentual efetivamente aplicado à base da comissão; pode chegar a 4% para vendedores com adicional (seção 8: nunca limitado de novo em 3%). */
+  /** Comissão total ÷ base da comissão × 100 — percentual efetivo do pedido; pode chegar a 4% com adicional (seção 8: nunca limitado de novo em 3%). */
   comissaoFinalPercentual: number;
-  /** Base da comissão = valor total dos produtos (`receitaTotal`), NUNCA o valor bruto da nota nem o custo do produto (decisão de negócio de 2026-09-08). Quando há segregação, é a soma das duas partes (normal + comissão fixa). */
+  /**
+   * Base da comissão = Σ (valor de mercadoria − desconto) dos itens (regra de 2026-10-06: a Omie
+   * devolve `valor_mercadoria` ANTES do desconto). Para vendedor com comissão fixa (Renato Pinto)
+   * continua sendo o valor dos produtos (`receitaTotal`), como sempre foi.
+   */
+  baseComissao: number;
+  /** Soma das comissões dos itens (sem arredondamento intermediário). */
   comissaoTotal: number;
   parcelas: ParcelaComissao[];
   comissaoLiberada: number;
@@ -122,12 +111,16 @@ export interface LinhaComissionamento extends LinhaRelatorio {
   saldoAFaturar: number;
   /**
    * Presente quando o VENDEDOR tem comissão fixa própria (`VENDEDORES_COMISSAO_FIXA`,
-   * ex.: Renato Pinto = 4%) — prioridade máxima, ignora margem e família do
-   * produto por completo (regra de 2026-09-10).
+   * ex.: Renato Pinto = 4%) — prioridade máxima, ignora a tabela de preços por
+   * completo (regra de 2026-09-10).
    */
   vendedorComissaoFixaPercentual?: number;
-  /** Ver `SegregacaoComissaoFixa`. Nunca presente ao mesmo tempo que `vendedorComissaoFixaPercentual` (a regra do vendedor tem prioridade e ignora a família). */
-  segregacaoComissaoFixa?: SegregacaoComissaoFixa;
+  /**
+   * Composição por item (tabela, Preço da Tabela, custo de referência, multiplicador, acréscimo,
+   * comissão) — EXCLUSIVA de administrador (`visibilidadeMargem.ts`). Ausente para vendedor com
+   * comissão fixa.
+   */
+  composicaoItens?: ComposicaoItemComissao[];
 }
 
 export interface ResumoComissionamento {
@@ -160,6 +153,11 @@ export interface ResultadoComissionamento {
    * recebido) — fora do cálculo automático e listados para revisão manual (regra de 2026-09-28).
    */
   excecoesRevisaoManual: ExcecaoRevisaoManual[];
+  /**
+   * Pedidos elegíveis retirados da apuração automática por tabela não identificável, inativa,
+   * ambígua ou sem regra, ou preço/dados inválidos (regra de 2026-10-06) — nunca somados com comissão zero nem pela regra antiga.
+   */
+  excecoesApuracao: ExcecaoApuracaoComissao[];
 }
 
 /** "dd/mm/aaaa" → aaaammdd (número comparável); `null` se o texto não for uma data nesse formato. */
@@ -191,8 +189,24 @@ function arredondarDinheiroLocal(valor: number): number {
   return Math.round((valor + Number.EPSILON) * 100) / 100;
 }
 
-function repartirProporcional(valor: number, fracao: number): number {
-  return valor * fracao;
+/** Arredondamento só na SAÍDA (dinheiro 2 casas; preço/custo 4; percentuais/multiplicadores 6) — o cálculo usa os valores brutos. */
+function arredondarComposicao(item: ComposicaoItemComissao): ComposicaoItemComissao {
+  const casas = (valor: number, n: number) => Math.round((valor + Number.EPSILON) * 10 ** n) / 10 ** n;
+  const casasOuNulo = (valor: number | null, n: number) => (valor === null ? null : casas(valor, n));
+  return {
+    ...item,
+    valorMercadoria: arredondarDinheiroLocal(item.valorMercadoria),
+    valorDesconto: arredondarDinheiroLocal(item.valorDesconto),
+    baseComissao: arredondarDinheiroLocal(item.baseComissao),
+    precoUnitarioVendido: casas(item.precoUnitarioVendido, 4),
+    precoTabela: casasOuNulo(item.precoTabela, 4),
+    custoReferencia: casasOuNulo(item.custoReferencia, 4),
+    multiplicadorRealizado: casasOuNulo(item.multiplicadorRealizado, 6),
+    acrescimoPercentual: casasOuNulo(item.acrescimoPercentual, 6),
+    comissaoNormalPercentual: casas(item.comissaoNormalPercentual, 6),
+    comissaoFinalPercentual: casas(item.comissaoFinalPercentual, 6),
+    comissaoValor: arredondarDinheiroLocal(item.comissaoValor),
+  };
 }
 
 function calcularMargemDaLinha(dados: {
@@ -217,148 +231,72 @@ function calcularMargemDaLinha(dados: {
   });
 }
 
-/**
- * Descobre a família (descrição real cadastrada na Omie) de cada produto
- * único presente na lista de itens — cacheada por `ClienteOmie.consultarProduto`,
- * então nunca repete a chamada para o mesmo produto entre pedidos. Falha ao
- * identificar um produto nunca derruba o relatório: ele só fica de fora da
- * segregação por comissão fixa (trata como família desconhecida).
- */
-async function determinarFamiliasDosItens(
-  cliente: ClienteOmieParaComissionamento,
-  itens: ReadonlyArray<{ codigoProduto: number }>,
-): Promise<Map<number, string | null>> {
-  const familiaPorCodigo = new Map<number, string | null>();
-  const codigosUnicos = [...new Set(itens.map((i) => i.codigoProduto))];
-  await Promise.all(
-    codigosUnicos.map(async (codigo) => {
-      try {
-        const produto = await cliente.consultarProduto(codigo);
-        familiaPorCodigo.set(codigo, produto.descricao_familia ?? null);
-      } catch {
-        familiaPorCodigo.set(codigo, null);
-      }
-    }),
-  );
-  return familiaPorCodigo;
-}
-
 interface ResultadoComissaoLinha {
   margem: ResultadoMargemComissionamento;
   comissaoNormalPercentual: number;
   adicionalVendedorPercentual: number;
   comissaoFinalPercentual: number;
+  baseComissao: number;
   comissaoTotal: number;
   vendedorComissaoFixaPercentual?: number;
-  segregacaoComissaoFixa?: SegregacaoComissaoFixa;
+  composicaoItens?: ComposicaoItemComissao[];
 }
 
 /**
- * Calcula a comissão de um pedido aplicando, em ordem de prioridade (regra
- * de negócio de 2026-09-10):
- *   1. Vendedor com comissão fixa (`VENDEDORES_COMISSAO_FIXA`) — ignora
- *      margem e família por completo, aplica sobre o pedido inteiro.
- *   2. Item(ns) de família com comissão fixa (`FAMILIAS_COMISSAO_FIXA`) —
- *      segrega esses itens do cálculo por margem; eles usam o percentual
- *      fixo da família, o resto do pedido segue a regra normal.
- *   3. Regra normal já estabelecida (margem progressiva + adicional do
- *      vendedor especial).
+ * Calcula a comissão de um pedido, em ordem de prioridade:
+ *   1. Vendedor com comissão fixa (`VENDEDORES_COMISSAO_FIXA`, Renato Pinto 4%) — pedido inteiro,
+ *      sem consultar a tabela de preços (regra de 2026-09-10, preservada).
+ *   2. Por item, pela tabela de preços da Omie (regra de 2026-10-06, ver `comissaoPorTabela.ts`):
+ *      tabela 001 = 1% fixo; 002/003 = progressão pelo acréscimo sobre o custo de referência; em
+ *      todos, + adicional do vendedor especial. Comissão do pedido = soma dos itens.
+ * Faltando tabela válida, regra, preço de referência ou dados do item em QUALQUER item, lança `ErroApuracaoComissao` — o
+ * pedido inteiro sai da apuração automática; nunca volta para a regra antiga da margem.
+ * A margem de comissionamento continua calculada só como informação (administrador).
  */
 async function calcularComissaoDaLinha(
   cliente: ClienteOmieParaComissionamento,
   linha: LinhaRelatorio,
 ): Promise<ResultadoComissaoLinha> {
-  const margemPedidoInteiro = calcularMargemDaLinha(linha);
+  const margem = calcularMargemDaLinha(linha);
 
   const comissaoFixaVendedor = comissaoFixaDoVendedor(linha.nomeVendedor);
   if (comissaoFixaVendedor !== null) {
-    const comissaoTotal = calcularComissaoTotal(linha.receitaTotal, comissaoFixaVendedor);
     return {
-      margem: margemPedidoInteiro,
+      margem,
       comissaoNormalPercentual: comissaoFixaVendedor,
       adicionalVendedorPercentual: 0,
       comissaoFinalPercentual: comissaoFixaVendedor,
-      comissaoTotal,
+      baseComissao: linha.receitaTotal,
+      comissaoTotal: calcularComissaoTotal(linha.receitaTotal, comissaoFixaVendedor),
       vendedorComissaoFixaPercentual: comissaoFixaVendedor,
     };
   }
 
-  const familiaPorCodigo = await determinarFamiliasDosItens(cliente, linha.itens);
-  const itensComissaoFixa = linha.itens.filter((item) => comissaoFixaDaFamilia(familiaPorCodigo.get(item.codigoProduto)) !== null);
+  const apuracao = apurarComissaoPorTabela(linha.itens, await cliente.listarTabelasPreco(), linha.nomeVendedor);
+  if (!apuracao.ok) throw new ErroApuracaoComissao(apuracao.problemas);
 
-  if (itensComissaoFixa.length === 0) {
-    const { comissaoNormalPercentual, adicionalVendedorPercentual, comissaoFinalPercentual } = calcularComissaoVendedor(
-      margemPedidoInteiro.margemComissionamentoPercentual ?? 0,
-      linha.nomeVendedor,
-    );
-    const comissaoTotal = calcularComissaoTotal(linha.receitaTotal, comissaoFinalPercentual);
-    return { margem: margemPedidoInteiro, comissaoNormalPercentual, adicionalVendedorPercentual, comissaoFinalPercentual, comissaoTotal };
-  }
-
-  const primeiroItemFixo = itensComissaoFixa[0];
-  const nomeFamilia = (primeiroItemFixo && familiaPorCodigo.get(primeiroItemFixo.codigoProduto)) || 'Comissão fixa';
-  const percentualFixo = comissaoFixaDaFamilia(nomeFamilia) ?? 0;
-  const receitaComissaoFixa = itensComissaoFixa.reduce((soma, item) => soma + item.receita, 0);
-  const receitaNormal = linha.receitaTotal - receitaComissaoFixa;
-
-  if (receitaNormal <= 0) {
-    // Pedido 100% da família com comissão fixa — nada para segregar. Aplica o percentual fixo sobre o
-    // pedido inteiro, MAS o adicional do vendedor especial (Sandro/Horacio/Roberto Rocha) continua somando
-    // por cima — a comissão fixa da família nunca suprime o adicional do vendedor (confirmado 2026-09-10).
-    const adicionalVendedorPercentual = ehVendedorComAdicional(linha.nomeVendedor) ? 1 : 0;
-    const comissaoFinalPercentual = percentualFixo + adicionalVendedorPercentual;
-    const comissaoTotal = calcularComissaoTotal(linha.receitaTotal, comissaoFinalPercentual);
-    return {
-      margem: margemPedidoInteiro,
-      comissaoNormalPercentual: percentualFixo,
-      adicionalVendedorPercentual,
-      comissaoFinalPercentual,
-      comissaoTotal,
-    };
-  }
-
-  const fracaoNormal = receitaNormal / linha.receitaTotal;
-  const margemNormal = calcularMargemDaLinha({
-    valorBruto: repartirProporcional(linha.valorBruto, fracaoNormal),
-    receitaTotal: receitaNormal,
-    valorIPI: repartirProporcional(linha.valorIPI, fracaoNormal),
-    valorIcmsSt: repartirProporcional(linha.valorIcmsSt, fracaoNormal),
-    valorFrete: repartirProporcional(linha.valorFrete, fracaoNormal),
-    valorSeguro: repartirProporcional(linha.valorSeguro, fracaoNormal),
-    outrasDespesasFrete: repartirProporcional(linha.outrasDespesasFrete, fracaoNormal),
-    impostosEmbutidos: {
-      icms: repartirProporcional(linha.impostosEmbutidos.icms, fracaoNormal),
-      pis: repartirProporcional(linha.impostosEmbutidos.pis, fracaoNormal),
-      cofins: repartirProporcional(linha.impostosEmbutidos.cofins, fracaoNormal),
-      ibs: repartirProporcional(linha.impostosEmbutidos.ibs, fracaoNormal),
-      cbs: repartirProporcional(linha.impostosEmbutidos.cbs, fracaoNormal),
-    },
-  });
-
-  const { comissaoNormalPercentual, adicionalVendedorPercentual, comissaoFinalPercentual } = calcularComissaoVendedor(
-    margemNormal.margemComissionamentoPercentual ?? 0,
-    linha.nomeVendedor,
-  );
-  const comissaoValorNormal = calcularComissaoTotal(receitaNormal, comissaoFinalPercentual);
-  // O adicional do vendedor especial soma também sobre a parte de comissão fixa da família — nunca é suprimido pela família (confirmado 2026-09-10).
-  const percentualFixoComAdicional = percentualFixo + adicionalVendedorPercentual;
-  const comissaoValorFixa = calcularComissaoTotal(receitaComissaoFixa, percentualFixoComAdicional);
-
+  const { baseComissao, comissaoTotal, comissaoNormalValor } = apuracao;
   return {
-    margem: margemNormal,
-    comissaoNormalPercentual,
-    adicionalVendedorPercentual,
-    comissaoFinalPercentual,
-    comissaoTotal: comissaoValorNormal + comissaoValorFixa,
-    segregacaoComissaoFixa: {
-      nomeFamilia,
-      percentualFixo,
-      adicionalVendedorPercentual,
-      receitaComissaoFixa: arredondarDinheiroLocal(receitaComissaoFixa),
-      comissaoValorFixa: arredondarDinheiroLocal(comissaoValorFixa),
-      receitaNormal: arredondarDinheiroLocal(receitaNormal),
-      comissaoValorNormal: arredondarDinheiroLocal(comissaoValorNormal),
-    },
+    margem,
+    comissaoNormalPercentual: baseComissao === 0 ? 0 : (comissaoNormalValor / baseComissao) * 100,
+    adicionalVendedorPercentual: ehVendedorComAdicional(linha.nomeVendedor) ? 1 : 0,
+    comissaoFinalPercentual: baseComissao === 0 ? 0 : (comissaoTotal / baseComissao) * 100,
+    baseComissao,
+    comissaoTotal,
+    composicaoItens: apuracao.itens,
+  };
+}
+
+/** Exceção exibível (sem preço nem custo) a partir do erro do cálculo compartilhado. */
+export function excecaoApuracaoDaLinha(linha: LinhaRelatorio, erro: ErroApuracaoComissao): ExcecaoApuracaoComissao {
+  return {
+    codigoPedido: linha.codigoPedido,
+    numeroPedido: linha.numeroPedido,
+    codigoVendedor: linha.codigoVendedor,
+    nomeVendedor: linha.nomeVendedor,
+    nomeCliente: linha.nomeCliente,
+    valorProdutos: arredondarDinheiroLocal(linha.receitaTotal),
+    problemas: erro.problemas,
   };
 }
 
@@ -396,9 +334,10 @@ function rotularFaturamentoParcial(numeroPedido: string, parcelas: ParcelaComiss
  * base da comissão. Ver `calcularMargemComissionamento.ts` para a fórmula
  * completa e o mapeamento de campos Omie.
  *
- * Regras de comissão fixa (2026-09-10, prioridade nesta ordem — ver
- * `calcularComissaoDaLinha`): vendedor com comissão fixa > família de
- * produto com comissão fixa (segregada) > regra normal por margem.
+ * Regras (prioridade nesta ordem — ver `calcularComissaoDaLinha`): vendedor
+ * com comissão fixa (2026-09-10) > comissão por item pela tabela de preços
+ * da Omie (2026-10-06). Pedido sem tabela/regra/preço válidos vai para
+ * `excecoesApuracao`, fora dos totais.
  *
  * Fluxo:
  *   1. Reaproveita o relatório de Vendas já calculado (pedido, vendedor,
@@ -421,9 +360,11 @@ function rotularFaturamentoParcial(numeroPedido: string, parcelas: ParcelaComiss
  * comissão liberada/pendente nem valor faturado. Vale igual para os pedidos anteriores.
  */
 export async function gerarRelatorioComissionamento(
-  cliente: ClienteOmieParaComissionamento,
+  clienteOmie: ClienteOmieParaComissionamento,
   filtros: FiltrosComissionamento,
 ): Promise<ResultadoComissionamento> {
+  // Produto/cliente repetidos nesta geração reaproveitam a 1ª consulta (sem mudar TTL) — `memoCadastros.ts`.
+  const cliente = memorizarCadastrosDaGeracao(clienteOmie);
   validarConfiguracaoEtapasComissionamento(await cliente.listarEtapasVendaProduto());
 
   // Títulos por vendedor, buscados uma vez e sempre em sequência (ver nota abaixo sobre chamadas
@@ -557,11 +498,21 @@ export async function gerarRelatorioComissionamento(
     return chave !== null && inicioPeriodo !== null && fimPeriodo !== null && chave >= inicioPeriodo && chave <= fimPeriodo;
   }
 
-  async function calcularLinha(linha: LinhaRelatorio, origem: OrigemLinhaComissionamento): Promise<LinhaComissionamento> {
-    return calcularLinhaComissionamento(cliente, linha, localizarTitulosDoPedido(linha), origem, (p) => venceNoPeriodo(p.dataVencimento));
+  const excecoesApuracao: ExcecaoApuracaoComissao[] = [];
+  /** `null` = pedido fora da apuração automática (registrado em `excecoesApuracao`, nunca somado). */
+  async function calcularLinha(linha: LinhaRelatorio, origem: OrigemLinhaComissionamento): Promise<LinhaComissionamento | null> {
+    try {
+      return await calcularLinhaComissionamento(cliente, linha, localizarTitulosDoPedido(linha), origem, (p) => venceNoPeriodo(p.dataVencimento));
+    } catch (erro) {
+      if (!(erro instanceof ErroApuracaoComissao)) throw erro;
+      excecoesApuracao.push(excecaoApuracaoDaLinha(linha, erro));
+      return null;
+    }
   }
 
-  const linhasDoPeriodo: LinhaComissionamento[] = await Promise.all(comVendedor.map((linha) => calcularLinha(linha, 'PERIODO')));
+  const linhasDoPeriodo: LinhaComissionamento[] = (
+    await Promise.all(comVendedor.map((linha) => calcularLinha(linha, 'PERIODO')))
+  ).filter((linha): linha is LinhaComissionamento => linha !== null);
 
   // Pedidos anteriores trazidos por parcela: parte dos TÍTULOS com vencimento no período (nunca
   // varre 12 meses de pedidos). Pedido que já é venda do período nunca entra de novo.
@@ -615,7 +566,8 @@ export async function gerarRelatorioComissionamento(
         );
         for (const linha of linhasDoPedido) {
           if (linha.numeroPedido !== numeroPedido || linha.codigoVendedor === null) continue;
-          linhasAnteriores.push(await calcularLinha(linha, 'PARCELA_PERIODO_ANTERIOR'));
+          const calculada = await calcularLinha(linha, 'PARCELA_PERIODO_ANTERIOR');
+          if (calculada !== null) linhasAnteriores.push(calculada);
         }
       }
     }
@@ -644,10 +596,15 @@ export async function gerarRelatorioComissionamento(
     numerosPedidosSemVendedor,
     numerosPedidosAnterioresNaoLocalizados,
     excecoesRevisaoManual: [...excecoesPorCodigoPedido.values()],
+    excecoesApuracao,
   };
 }
 
-/** Cálculo de sempre (margem → comissão → parcelas → liberada/pendente) para uma linha — idêntico para venda do período e pedido anterior. */
+/**
+ * Cálculo compartilhado (Comissionamento e Financeiro / Comissão): comissão por item → parcelas →
+ * liberada/pendente — idêntico para venda do período e pedido anterior. Lança
+ * `ErroApuracaoComissao` quando o pedido não pode ser apurado automaticamente.
+ */
 export async function calcularLinhaComissionamento(
   cliente: ClienteOmieParaComissionamento,
   linha: LinhaRelatorio,
@@ -660,18 +617,19 @@ export async function calcularLinhaComissionamento(
     comissaoNormalPercentual,
     adicionalVendedorPercentual,
     comissaoFinalPercentual,
+    baseComissao,
     comissaoTotal,
     vendedorComissaoFixaPercentual,
-    segregacaoComissaoFixa,
+    composicaoItens,
   } = await calcularComissaoDaLinha(cliente, linha);
 
-  // Percentual efetivo (comissão total ÷ receita) para distribuir a comissão pelas parcelas
-  // proporcionalmente ao peso de cada uma — necessário porque, com segregação, a comissão do
-  // pedido não é mais um único percentual aplicado à base (é a soma de duas partes).
-  const percentualEfetivo = linha.receitaTotal === 0 ? 0 : (comissaoTotal / linha.receitaTotal) * 100;
+  // Itens com taxas diferentes: a comissão TOTAL (soma dos itens) é distribuída pelas parcelas na
+  // proporção do valor de cada uma — o percentual efetivo só reproduz essa soma
+  // (fração × base × total ÷ base); nunca recalcula uma taxa global pela margem.
+  const percentualEfetivo = baseComissao === 0 ? 0 : (comissaoTotal / baseComissao) * 100;
 
   const parcelasSemFatura = distribuirComissaoPorParcelas(
-    linha.receitaTotal,
+    baseComissao,
     percentualEfetivo,
     titulosDoPedido.map((t) => ({
       codigoLancamentoOmie: t.codigoLancamentoOmie,
@@ -717,6 +675,7 @@ export async function calcularLinhaComissionamento(
     comissaoNormalPercentual: arredondarDinheiroLocal(comissaoNormalPercentual),
     adicionalVendedorPercentual: arredondarDinheiroLocal(adicionalVendedorPercentual),
     comissaoFinalPercentual: arredondarDinheiroLocal(comissaoFinalPercentual),
+    baseComissao: arredondarDinheiroLocal(baseComissao),
     comissaoTotal: arredondarDinheiroLocal(comissaoTotal),
     parcelas,
     comissaoLiberada: arredondarDinheiroLocal(comissaoLiberada),
@@ -727,6 +686,6 @@ export async function calcularLinhaComissionamento(
     valorFaturado: arredondarDinheiroLocal(valorFaturado),
     saldoAFaturar: arredondarDinheiroLocal(saldoAFaturar),
     ...(vendedorComissaoFixaPercentual !== undefined ? { vendedorComissaoFixaPercentual } : {}),
-    ...(segregacaoComissaoFixa !== undefined ? { segregacaoComissaoFixa } : {}),
+    ...(composicaoItens !== undefined ? { composicaoItens: composicaoItens.map(arredondarComposicao) } : {}),
   };
 }

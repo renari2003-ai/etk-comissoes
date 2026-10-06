@@ -9,9 +9,11 @@
  * transportadora com problema não impede as demais: cada uma recebe seu resultado.
  */
 import type { ClienteOmie } from '../omie/cliente.js';
+import { config } from '../config.js';
 import { ErroValidacao } from '../validacao.js';
 import { registrarAuditoria } from './auditoriaRepositorio.js';
-import { ehTransportadoraBraspress, servicoCotarBraspress } from './braspressServico.js';
+import { servicoCotarBraspress } from './braspressServico.js';
+import { CANAIS_ENVIO, canaisDisponiveis, ehTransportadoraBraspress, integracaoBraspressConfigurada, MENSAGEM_API_NAO_CONFIGURADA, type CanalEnvio } from './canaisTransportadora.js';
 import { servicoBuscarCotacao, servicoCriarTransportadora } from './fretesServico.js';
 import { ErroBraspressFalhou, ErroBraspressNaoConfigurada, type ItemCubagemBraspress } from './integracoes/braspressCliente.js';
 import { servicoSolicitarCotacoes } from './integracaoCotacoesServico.js';
@@ -22,34 +24,20 @@ import {
   buscarTransportadorasAtivasPorTermo,
   type DadosTransportadora,
 } from './transportadorasRepositorio.js';
-import { emailValido, whatsappValido } from './validacao.js';
-import type { SolicitacaoCotacao, Transportadora } from './tipos.js';
+import { emailValido } from './validacao.js';
+import { problemaLimiteWhatsapp } from './whatsapp/mensagemCotacao.js';
+import { montarPayloadN8n, problemaObservacaoViaN8n } from './integracaoCotacoesServico.js';
+import { montarDestinoEnviado } from './destinoEnviado.js';
+import type { CotacaoFrete, SolicitacaoCotacao, Transportadora } from './tipos.js';
 
-export type CanalEnvio = 'EMAIL' | 'WHATSAPP' | 'API';
-
-export const CANAIS_ENVIO: readonly CanalEnvio[] = ['EMAIL', 'WHATSAPP', 'API'];
+// Regras de canal ficam em `canaisTransportadora.ts` (também usadas na edição do cadastro); reexportadas aqui por compatibilidade.
+export { CANAIS_ENVIO, canaisDisponiveis, type CanalEnvio };
 export const LIMITE_TRANSPORTADORAS_POR_ENVIO = 7;
 const LIMITE_RESULTADOS_BUSCA = 15;
 
 const ROTULOS_CANAL_ENVIO: Record<CanalEnvio, string> = { EMAIL: 'E-mail', WHATSAPP: 'WhatsApp', API: 'API' };
 
 export const MENSAGEM_SEM_CANAL_ENVIO = 'Selecione o canal de envio para todas as transportadoras.';
-
-/**
- * Canais realmente utilizáveis para a transportadora:
- * - EMAIL: e-mail para cotação válido no cadastro ETK, ou código Omie vinculado (o envio
- *   resolve MANUAL > CADASTRO > OMIE > bloqueio — Omie sem e-mail falha explicitamente).
- * - WHATSAPP: só com `whatsappCotacao` válido no cadastro (o número vai no payload do n8n →
- *   YCloud). Nunca inferido de `telefone` nem de `canalPrincipal`.
- * - API: só a Braspress (única integração existente). `urlPortal` nunca conta como API.
- */
-export function canaisDisponiveis(t: Transportadora): CanalEnvio[] {
-  const canais: CanalEnvio[] = [];
-  if (emailValido(t.email) || t.codigoClienteOmie !== null) canais.push('EMAIL');
-  if (whatsappValido(t.whatsappCotacao)) canais.push('WHATSAPP');
-  if (ehTransportadoraBraspress(t)) canais.push('API');
-  return canais;
-}
 
 /** Um canal só → ele; vários → `canalPrincipal` se for um deles; senão `null` (operador escolhe). */
 export function canalSugerido(t: Transportadora, disponiveis: CanalEnvio[]): CanalEnvio | null {
@@ -98,6 +86,8 @@ export interface TransportadoraBusca {
   whatsappCadastrado: boolean;
   /** Integração API operacional (nesta fase: só Braspress). */
   apiIntegrada: boolean;
+  /** Braspress cadastrada, mas credenciais da API ausentes no servidor — API indisponível (aditivo, só informativo). */
+  apiNaoConfigurada: boolean;
 }
 
 export function paraTransportadoraBusca(t: Transportadora): TransportadoraBusca {
@@ -113,6 +103,7 @@ export function paraTransportadoraBusca(t: Transportadora): TransportadoraBusca 
     urlPortal: t.urlPortal,
     whatsappCadastrado: t.whatsappCotacao !== null,
     apiIntegrada: disponiveis.includes('API'),
+    apiNaoConfigurada: ehTransportadoraBraspress(t) && !integracaoBraspressConfigurada(),
   };
 }
 
@@ -147,7 +138,19 @@ export interface ItemEnvioSolicitacao {
   canal: CanalEnvio | null;
   /** Só para EMAIL: override manual válido apenas nesta solicitação (mesma regra do fluxo existente). */
   emailManual: string | null;
+  /** "Observações para a transportadora" só desta transportadora (já validada na borda HTTP); `null` quando vazia. */
+  observacoesTransportadora?: string | null;
+  /**
+   * Só para API: o operador confirmou o aviso de que a API (Braspress) NÃO transmite a observação.
+   * Sem essa confirmação, uma observação preenchida para API bloqueia o envio dessa transportadora.
+   */
+  cienteObservacaoNaoEnviadaApi?: boolean;
 }
+
+/** API não tem campo para a observação — o envio nunca a descarta sem o operador ter sido avisado e confirmado. */
+export const MENSAGEM_OBSERVACAO_API_SEM_CONFIRMACAO =
+  'Erro: a API da Braspress não transmite "Observações para a transportadora". Confirme o aviso (a observação não será enviada) ou escolha E-mail/WhatsApp.';
+export const MENSAGEM_OBSERVACAO_API_NAO_ENVIADA = 'A observação para a transportadora NÃO foi enviada: a API da Braspress não tem esse campo.';
 
 export type StatusEnvioTransportadora = 'ENVIADO' | 'FALHOU' | 'NAO_ENVIADO';
 
@@ -263,7 +266,7 @@ export async function servicoEnviarSolicitacoes(
   for (const item of itensComCanal) {
     // Cada transportadora é processada e auditada isoladamente — nada aqui propaga exceção
     // para o laço, então a falha de uma nunca impede o envio das demais.
-    const { resultado, detalheTecnico } = await processarItemEnvio(cliente, cotacaoId, item, cubagem, usuarioId, solicitacoesExistentes, deps);
+    const { resultado, detalheTecnico } = await processarItemEnvio(cliente, cotacao, item, cubagem, usuarioId, solicitacoesExistentes, deps);
     resultados.push(resultado);
     await auditarResultadoEnvio(deps, cotacaoId, usuarioId, resultado, detalheTecnico);
   }
@@ -282,13 +285,17 @@ interface ResultadoItemEnvio {
  */
 async function processarItemEnvio(
   cliente: ClienteOmie,
-  cotacaoId: string,
+  cotacao: CotacaoFrete,
   item: ItemEnvioSolicitacao & { canal: CanalEnvio },
   cubagem: ItemCubagemBraspress[] | null,
   usuarioId: string,
   solicitacoesExistentes: SolicitacaoCotacao[],
   deps: DependenciasEnvio,
 ): Promise<ResultadoItemEnvio> {
+  const cotacaoId = cotacao.id;
+  const observacoes = item.observacoesTransportadora !== undefined && item.observacoesTransportadora !== null && item.observacoesTransportadora.trim() !== ''
+    ? item.observacoesTransportadora
+    : null;
   const base = { transportadoraId: item.transportadoraId, canal: item.canal, solicitacaoId: null, propostaId: null };
   const falha = (transportadora: string, mensagem: string, detalheTecnico: string | null = null, extra: Partial<ResultadoEnvioTransportadora> = {}): ResultadoItemEnvio => ({
     resultado: { ...base, transportadora, status: 'FALHOU', mensagem, ...extra },
@@ -305,6 +312,9 @@ async function processarItemEnvio(
   if (emailManual !== null && !emailValido(emailManual)) {
     return falha(nome, MENSAGENS_ENVIO.EMAIL_INVALIDO, 'E-mail manual informado é malformado.');
   }
+  if (item.canal === 'API' && ehTransportadoraBraspress(transportadora) && !integracaoBraspressConfigurada()) {
+    return falha(nome, `Erro: ${MENSAGEM_API_NAO_CONFIGURADA}`, 'Credenciais da API Braspress ausentes no servidor; nada foi enviado.');
+  }
   if (!canaisDisponiveis(transportadora).includes(item.canal)) {
     const detalhe =
       item.canal === 'API' && transportadora.urlPortal !== null
@@ -312,8 +322,26 @@ async function processarItemEnvio(
         : `${ROTULOS_CANAL_ENVIO[item.canal]} sem cadastro válido neste registro de transportadora.`;
     return falha(nome, MENSAGEM_CADASTRO_INVALIDO[item.canal], detalhe);
   }
+  // Contingência n8n não transmite a observação: recusa explícita antes de criar a solicitação.
+  const problemaN8n = problemaObservacaoViaN8n(item.canal, observacoes);
+  if (problemaN8n !== null) return falha(nome, `Erro: ${problemaN8n}`, 'Observação para a transportadora não suportada no modo n8n; nada foi criado nem enviado.');
+  // API sem campo de observação: só segue com o aviso confirmado pelo operador (nunca descarta em silêncio).
+  if (item.canal === 'API' && observacoes !== null && item.cienteObservacaoNaoEnviadaApi !== true) {
+    return falha(nome, MENSAGEM_OBSERVACAO_API_SEM_CONFIRMACAO, 'Observação preenchida para canal API sem confirmação do aviso.');
+  }
 
   try {
+    // WhatsApp direto (YCloud): a mensagem que SERIA enviada (observações da cotação + observação
+    // desta transportadora + rótulos + dados da carga) precisa caber no limite do modo em uso —
+    // template: parâmetro {{6}} ≤ 1000; texto: corpo ≤ 4096. Acima disso, recusa ANTES de criar a
+    // solicitação (um "Reenviar" usaria o mesmo texto e falharia de novo). Nunca corta.
+    if (item.canal === 'WHATSAPP' && config.fretesWhatsapp === 'ycloud') {
+      const problema = problemaLimiteWhatsapp(
+        payloadProvisorioWhatsapp(cotacao, transportadora, cubagem, observacoes),
+        config.ycloudTemplateNome !== '' ? 'TEMPLATE' : 'TEXTO',
+      );
+      if (problema !== null) return falha(nome, `Erro: ${problema}`, 'Mensagem de WhatsApp excederia o limite; nada foi criado nem enviado.');
+    }
     if (item.canal === 'API') {
       const r = await deps.cotarBraspress(cliente, cotacaoId, { cepOrigem: null, cubagem }, usuarioId);
       const prazo = r.cotacaoExterna.prazoDias === null ? '—' : `${r.cotacaoExterna.prazoDias} dia(s)`;
@@ -323,9 +351,11 @@ async function processarItemEnvio(
           transportadora: nome,
           status: 'ENVIADO',
           propostaId: r.proposta.id,
-          mensagem: `Cotado via API — ${formatarMoeda(r.cotacaoExterna.valorFrete)}, prazo ${prazo}${r.duplicada ? ' (proposta já registrada)' : ''}.`,
+          mensagem:
+            `Cotado via API — ${formatarMoeda(r.cotacaoExterna.valorFrete)}, prazo ${prazo}${r.duplicada ? ' (proposta já registrada)' : ''}.` +
+            (observacoes !== null ? ` ${MENSAGEM_OBSERVACAO_API_NAO_ENVIADA}` : ''),
         },
-        detalheTecnico: null,
+        detalheTecnico: observacoes !== null ? 'Observação para a transportadora não transmitida (API sem esse campo); operador confirmou o aviso.' : null,
       };
     }
 
@@ -359,7 +389,7 @@ async function processarItemEnvio(
     const [solicitacao] = await deps.solicitar(
       cliente,
       cotacaoId,
-      [{ transportadoraId: transportadora.id, emailManual, embalagens }],
+      [{ transportadoraId: transportadora.id, emailManual, embalagens, observacoesTransportadora: observacoes }],
       item.canal,
       usuarioId,
     );
@@ -397,6 +427,31 @@ async function processarItemEnvio(
     console.error('Erro interno no envio de solicitação:', detalhe);
     return falha(nome, MENSAGEM_FALHA_ENVIO[item.canal], detalhe);
   }
+}
+
+/**
+ * Payload equivalente ao que será montado no envio, só para medir a mensagem antes de criar a
+ * solicitação. Referência e CNPJs com o MAIOR tamanho possível (pior caso) — o real nunca é maior.
+ */
+function payloadProvisorioWhatsapp(
+  cotacao: CotacaoFrete,
+  transportadora: Transportadora,
+  cubagem: ItemCubagemBraspress[] | null,
+  observacoesTransportadora: string | null,
+) {
+  const solicitacaoProvisoria = {
+    id: 'provisoria',
+    cotacaoFreteId: cotacao.id,
+    transportadoraId: transportadora.id,
+    canal: 'WHATSAPP',
+    codigoReferencia: `${cotacao.codigo}-00000000`,
+    emailDestino: null,
+    emailOrigem: null,
+    embalagens: (cubagem ?? []).map((c) => ({ altura: c.altura, largura: c.largura, comprimento: c.comprimento, quantidade: c.volumes })),
+    observacoesTransportadora,
+    destinoEnviado: montarDestinoEnviado(cotacao),
+  } as unknown as SolicitacaoCotacao;
+  return montarPayloadN8n(cotacao, solicitacaoProvisoria, { cnpjOrigem: '00000000000000', cnpjDestino: '00000000000000' }, transportadora.whatsappCotacao);
 }
 
 /**

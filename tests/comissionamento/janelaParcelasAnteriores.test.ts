@@ -257,7 +257,7 @@ describe('tela e PDF (impressão da mesma tabela) — data de faturamento', () =
   it('coluna "Data de faturamento" presente para admin e demais papéis', () => {
     expect(titulosTabelaComissionamento(true)).toContain('Data de faturamento');
     expect(titulosTabelaComissionamento(false)).toContain('Data de faturamento');
-    expect(titulosTabelaComissionamento(false)).not.toContain('Margem');
+    expect(titulosTabelaComissionamento(false)).not.toContain('Venda após despesas (%)');
   });
 
   it('formata: sem faturamento "—"; uma data; várias faturas compactas sem duplicar a linha', () => {

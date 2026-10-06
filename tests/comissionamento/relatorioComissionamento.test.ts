@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { gerarRelatorioComissionamento } from '../../src/comissionamento/relatorioComissionamento.js';
-import { ClienteComissionamentoOmieFalso } from '../omie/clienteComissionamentoFalso.js';
+import { ClienteComissionamentoOmieFalso, ID_TABELA_003, itemTabela, tabelaPreco } from '../omie/clienteComissionamentoFalso.js';
 import type { PedidoOmie } from '../../src/calculo/tipos.js';
 import type { ClienteInfo, VendedorInfo } from '../../src/relatorio/relatorioVendas.js';
 import type { TituloContaReceber } from '../../src/omie/cliente.js';
@@ -26,6 +26,10 @@ function pedido(overrides: {
   /** ICMS/PIS/COFINS/IBS/CBS embutidos no valor dos produtos — apenas informativo (nunca somam ao total). */
   impostosEmbutidos?: { icms?: number; pis?: number; cofins?: number; ibs?: number; cbs?: number };
   codigoProduto?: number;
+  valorDesconto?: number;
+  codigoTabelaPreco?: number;
+  /** Inclusão do pedido na Omie (`infoCadastro.dInc`). Só informativa para a comissão desde 2026-10-06 (não bloqueia). */
+  dataInclusao?: string;
 }): PedidoOmie {
   const codigoProduto = overrides.codigoProduto ?? 1;
   return {
@@ -44,6 +48,8 @@ function pedido(overrides: {
           quantidade: overrides.quantidade,
           valor_unitario: overrides.valorUnitario,
           valor_mercadoria: overrides.valorMercadoria,
+          ...(overrides.valorDesconto !== undefined ? { valor_desconto: overrides.valorDesconto } : {}),
+          ...(overrides.codigoTabelaPreco !== undefined ? { codigo_tabela_preco: overrides.codigoTabelaPreco } : {}),
         },
       },
     ],
@@ -64,7 +70,13 @@ function pedido(overrides: {
       valor_seguro: overrides.valorSeguro ?? 0,
       outras_despesas: overrides.outrasDespesas ?? 0,
     },
+    infoCadastro: { dInc: overrides.dataInclusao ?? '01/06/2026', hInc: '10:00:00' },
   };
+}
+
+/** Produto 1 na tabela 003 com o Preço da Tabela informado (custo de referência = preço ÷ 1,90). */
+function tabelas003(precoTabela: number, codigoProduto = 1) {
+  return [tabelaPreco('001', []), tabelaPreco('002', []), tabelaPreco('003', [itemTabela(codigoProduto, precoTabela)])];
 }
 
 const VENDEDORES: VendedorInfo[] = [{ codigo: 100, nome: 'João', inativo: false }];
@@ -172,7 +184,7 @@ describe('gerarRelatorioComissionamento — regra fundamental: custo do produto 
 });
 
 describe('gerarRelatorioComissionamento — cálculo completo (teste — seção 38)', () => {
-  it('retorna pedido, vendedor, margem de comissionamento, comissão normal/final, valor da venda, comissão, parcelas e baixas', async () => {
+  it('retorna pedido, vendedor, margem (informativa), comissão por tabela normal/final, valor da venda, comissão, parcelas e baixas', async () => {
     const pedidoD = pedido({
       codigoPedido: 10,
       numeroPedido: '10',
@@ -183,8 +195,9 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
       valorUnitario: 100,
       valorMercadoria: 70000,
       valorTotalPedido: 100000,
-      valorIPI: 30000, // despesas (impostos) = 30000 -> margem 70% -> comissão normal 1% (piso da regra progressiva)
+      valorIPI: 30000, // despesas (impostos) = 30000 -> margem 70% (só informativa)
     });
+    // Preço da Tabela 950 (tabela 003) -> custo de referência 500; vendido a 700/un. -> multiplicador 1,40 -> 1% (piso)
     // custo elevado, propositalmente, para provar que não afeta o resultado do comissionamento
     const estoques = new Map([[1, { listaEstoque: [{ nCMC: 600 }] }]]);
     const titulos = new Map<number, TituloContaReceber[]>([
@@ -215,7 +228,7 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
       ],
     ]);
 
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoD], VENDEDORES, CLIENTES, estoques, titulos);
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoD], VENDEDORES, CLIENTES, estoques, titulos, undefined, undefined, tabelas003(950));
     const resultado = await gerarRelatorioComissionamento(cliente, {});
 
     expect(resultado.linhas).toHaveLength(1);
@@ -233,11 +246,13 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
     expect(linha.despesasFreteSeguroOutras).toBe(0);
     expect(linha.resultadoAposDespesas).toBe(70000);
     expect(linha.margemComissionamentoPercentual).toBe(70);
-    // Comissão — margem 70% -> comissão normal 1% (piso da regra progressiva), "João" não tem adicional
+    // Comissão — multiplicador 1,40 -> comissão normal 1% (piso da regra progressiva), "João" não tem adicional
+    expect(linha.composicaoItens?.[0]).toMatchObject({ tabelaCodigo: '003', precoTabela: 950, custoReferencia: 500, multiplicadorRealizado: 1.4 });
     expect(linha.comissaoNormalPercentual).toBe(1);
     expect(linha.adicionalVendedorPercentual).toBe(0);
     expect(linha.comissaoFinalPercentual).toBe(1);
-    // base = valor total dos PRODUTOS (receitaTotal = 70000), não o valor bruto da nota (100000) * 1%
+    // base = valor dos PRODUTOS após desconto (70000), não o valor bruto da nota (100000) * 1%
+    expect(linha.baseComissao).toBe(70000);
     expect(linha.comissaoTotal).toBeCloseTo(700, 10);
     // Pagamento / parcelas
     expect(linha.parcelas).toHaveLength(2);
@@ -347,7 +362,7 @@ describe('gerarRelatorioComissionamento — cálculo completo (teste — seção
 describe('gerarRelatorioComissionamento — adicional de vendedor especial, ponta a ponta (regra de 2026-09-08)', () => {
   const VENDEDOR_SANDRO: VendedorInfo[] = [{ codigo: 300, nome: 'Sandro Cedro', inativo: false }];
 
-  it('Sandro recebe +1% sobre a comissão normal no relatório completo (margem 85% -> normal 2,5% -> final 3,5%)', async () => {
+  it('Sandro recebe +1% sobre a comissão normal no relatório completo (multiplicador 1,85 -> normal 2,5% -> final 3,5%)', async () => {
     const pedidoSandro = pedido({
       codigoPedido: 50,
       numeroPedido: '50',
@@ -355,25 +370,24 @@ describe('gerarRelatorioComissionamento — adicional de vendedor especial, pont
       codigoCliente: 500,
       codVend: 300,
       quantidade: 10,
-      valorUnitario: 1000,
-      valorMercadoria: 8500,
+      valorUnitario: 925,
+      valorMercadoria: 9250, // 925/un. ÷ custo de referência 500 (Preço da Tabela 950 ÷ 1,90) = 1,85
       valorTotalPedido: 10000,
-      valorIPI: 1500, // 8500 + 1500 = 10000 -> margem = 8500/10000 = 85%
+      valorIPI: 750,
     });
     const estoques = new Map([[1, { listaEstoque: [{ nCMC: 1 }] }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoSandro], VENDEDOR_SANDRO, CLIENTES, estoques, new Map());
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoSandro], VENDEDOR_SANDRO, CLIENTES, estoques, new Map(), undefined, undefined, tabelas003(950));
 
     const resultado = await gerarRelatorioComissionamento(cliente, {});
     const linha = resultado.linhas[0];
     if (linha === undefined) throw new Error('linha ausente');
 
     expect(linha.nomeVendedor).toBe('Sandro Cedro');
-    expect(linha.margemComissionamentoPercentual).toBe(85);
     expect(linha.comissaoNormalPercentual).toBe(2.5);
     expect(linha.adicionalVendedorPercentual).toBe(1);
     expect(linha.comissaoFinalPercentual).toBe(3.5);
-    // base = valor dos produtos (8500) * 3,5%
-    expect(linha.comissaoTotal).toBeCloseTo(297.5, 10);
+    // base = valor dos produtos (9250) * 3,5%
+    expect(linha.comissaoTotal).toBeCloseTo(323.75, 10);
   });
 
   it('vendedor comum (fora da lista) nunca recebe o adicional no relatório completo', async () => {
@@ -384,13 +398,13 @@ describe('gerarRelatorioComissionamento — adicional de vendedor especial, pont
       codigoCliente: 500,
       codVend: 100,
       quantidade: 10,
-      valorUnitario: 1000,
-      valorMercadoria: 8500,
+      valorUnitario: 925,
+      valorMercadoria: 9250,
       valorTotalPedido: 10000,
-      valorIPI: 1500,
+      valorIPI: 750,
     });
     const estoques = new Map([[1, { listaEstoque: [{ nCMC: 1 }] }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoJoao], VENDEDORES, CLIENTES, estoques, new Map());
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoJoao], VENDEDORES, CLIENTES, estoques, new Map(), undefined, undefined, tabelas003(950));
 
     const resultado = await gerarRelatorioComissionamento(cliente, {});
     const linha = resultado.linhas[0];
@@ -398,7 +412,7 @@ describe('gerarRelatorioComissionamento — adicional de vendedor especial, pont
 
     expect(linha.adicionalVendedorPercentual).toBe(0);
     expect(linha.comissaoFinalPercentual).toBe(linha.comissaoNormalPercentual);
-    expect(linha.comissaoTotal).toBeCloseTo(212.5, 10); // 8500 * 2,5%
+    expect(linha.comissaoTotal).toBeCloseTo(231.25, 10); // 9250 * 2,5%
   });
 });
 
@@ -444,7 +458,7 @@ describe('gerarRelatorioComissionamento — filtro por vendedor (teste — seç�
 describe('gerarRelatorioComissionamento — vendedor com comissão fixa: Renato Pinto (regra de 2026-09-10)', () => {
   const VENDEDOR_RENATO: VendedorInfo[] = [{ codigo: 400, nome: 'Renato Pinto', inativo: false }];
 
-  it('aplica 4% fixo sobre o pedido inteiro, ignorando a margem de comissionamento e o adicional', async () => {
+  it('aplica 4% fixo sobre o pedido inteiro, ignorando a tabela de preços e o adicional', async () => {
     const pedidoRenato = pedido({
       codigoPedido: 60,
       numeroPedido: '60',
@@ -453,12 +467,13 @@ describe('gerarRelatorioComissionamento — vendedor com comissão fixa: Renato 
       codVend: 400,
       quantidade: 10,
       valorUnitario: 1000,
-      valorMercadoria: 9500, // margem normal seria 95% -> comissão normal 3% -- mas o vendedor tem comissão fixa, ignora isso
+      valorMercadoria: 9500, // pela tabela padrão seria 3% -- mas o vendedor tem comissão fixa, ignora isso
       valorTotalPedido: 10000,
       valorIPI: 500,
     });
     const estoques = new Map([[1, { listaEstoque: [{ nCMC: 1 }] }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoRenato], VENDEDOR_RENATO, CLIENTES, estoques, new Map());
+    // Sem nenhuma tabela de preço: a regra do vendedor nem consulta tabela, logo nunca vira exceção.
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoRenato], VENDEDOR_RENATO, CLIENTES, estoques, new Map(), undefined, undefined, []);
 
     const resultado = await gerarRelatorioComissionamento(cliente, {});
     const linha = resultado.linhas[0];
@@ -468,12 +483,14 @@ describe('gerarRelatorioComissionamento — vendedor com comissão fixa: Renato 
     expect(linha.comissaoNormalPercentual).toBe(4);
     expect(linha.adicionalVendedorPercentual).toBe(0);
     expect(linha.comissaoFinalPercentual).toBe(4);
-    expect(linha.segregacaoComissaoFixa).toBeUndefined();
+    expect(linha.composicaoItens).toBeUndefined();
+    expect(cliente.consultasTabelasPreco).toBe(0);
+    expect(resultado.excecoesApuracao).toEqual([]);
     // base = valor dos produtos (9500) * 4%
     expect(linha.comissaoTotal).toBeCloseTo(380, 10);
   });
 
-  it('a comissão fixa do vendedor tem prioridade sobre a comissão fixa de família — ignora item CTO Promocional', async () => {
+  it('a comissão fixa do vendedor tem prioridade sobre a tabela 001 — ignora item CTO Promocional', async () => {
     const pedidoMisto: PedidoOmie = {
       cabecalho: { codigo_pedido: 63, numero_pedido: '63', etapa: '50', codigo_cliente: 500 },
       det: [
@@ -496,147 +513,203 @@ describe('gerarRelatorioComissionamento — vendedor com comissão fixa: Renato 
     if (linha === undefined) throw new Error('linha ausente');
 
     expect(linha.vendedorComissaoFixaPercentual).toBe(4);
-    expect(linha.segregacaoComissaoFixa).toBeUndefined();
-    // 4% sobre a receita TOTAL do pedido (1000), sem segregar a parte promocional
+    expect(linha.composicaoItens).toBeUndefined();
+    // 4% sobre a receita TOTAL do pedido (1000), sem separar a parte da tabela 001
     expect(linha.comissaoTotal).toBeCloseTo(40, 10);
   });
 });
 
-describe('gerarRelatorioComissionamento — família com comissão fixa: CTO Promocional (regra de 2026-09-10)', () => {
-  it('pedido 100% CTO Promocional aplica 1% fixo sobre tudo, sem segregação a exibir', async () => {
-    const pedidoPromo = pedido({
-      codigoPedido: 61,
-      numeroPedido: '61',
-      etapa: '50',
-      codigoCliente: 500,
-      codVend: 100,
-      quantidade: 10,
-      valorUnitario: 100,
-      valorMercadoria: 900,
-      valorTotalPedido: 1000,
-      valorIPI: 100,
-    });
-    const estoques = new Map([[1, { listaEstoque: [{ nCMC: 1 }] }]]);
-    const produtos = new Map([[1, { codigo_produto: 1, descricao_familia: 'CTO Promocional' }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoPromo], VENDEDORES, CLIENTES, estoques, new Map(), undefined, produtos);
-
-    const resultado = await gerarRelatorioComissionamento(cliente, {});
-    const linha = resultado.linhas[0];
-    if (linha === undefined) throw new Error('linha ausente');
-
-    expect(linha.comissaoNormalPercentual).toBe(1);
-    expect(linha.adicionalVendedorPercentual).toBe(0);
-    expect(linha.comissaoFinalPercentual).toBe(1);
-    expect(linha.segregacaoComissaoFixa).toBeUndefined();
-    expect(linha.vendedorComissaoFixaPercentual).toBeUndefined();
-    expect(linha.comissaoTotal).toBeCloseTo(9, 10); // 900 * 1%
-  });
-
-  it('pedido MISTO segrega o item CTO Promocional: cada parte com sua própria regra de comissão', async () => {
-    // item 1 (normal, receita 900) + item 2 (CTO Promocional, receita 100) — total produtos 1000, IPI 100 -> nota 1100
-    const pedidoMisto: PedidoOmie = {
-      cabecalho: { codigo_pedido: 62, numero_pedido: '62', etapa: '50', codigo_cliente: 500 },
+describe('gerarRelatorioComissionamento — tabela 001 (comissão fixa de 1%, substitui a família CTO Promocional — 2026-10-06)', () => {
+  function pedidoMisto(codigo: number, codVend: number): PedidoOmie {
+    // item 1: tabela 003, 10 × 90 = 900 (Preço da Tabela 95 -> custo ref. 50 -> 1,80 -> 2%)
+    // item 2: tabela 001, 5 × 20 = 100 (1% fixo)
+    return {
+      cabecalho: { codigo_pedido: codigo, numero_pedido: String(codigo), etapa: '50', codigo_cliente: 500 },
       det: [
-        { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Produto normal', quantidade: 10, valor_unitario: 100, valor_mercadoria: 900 } },
-        { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'CTO Promocional', quantidade: 5, valor_unitario: 20, valor_mercadoria: 100 } },
+        { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Produto 003', quantidade: 10, valor_unitario: 90, valor_mercadoria: 900, codigo_tabela_preco: 2 } },
+        { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'CTO', quantidade: 5, valor_unitario: 20, valor_mercadoria: 100, codigo_tabela_preco: 2 } },
       ],
       total_pedido: { valor_total_pedido: 1100, valor_mercadorias: 1000, valor_IPI: 100 },
+      informacoes_adicionais: { codVend },
+      frete: { valor_frete: 0, valor_seguro: 0, outras_despesas: 0 },
+      infoCadastro: { dInc: '01/06/2026', hInc: '10:00:00' },
+    };
+  }
+  const TABELAS_MISTO = [tabelaPreco('001', [itemTabela(2, 82.9)]), tabelaPreco('002', []), tabelaPreco('003', [itemTabela(1, 95)])];
+  const estoques = new Map([
+    [1, { listaEstoque: [{ nCMC: 1 }] }],
+    [2, { listaEstoque: [{ nCMC: 1 }] }],
+  ]);
+
+  it('pedido 100% tabela 001 aplica 1% fixo — mesmo sem a família "CTO Promocional" no cadastro', async () => {
+    const pedidoPromo = pedido({ codigoPedido: 61, numeroPedido: '61', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 10, valorUnitario: 90, valorMercadoria: 900, valorTotalPedido: 1000, valorIPI: 100 });
+    const produtos = new Map([[1, { codigo_produto: 1, descricao_familia: 'Outra família' }]]);
+    const tabelas = [tabelaPreco('001', [itemTabela(1, 82.9)])];
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoPromo], VENDEDORES, CLIENTES, estoques, new Map(), undefined, produtos, tabelas);
+
+    const [linha] = (await gerarRelatorioComissionamento(cliente, {})).linhas;
+    expect(linha?.comissaoNormalPercentual).toBe(1);
+    expect(linha?.adicionalVendedorPercentual).toBe(0);
+    expect(linha?.comissaoFinalPercentual).toBe(1);
+    expect(linha?.composicaoItens?.[0]).toMatchObject({ tabelaCodigo: '001', regra: 'FIXA', precoTabela: null, custoReferencia: null });
+    expect(linha?.comissaoTotal).toBeCloseTo(9, 10); // 900 * 1%
+  });
+
+  it('família "CTO Promocional" sozinha não dá 1%: produto da tabela 003 segue o multiplicador', async () => {
+    const pedidoFamilia = pedido({ codigoPedido: 66, numeroPedido: '66', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 10, valorUnitario: 95, valorMercadoria: 950 });
+    const produtos = new Map([[1, { codigo_produto: 1, descricao_familia: 'CTO Promocional' }]]);
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoFamilia], VENDEDORES, CLIENTES, estoques, new Map(), undefined, produtos, tabelas003(95));
+
+    const [linha] = (await gerarRelatorioComissionamento(cliente, {})).linhas;
+    expect(linha?.comissaoNormalPercentual).toBe(3); // 95 ÷ 50 = 1,90
+  });
+
+  it('pedido MISTO: cada item com a regra da sua tabela; comissão = soma dos itens', async () => {
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoMisto(62, 100)], VENDEDORES, CLIENTES, estoques, new Map(), undefined, undefined, TABELAS_MISTO);
+    const [linha] = (await gerarRelatorioComissionamento(cliente, {})).linhas;
+    if (linha === undefined) throw new Error('linha ausente');
+
+    expect(linha.composicaoItens?.map((i) => [i.codigo, i.tabelaCodigo, i.comissaoNormalPercentual, i.comissaoValor])).toEqual([
+      ['P1', '003', 2, 18],
+      ['P2', '001', 1, 1],
+    ]);
+    expect(linha.comissaoTotal).toBeCloseTo(19, 10);
+    // percentuais do pedido = média ponderada (exibição): 19 ÷ 1000
+    expect(linha.comissaoFinalPercentual).toBe(1.9);
+    expect(linha.comissaoNormalPercentual).toBe(1.9);
+  });
+
+  it('vendedor especial (Sandro) recebe +1% em TODOS os itens, inclusive os da tabela 001', async () => {
+    const vendedorSandro: VendedorInfo[] = [{ codigo: 300, nome: 'Sandro Cedro', inativo: false }];
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoMisto(64, 300)], vendedorSandro, CLIENTES, estoques, new Map(), undefined, undefined, TABELAS_MISTO);
+    const [linha] = (await gerarRelatorioComissionamento(cliente, {})).linhas;
+    if (linha === undefined) throw new Error('linha ausente');
+
+    expect(linha.adicionalVendedorPercentual).toBe(1);
+    expect(linha.composicaoItens?.map((i) => [i.comissaoNormalPercentual, i.adicionalVendedorPercentual, i.comissaoFinalPercentual])).toEqual([
+      [2, 1, 3],
+      [1, 1, 2],
+    ]);
+    expect(linha.comissaoTotal).toBeCloseTo(27 + 2, 10);
+  });
+
+  it('pedido 100% tabela 001 com vendedor especial soma o adicional (pedido real nº 53: 1% + 1%)', async () => {
+    const pedidoPromoSandro = pedido({ codigoPedido: 65, numeroPedido: '65', etapa: '50', codigoCliente: 500, codVend: 300, quantidade: 10, valorUnitario: 434.5, valorMercadoria: 4345, valorTotalPedido: 5013, valorIPI: 326, valorIcmsSt: 342 });
+    const vendedorSandro: VendedorInfo[] = [{ codigo: 300, nome: 'Sandro Cedro', inativo: false }];
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoPromoSandro], vendedorSandro, CLIENTES, estoques, new Map(), undefined, undefined, [tabelaPreco('001', [itemTabela(1, 82.9)])]);
+    const [linha] = (await gerarRelatorioComissionamento(cliente, {})).linhas;
+
+    expect(linha?.comissaoNormalPercentual).toBe(1);
+    expect(linha?.adicionalVendedorPercentual).toBe(1);
+    expect(linha?.comissaoFinalPercentual).toBe(2);
+    expect(linha?.comissaoTotal).toBeCloseTo(4345 * 0.02, 10);
+  });
+});
+
+describe('gerarRelatorioComissionamento — descontos e rateio pelas parcelas (2026-10-06)', () => {
+  it('base = mercadoria − desconto; a comissão total de itens com taxas diferentes é rateada pelas parcelas sem taxa global pela margem', async () => {
+    const pedidoDesconto: PedidoOmie = {
+      cabecalho: { codigo_pedido: 70, numero_pedido: '70', etapa: '60', codigo_cliente: 500 },
+      det: [
+        // 10 × 190 = 1900, desconto 100 -> 1800 -> 180/un. ÷ 100 = 1,80 -> 2% -> 36
+        { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'A', quantidade: 10, valor_unitario: 190, valor_mercadoria: 1900, valor_desconto: 100 } },
+        // 2 × 100 = 200 na tabela 001 -> 1% -> 2
+        { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'B', quantidade: 2, valor_unitario: 100, valor_mercadoria: 200 } },
+      ],
+      // margem informativa ruim de propósito (frete alto) — não pode puxar a comissão para baixo
+      total_pedido: { valor_total_pedido: 3000, valor_mercadorias: 2100, valor_IPI: 100 },
       informacoes_adicionais: { codVend: 100 },
-      frete: { valor_frete: 0, valor_seguro: 0, outras_despesas: 0 },
+      frete: { valor_frete: 900, valor_seguro: 0, outras_despesas: 0 },
+      infoCadastro: { dInc: '01/06/2026', hInc: '10:00:00' },
     };
-    const estoques = new Map([
-      [1, { listaEstoque: [{ nCMC: 1 }] }],
-      [2, { listaEstoque: [{ nCMC: 1 }] }],
+    const tabelas = [tabelaPreco('001', [itemTabela(2, 82.9)]), tabelaPreco('003', [itemTabela(1, 190)])];
+    const titulos = new Map<number, TituloContaReceber[]>([
+      [100, [
+        { codigoLancamentoOmie: 1, codigoPedido: 70, numeroPedido: '70', numeroParcela: '001/002', valorDocumento: 1000, dataVencimento: '01/07/2026', statusTitulo: 'RECEBIDO', codigoVendedor: 100 },
+        { codigoLancamentoOmie: 2, codigoPedido: 70, numeroPedido: '70', numeroParcela: '002/002', valorDocumento: 3000, dataVencimento: '01/08/2026', statusTitulo: 'A VENCER', codigoVendedor: 100 },
+      ]],
     ]);
-    const produtos = new Map([[2, { codigo_produto: 2, descricao_familia: 'CTO Promocional' }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoMisto], VENDEDORES, CLIENTES, estoques, new Map(), undefined, produtos);
-
-    const resultado = await gerarRelatorioComissionamento(cliente, {});
-    const linha = resultado.linhas[0];
+    const cliente = new ClienteComissionamentoOmieFalso([pedidoDesconto], VENDEDORES, CLIENTES, new Map(), titulos, undefined, undefined, tabelas);
+    const [linha] = (await gerarRelatorioComissionamento(cliente, {})).linhas;
     if (linha === undefined) throw new Error('linha ausente');
 
-    expect(linha.segregacaoComissaoFixa).toBeDefined();
-    expect(linha.segregacaoComissaoFixa?.nomeFamilia).toBe('CTO Promocional');
-    expect(linha.segregacaoComissaoFixa?.percentualFixo).toBe(1);
-    expect(linha.segregacaoComissaoFixa?.receitaComissaoFixa).toBe(100);
-    expect(linha.segregacaoComissaoFixa?.receitaNormal).toBe(900);
-
-    // parte normal: nota/IPI repartidos proporcionalmente (90% da receita) -> valorVenda 990, IPI 90
-    // margem normal = (990-90)/990 = 90,91% -> >=90% -> comissão normal 3% (João não tem adicional)
-    expect(linha.comissaoNormalPercentual).toBe(3);
-    expect(linha.adicionalVendedorPercentual).toBe(0);
-    expect(linha.segregacaoComissaoFixa?.comissaoValorNormal).toBeCloseTo(27, 1); // 900 * 3%
-    expect(linha.segregacaoComissaoFixa?.comissaoValorFixa).toBeCloseTo(1, 10); // 100 * 1%
-    expect(linha.comissaoTotal).toBeCloseTo(28, 1);
+    expect(linha.receitaTotal).toBe(2100); // valor de mercadoria bruto (análise de custo), como sempre
+    expect(linha.baseComissao).toBe(2000); // após o desconto de 100
+    expect(linha.comissaoTotal).toBeCloseTo(38, 10);
+    expect(linha.margemComissionamentoPercentual).toBeLessThan(70); // seria 1% pela regra antiga
+    expect(linha.parcelas.map((p) => p.comissaoParcela)).toEqual([expect.closeTo(9.5, 10), expect.closeTo(28.5, 10)]); // 25% / 75%
+    expect(linha.comissaoLiberada).toBeCloseTo(9.5, 10);
+    expect(linha.comissaoPendente).toBeCloseTo(28.5, 10);
   });
+});
 
-  it('vendedor especial (Sandro) recebe o adicional +1% em AMBAS as partes do pedido misto — normal E comissão fixa (regra confirmada em 2026-09-10)', async () => {
-    const pedidoMisto: PedidoOmie = {
-      cabecalho: { codigo_pedido: 64, numero_pedido: '64', etapa: '50', codigo_cliente: 500 },
+describe('gerarRelatorioComissionamento — exceções de apuração (tabela/preço/data, 2026-10-06)', () => {
+  it('pedido com produto fora de qualquer tabela sai inteiro da apuração (sem comissão zero) e é listado; os demais seguem', async () => {
+    const valido = pedido({ codigoPedido: 80, numeroPedido: '80', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190 });
+    const semTabela: PedidoOmie = {
+      ...pedido({ codigoPedido: 81, numeroPedido: '81', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190 }),
       det: [
-        { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Produto normal', quantidade: 10, valor_unitario: 100, valor_mercadoria: 900 } },
-        { produto: { codigo_produto: 2, codigo: 'P2', descricao: 'CTO Promocional', quantidade: 5, valor_unitario: 20, valor_mercadoria: 100 } },
+        { produto: { codigo_produto: 1, codigo: 'P1', descricao: 'Ok', quantidade: 1, valor_unitario: 190, valor_mercadoria: 190 } },
+        { produto: { codigo_produto: 55, codigo: 'PA00000055', descricao: 'Sem tabela', quantidade: 1, valor_unitario: 50, valor_mercadoria: 50, codigo_tabela_preco: 2 } },
       ],
-      total_pedido: { valor_total_pedido: 1100, valor_mercadorias: 1000, valor_IPI: 100 },
-      informacoes_adicionais: { codVend: 300 },
-      frete: { valor_frete: 0, valor_seguro: 0, outras_despesas: 0 },
     };
-    const vendedorSandro: VendedorInfo[] = [{ codigo: 300, nome: 'Sandro Cedro', inativo: false }];
-    const estoques = new Map([
-      [1, { listaEstoque: [{ nCMC: 1 }] }],
-      [2, { listaEstoque: [{ nCMC: 1 }] }],
-    ]);
-    const produtos = new Map([[2, { codigo_produto: 2, descricao_familia: 'CTO Promocional' }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoMisto], vendedorSandro, CLIENTES, estoques, new Map(), undefined, produtos);
-
+    const cliente = new ClienteComissionamentoOmieFalso([valido, semTabela], VENDEDORES, CLIENTES, new Map(), new Map());
     const resultado = await gerarRelatorioComissionamento(cliente, {});
-    const linha = resultado.linhas[0];
-    if (linha === undefined) throw new Error('linha ausente');
 
-    // margem normal 90,91% -> comissão normal 3% + adicional 1% = 4% sobre a parte normal (900)
-    expect(linha.comissaoNormalPercentual).toBe(3);
-    expect(linha.adicionalVendedorPercentual).toBe(1);
-    expect(linha.comissaoFinalPercentual).toBe(4);
-    expect(linha.segregacaoComissaoFixa?.comissaoValorNormal).toBeCloseTo(36, 1); // 900 * 4%
-    // a parte fixa (CTO Promocional) é 1% + o mesmo adicional de 1% do vendedor = 2% (nunca suprimido pela família)
-    expect(linha.segregacaoComissaoFixa?.percentualFixo).toBe(1);
-    expect(linha.segregacaoComissaoFixa?.adicionalVendedorPercentual).toBe(1);
-    expect(linha.segregacaoComissaoFixa?.comissaoValorFixa).toBeCloseTo(2, 10); // 100 * 2%, nunca 100 * 1%
+    expect(resultado.linhas.map((l) => l.numeroPedido)).toEqual(['80']);
+    expect(resultado.resumo.quantidadePedidos).toBe(1);
+    expect(resultado.resumo.comissaoTotalCalculada).toBeCloseTo(5.7, 10);
+    expect(resultado.excecoesApuracao).toEqual([
+      expect.objectContaining({
+        numeroPedido: '81',
+        nomeVendedor: 'João',
+        problemas: [expect.objectContaining({ codigo: 'PA00000055', tabela: null, motivo: 'TABELA_NAO_IDENTIFICADA' })],
+      }),
+    ]);
   });
 
-  it('BUG REAL corrigido: pedido 100% CTO Promocional com vendedor especial (Sandro) soma o adicional — antes ficava travado em 1%/0%', async () => {
-    // Reproduz o pedido real nº 53 (Sandro Cedro): 100% de itens da família CTO Promocional,
-    // margem de comissionamento alta (86,68%) — antes desta correção, o sistema ignorava tanto a
-    // margem quanto o adicional do vendedor nesse caso, sempre travando em 1%/0%.
-    const pedidoPromoSandro = pedido({
-      codigoPedido: 65,
-      numeroPedido: '65',
-      etapa: '50',
-      codigoCliente: 500,
-      codVend: 300,
-      quantidade: 10,
-      valorUnitario: 500,
-      valorMercadoria: 4345,
-      valorTotalPedido: 5013,
-      valorIPI: 326,
-      valorIcmsSt: 342,
-    });
-    const vendedorSandro: VendedorInfo[] = [{ codigo: 300, nome: 'Sandro Cedro', inativo: false }];
-    const estoques = new Map([[1, { listaEstoque: [{ nCMC: 1 }] }]]);
-    const produtos = new Map([[1, { codigo_produto: 1, descricao_familia: 'CTO Promocional' }]]);
-    const cliente = new ClienteComissionamentoOmieFalso([pedidoPromoSandro], vendedorSandro, CLIENTES, estoques, new Map(), undefined, produtos);
-
+  it('tabela/item alterados depois da venda: apura com o PREÇO ATUAL da tabela ativa (decisão de 2026-10-06), sem bloqueio', async () => {
+    const venda = pedido({ codigoPedido: 82, numeroPedido: '82', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190, dataInclusao: '01/09/2026' });
+    const tabelas = [tabelaPreco('003', [itemTabela(1, 190, '05/10/2026', '10:28:09')], { dataAlteracao: '05/10/2026', horaAlteracao: '10:30:00', consultadoEm: '2026-10-06T15:00:00.000Z' })];
+    const cliente = new ClienteComissionamentoOmieFalso([venda], VENDEDORES, CLIENTES, new Map(), new Map(), undefined, undefined, tabelas);
     const resultado = await gerarRelatorioComissionamento(cliente, {});
-    const linha = resultado.linhas[0];
-    if (linha === undefined) throw new Error('linha ausente');
 
-    // Comissão normal (base) continua sendo o percentual FIXO da família (1%), não a margem — a família
-    // trava o percentual base, mas o adicional do vendedor especial sempre soma por cima.
-    expect(linha.comissaoNormalPercentual).toBe(1);
-    expect(linha.adicionalVendedorPercentual).toBe(1);
-    expect(linha.comissaoFinalPercentual).toBe(2);
-    expect(linha.segregacaoComissaoFixa).toBeUndefined(); // pedido puro (100% promocional), sem segregação a exibir
-    expect(linha.comissaoTotal).toBeCloseTo(4345 * 0.02, 10);
+    expect(resultado.excecoesApuracao).toEqual([]);
+    expect(resultado.linhas[0]?.comissaoTotal).toBeCloseTo(5.7, 10);
+    expect(resultado.linhas[0]?.composicaoItens?.[0]).toMatchObject({
+      referencia: 'PRECO_ATUAL_TABELA_ATIVA',
+      precoConsultadoEm: '2026-10-06T15:00:00.000Z',
+      itemAlteradoEm: '05/10/2026 10:28:09',
+    });
+  });
+
+  it('tabela INATIVA indicada pelo ID interno do item → exceção com produto, tabela e motivo', async () => {
+    const venda = pedido({ codigoPedido: 84, numeroPedido: '84', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190, codigoTabelaPreco: ID_TABELA_003 });
+    const tabelas = [tabelaPreco('003', [itemTabela(1, 190)], { ativa: false })];
+    const cliente = new ClienteComissionamentoOmieFalso([venda], VENDEDORES, CLIENTES, new Map(), new Map(), undefined, undefined, tabelas);
+    const resultado = await gerarRelatorioComissionamento(cliente, {});
+    expect(resultado.linhas).toEqual([]);
+    expect(resultado.excecoesApuracao[0]?.problemas[0]).toMatchObject({ codigo: 'P1', motivo: 'TABELA_INATIVA', tabela: '003 — TABELA DE VENDA - 07/26' });
+  });
+
+  it('ID interno indicado no item tem prioridade; produto fora dele vira exceção (nunca troca para outra tabela)', async () => {
+    const venda = pedido({ codigoPedido: 83, numeroPedido: '83', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190, codigoTabelaPreco: ID_TABELA_003 });
+    const tabelas = [tabelaPreco('002', [itemTabela(1, 175)]), tabelaPreco('003', [])];
+    const cliente = new ClienteComissionamentoOmieFalso([venda], VENDEDORES, CLIENTES, new Map(), new Map(), undefined, undefined, tabelas);
+    const resultado = await gerarRelatorioComissionamento(cliente, {});
+    expect(resultado.excecoesApuracao[0]?.problemas[0]?.motivo).toBe('PRODUTO_FORA_DA_TABELA_INFORMADA');
+  });
+
+  it('faturamento parcial: itens zerados do registro original não exigem tabela; a fatura filha é apurada normalmente', async () => {
+    // Produto 99 (só no original, zerado) não está em tabela nenhuma — não pode bloquear o pedido.
+    const original = pedido({ codigoPedido: 1540, numeroPedido: '154', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 0, valorUnitario: 0, valorMercadoria: 0, dataInclusao: '01/08/2026', codigoProduto: 99 });
+    const fatura = pedido({ codigoPedido: 1541, numeroPedido: '154', etapa: '60', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190, dataInclusao: '20/09/2026' });
+    const tabelas = [tabelaPreco('003', [itemTabela(1, 190, '10/09/2026')])];
+    const cliente = new ClienteComissionamentoOmieFalso([original, fatura], VENDEDORES, CLIENTES, new Map(), new Map(), undefined, undefined, tabelas);
+    const resultado = await gerarRelatorioComissionamento(cliente, {});
+    expect(resultado.excecoesApuracao).toEqual([]);
+    expect(resultado.linhas.map((l) => [l.numeroPedido, l.composicaoItens?.length])).toEqual([['154', 1]]);
+    expect(resultado.linhas[0]?.comissaoTotal).toBeCloseTo(5.7, 10);
   });
 });
 
@@ -850,5 +923,20 @@ describe('gerarRelatorioComissionamento — faturamento parcial (BUG REAL corrig
 
     expect(linha.valorFaturado).toBeCloseTo(10000, 2);
     expect(linha.saldoAFaturar).toBeCloseTo(0, 2);
+  });
+});
+
+describe('gerarRelatorioComissionamento — Omie recusando a consulta de títulos (Client-1880 persistente)', () => {
+  it('sem filtro de vendedor, nunca devolve totais sem os títulos de algum vendedor: a falha sobe como erro', async () => {
+    const { OmieErroMetodoEmExecucao } = await import('../../src/omie/erros.js');
+    const venda = pedido({ codigoPedido: 90, numeroPedido: '90', etapa: '50', codigoCliente: 500, codVend: 100, quantidade: 1, valorUnitario: 190, valorMercadoria: 190 });
+    const vendedores: VendedorInfo[] = [...VENDEDORES, { codigo: 2389160395, nome: 'CRM Omie', inativo: false }];
+    const cliente = new ClienteComissionamentoOmieFalso([venda], vendedores, CLIENTES, new Map(), new Map());
+    const original = cliente.listarContasReceberPorVendedor.bind(cliente);
+    cliente.listarContasReceberPorVendedor = async (codigo: number) => {
+      if (codigo === 2389160395) throw new OmieErroMetodoEmExecucao('A Omie continuou recusando a consulta… após 3 tentativas em 71 s.', 'SOAP-ENV:Client-1880');
+      return original(codigo);
+    };
+    await expect(gerarRelatorioComissionamento(cliente, { dataDe: '01/06/2026', dataAte: '30/06/2026' })).rejects.toThrow('após 3 tentativas');
   });
 });

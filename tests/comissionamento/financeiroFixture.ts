@@ -19,8 +19,9 @@ export function tituloFinanceiro(codigo = 10, valor = 500, overrides: Partial<Ti
     statusTitulo: 'RECEBIDO', codigoVendedor: 100, ...overrides };
 }
 
-export function baixaFinanceiro(codigo = 1, titulo = 10, valor = 500, data = '10/09/2026'): BaixaRecebimento {
-  return { codigoBaixa: codigo, codigoLancamentoOmie: titulo, dataRecebimento: data, valorRecebido: valor, juros: 0, multa: 0 };
+/** `codigoVendedor` = cCodVendedor do movimento; sem informar (undefined), o Financeiro faz a busca completa de títulos, como antes. */
+export function baixaFinanceiro(codigo = 1, titulo = 10, valor = 500, data = '10/09/2026', codigoVendedor?: number | null): BaixaRecebimento {
+  return { codigoBaixa: codigo, codigoLancamentoOmie: titulo, dataRecebimento: data, valorRecebido: valor, juros: 0, multa: 0, ...(codigoVendedor !== undefined ? { codigoVendedor } : {}) };
 }
 
 export function clienteFinanceiro(baixas: BaixaRecebimento[], titulos = [tituloFinanceiro(), tituloFinanceiro(11)], pedidos = [pedidoFinanceiro()]) {

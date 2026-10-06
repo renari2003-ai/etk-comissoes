@@ -74,6 +74,7 @@ import {
 } from '../fretes/envioSolicitacoesServico.js';
 import { servicoBuscarTransportadoraOmie } from '../fretes/transportadoraOmieServico.js';
 import { ErroCnpjDestinatarioNaoDisponivel, ErroDadosCotacaoIncompletos, servicoCotarBraspress } from '../fretes/braspressServico.js';
+import { canaisDisponiveis } from '../fretes/canaisTransportadora.js';
 import {
   ErroBraspressFalhou,
   ErroBraspressNaoConfigurada,
@@ -93,6 +94,8 @@ import {
   validarNumeroNaoNegativoObrigatorio,
   validarNumeroNaoNegativoOpcional,
   validarTextoComTamanhoMaximo,
+  validarObservacoesTransportadoraOpcional,
+  validarBooleanoOpcional,
   validarTextoObrigatorio,
   validarTextoOpcional,
   validarUuid,
@@ -367,7 +370,9 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     ...protegida,
     assincrono(async (req, res) => {
       const somenteAtivas = req.query.somenteAtivas === 'true';
-      res.json({ transportadoras: await servicoListarTransportadoras(somenteAtivas) });
+      const transportadoras = await servicoListarTransportadoras(somenteAtivas);
+      // `canaisDisponiveis` (aditivo): canais que o cadastro realmente suporta — o editor de canal só oferece estes.
+      res.json({ transportadoras: transportadoras.map((t) => ({ ...t, canaisDisponiveis: canaisDisponiveis(t) })) });
     }),
   );
 
@@ -379,7 +384,9 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
     assincrono(async (req, res) => {
       const termo = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       if (termo.length < 2 || termo.length > 100) throw new ErroValidacao('Informe de 2 a 100 caracteres para buscar.');
-      res.json({ transportadoras: await servicoBuscarTransportadorasParaSolicitacao(termo) });
+      // `whatsappModo` (aditivo): a tela mostra o total do parâmetro {{6}} quando o envio usa o template aprovado.
+      const whatsappModo = config.fretesWhatsapp !== 'ycloud' ? 'N8N' : config.ycloudTemplateNome !== '' ? 'TEMPLATE' : 'TEXTO';
+      res.json({ transportadoras: await servicoBuscarTransportadorasParaSolicitacao(termo), whatsappModo });
     }),
   );
 
@@ -1045,6 +1052,9 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
           // Tipo/tamanho validados aqui; o formato do e-mail é validado no serviço, por
           // transportadora — um e-mail manual malformado vira erro só daquela linha do lote.
           emailManual: canal === 'EMAIL' ? validarTextoComTamanhoMaximo(item?.emailManual, `transportadoras[${i}].emailManual`, 254) : null,
+          // Instrução só desta transportadora (tipo/tamanho/caracteres validados aqui; acentos e quebras preservados).
+          observacoesTransportadora: validarObservacoesTransportadoraOpcional(item?.observacoesTransportadora, `transportadoras[${i}].observacoesTransportadora`),
+          cienteObservacaoNaoEnviadaApi: validarBooleanoOpcional(item?.cienteObservacaoNaoEnviadaApi, `transportadoras[${i}].cienteObservacaoNaoEnviadaApi`),
         };
       });
       const cubagem = validarCubagemOpcional(req.body?.cubagem);

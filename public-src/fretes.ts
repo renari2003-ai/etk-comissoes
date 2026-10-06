@@ -75,6 +75,8 @@ interface Transportadora {
   canalPrincipal: CanalPrincipalTransportadora | null;
   /** Arquitetura de canais — Fase 1; usada futuramente quando `canalPrincipal = 'SITE'`. */
   urlPortal: string | null;
+  /** Canais de envio que o cadastro suporta (calculado pelo backend na listagem) — o editor de canal só oferece estes. */
+  canaisDisponiveis?: ('EMAIL' | 'WHATSAPP' | 'API')[];
 }
 
 interface Veiculo {
@@ -1126,6 +1128,56 @@ export function inicializarFretes(): { ativar: () => void } {
     renderizarSelectTransportadoras();
   }
 
+  /**
+   * Canal principal editável na listagem: só oferece os canais que o cadastro suporta (API só com
+   * integração). Salva SOMENTE `canalPrincipal` — e-mail, WhatsApp, código Omie e demais contatos
+   * ficam intactos. Vale para as próximas solicitações; as já enviadas mantêm canal e destino, e
+   * nada é reenviado automaticamente. O backend revalida (contato obrigatório / integração API).
+   */
+  function celulaCanalPrincipalEditavel(t: Transportadora): HTMLTableCellElement {
+    const td = document.createElement('td');
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', `Canal principal de ${t.nomeRazaoSocial}`);
+    const disponiveis = t.canaisDisponiveis ?? [];
+    const opcoes: { valor: string; rotulo: string; desabilitada: boolean }[] = [{ valor: '', rotulo: 'Não definido', desabilitada: false }];
+    for (const canal of disponiveis) opcoes.push({ valor: canal, rotulo: ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA[canal], desabilitada: false });
+    // Valor atual fora dos disponíveis (ex.: SITE legado, contato removido) continua visível, mas não pode ser escolhido de novo.
+    if (t.canalPrincipal !== null && !opcoes.some((o) => o.valor === t.canalPrincipal)) {
+      opcoes.push({ valor: t.canalPrincipal, rotulo: `${ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA[t.canalPrincipal]} (indisponível)`, desabilitada: true });
+    }
+    for (const o of opcoes) {
+      const option = document.createElement('option');
+      option.value = o.valor;
+      option.textContent = o.rotulo;
+      option.disabled = o.desabilitada;
+      select.appendChild(option);
+    }
+    const valorAtual = t.canalPrincipal ?? '';
+    select.value = valorAtual;
+    select.addEventListener('change', () => {
+      void (async () => {
+        select.disabled = true;
+        try {
+          const resposta = await fetch(`/api/fretes/transportadoras/${t.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ canalPrincipal: select.value === '' ? null : select.value }),
+          });
+          if (!resposta.ok) {
+            select.value = valorAtual;
+            window.alert(await extrairMensagemErro(resposta));
+            return;
+          }
+          void carregarTransportadoras();
+        } finally {
+          select.disabled = false;
+        }
+      })();
+    });
+    td.appendChild(select);
+    return td;
+  }
+
   function renderizarTabelaTransportadoras(): void {
     const corpo = el<HTMLTableSectionElement>('fretes-tabela-transportadoras-corpo');
     corpo.textContent = '';
@@ -1139,7 +1191,7 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(t.nomeFantasia ? `${t.nomeRazaoSocial} (${t.nomeFantasia})` : t.nomeRazaoSocial));
       tr.appendChild(celula(t.cnpj ?? '—'));
       tr.appendChild(celula(t.contato ?? t.telefone ?? t.email ?? '—'));
-      tr.appendChild(celula(t.canalPrincipal === null ? 'Não definido' : ROTULOS_CANAL_PRINCIPAL_TRANSPORTADORA[t.canalPrincipal]));
+      tr.appendChild(celulaCanalPrincipalEditavel(t));
       tr.appendChild(celula(t.ativo ? 'Ativa' : 'Inativa'));
 
       const tdAcoes = document.createElement('td');
@@ -1524,6 +1576,11 @@ export function inicializarFretes(): { ativar: () => void } {
   const campoVendedorManual = el<HTMLElement>('fretes-cotacao-vendedor-manual-campo');
   const campoVendedorNome = el<HTMLElement>('fretes-cotacao-vendedor-nome-campo');
   const inputVendedorNome = el<HTMLInputElement>('fretes-cotacao-vendedor-nome');
+  const infoDestinoOrigem = el<HTMLElement>('fretes-cotacao-destino-origem');
+  const campoDestinoOutro = el<HTMLElement>('fretes-cotacao-destino-outro-campo');
+  const checkboxDestinoOutro = el<HTMLInputElement>('fretes-cotacao-destino-outro');
+  const fieldsetDestinoManual = el<HTMLFieldSetElement>('fretes-cotacao-destino-manual');
+  const CAMPOS_DESTINO_MANUAL = ['cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf'] as const;
   /** Orçamento já localizado na Omie e exibido para conferência — `null` até a consulta dar certo. */
   let orcamentoPreparado: { numero: string; preparacao: PreparacaoCotacaoOmie } | null = null;
   let consultaOrcamentoEmAndamento = false;
@@ -1564,9 +1621,57 @@ export function inicializarFretes(): { ativar: () => void } {
     return [rua, cidade].filter((v) => v !== '').join(' — ');
   }
 
+  function inputDestinoManual(campo: (typeof CAMPOS_DESTINO_MANUAL)[number]): HTMLInputElement {
+    return el<HTMLInputElement>(`fretes-cotacao-destino-manual-${campo}`);
+  }
+
+  /**
+   * Destino com documento Omie: o endereço da Omie aparece só para conferência (somente leitura) e
+   * só vira MANUAL se o operador marcar "Informar outro endereço" e preencher o endereço completo.
+   * Sem endereço na Omie, o formulário manual aparece direto (é a única fonte possível).
+   */
+  function exibirDestinoDoDocumento(p: PreparacaoCotacaoOmie | null): void {
+    const comDocumento = p !== null;
+    for (const id of ['fretes-cotacao-destino', 'fretes-cotacao-cep-destino']) el<HTMLInputElement>(id).readOnly = comDocumento;
+    checkboxDestinoOutro.checked = false;
+    for (const campo of CAMPOS_DESTINO_MANUAL) inputDestinoManual(campo).value = '';
+    if (p === null) {
+      infoDestinoOrigem.hidden = true;
+      campoDestinoOutro.hidden = true;
+      fieldsetDestinoManual.hidden = true;
+      return;
+    }
+    infoDestinoOrigem.hidden = false;
+    if (p.destino !== null) {
+      infoDestinoOrigem.textContent = 'Endereço de entrega conforme a Omie (somente leitura). Para entregar em outro endereço, marque a opção abaixo.';
+      campoDestinoOutro.hidden = false;
+      fieldsetDestinoManual.hidden = true;
+    } else {
+      infoDestinoOrigem.textContent = 'O documento Omie não tem endereço de entrega — informe o endereço completo abaixo.';
+      campoDestinoOutro.hidden = true;
+      fieldsetDestinoManual.hidden = false;
+    }
+  }
+
+  checkboxDestinoOutro.addEventListener('change', () => {
+    fieldsetDestinoManual.hidden = !checkboxDestinoOutro.checked;
+    if (!checkboxDestinoOutro.checked) for (const campo of CAMPOS_DESTINO_MANUAL) inputDestinoManual(campo).value = '';
+  });
+
+  /** Endereço manual estruturado (nunca mesclado com o da Omie); `null` se o formulário manual não está em uso. */
+  function lerDestinoManualNovaCotacao(): Record<(typeof CAMPOS_DESTINO_MANUAL)[number], string | null> | null {
+    if (fieldsetDestinoManual.hidden) return null;
+    const destino = Object.fromEntries(CAMPOS_DESTINO_MANUAL.map((campo) => [campo, textoOuNulo(inputDestinoManual(campo).value)])) as Record<
+      (typeof CAMPOS_DESTINO_MANUAL)[number],
+      string | null
+    >;
+    return CAMPOS_DESTINO_MANUAL.every((campo) => destino[campo] === null) ? null : destino;
+  }
+
   /** Troca/edição do número: descarta o orçamento anterior e tudo que ele preencheu. */
   function limparDadosOrcamento(): void {
     orcamentoPreparado = null;
+    exibirDestinoDoDocumento(null);
     infoOrcamento.hidden = true;
     exibirClienteVendedorComoCodigo();
     el<HTMLInputElement>('fretes-cotacao-cliente').value = '';
@@ -1599,6 +1704,7 @@ export function inicializarFretes(): { ativar: () => void } {
       definirValorCampoCotacao('fretes-cotacao-valor-mercadoria', p.valorTotalPedido || null);
       definirValorCampoCotacao('fretes-cotacao-destino', p.destino === null ? null : resumoDestinoOrcamento(p.destino));
       definirValorCampoCotacao('fretes-cotacao-cep-destino', p.destino?.cep ?? null);
+      exibirDestinoDoDocumento(p);
       definirValorCampoCotacao('fretes-cotacao-peso', p.logistica.pesoBruto);
       definirValorCampoCotacao('fretes-cotacao-volumes', p.logistica.quantidadeVolumes);
       const tipo = p.documentoOmieTipo === 'ORCAMENTO' ? 'ORÇAMENTO OMIE' : 'PEDIDO OMIE';
@@ -1651,9 +1757,14 @@ export function inicializarFretes(): { ativar: () => void } {
           return;
         }
         // Documento Omie: o backend relê a Omie (fonte da verdade) exigindo o MESMO tipo conferido
-        // aqui; o destino só é enviado se a Omie não tiver um.
-        const cepDestino = textoOuNulo(dadosForm.get('cepDestino'));
-        const destinoOverride = orcamentoPreparado.preparacao.destino === null && cepDestino !== null ? { cep: cepDestino } : null;
+        // aqui. O destino só é enviado quando o operador informa um endereço manual (completo e
+        // estruturado) — o endereço da Omie pré-preenchido nunca é reenviado nem marcado como MANUAL.
+        const destinoOverride = lerDestinoManualNovaCotacao();
+        if (checkboxDestinoOutro.checked && destinoOverride === null) {
+          erroCotacao.textContent = 'Preencha o endereço de entrega manual ou desmarque "Informar outro endereço de entrega".';
+          erroCotacao.hidden = false;
+          return;
+        }
         resposta = await fetch(`/api/fretes/omie/documentos/${encodeURIComponent(numeroOrcamento)}/confirmar`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1976,11 +2087,47 @@ export function inicializarFretes(): { ativar: () => void } {
     urlPortal: string | null;
     whatsappCadastrado: boolean;
     apiIntegrada: boolean;
+    /** Braspress cadastrada, mas a API não está configurada no servidor (API indisponível). */
+    apiNaoConfigurada?: boolean;
   }
 
   interface TransportadoraSelecionada extends TransportadoraBusca {
     canal: CanalEnvio | null;
     emailManual: string;
+    /** "Observações para a transportadora" — só desta transportadora, preservada ao trocar canal/re-renderizar. */
+    observacoesTransportadora: string;
+    /** Canal API: operador confirmou que a observação NÃO será transmitida (a API não tem esse campo). */
+    cienteObservacaoNaoEnviadaApi: boolean;
+  }
+
+  /** Mesmo limite do backend (`LIMITE_OBSERVACOES_TRANSPORTADORA`) — cabe no parâmetro {{6}} do template de WhatsApp. */
+  const LIMITE_OBSERVACOES_TRANSPORTADORA = 900;
+  /** Limite do parâmetro {{6}} do template aprovado (mesmo do backend). */
+  const LIMITE_PARAMETRO_TEMPLATE_WHATSAPP = 1024;
+  const ROTULO_OBSERVACOES_TRANSPORTADORA = 'Observações para a transportadora';
+  /** Modo do WhatsApp no servidor (vem da busca): só no TEMPLATE a tela calcula o total do {{6}}. */
+  let whatsappModo: 'TEMPLATE' | 'TEXTO' | 'N8N' | null = null;
+
+  /** Mesma normalização do backend para parâmetros (quebra de linha/tab → " | "). */
+  function normalizarParametroWhatsapp(texto: string): string {
+    return texto.replace(/[\r\n\t]+/g, ' | ').replace(/ {4,}/g, ' ').trim();
+  }
+
+  /** Tamanho do parâmetro {{6}}: observações da cotação + " | " + rótulo + ": " + observação desta transportadora. */
+  function tamanhoParametroObservacoes(s: TransportadoraSelecionada): number {
+    const partes = [
+      cotacaoEnvioAtual?.observacoes?.trim() ? cotacaoEnvioAtual.observacoes : null,
+      observacaoPreenchida(s) ? `${ROTULO_OBSERVACOES_TRANSPORTADORA}: ${s.observacoesTransportadora}` : null,
+    ].filter((p): p is string => p !== null);
+    return partes.length === 0 ? 1 : normalizarParametroWhatsapp(partes.join(' | ')).length;
+  }
+
+  function excedeTemplateWhatsapp(s: TransportadoraSelecionada): boolean {
+    return s.canal === 'WHATSAPP' && whatsappModo === 'TEMPLATE' && tamanhoParametroObservacoes(s) > LIMITE_PARAMETRO_TEMPLATE_WHATSAPP;
+  }
+
+  function observacaoPreenchida(s: TransportadoraSelecionada): boolean {
+    return s.observacoesTransportadora.trim() !== '';
   }
 
   interface ResultadoEnvioTransportadora {
@@ -2026,6 +2173,7 @@ export function inicializarFretes(): { ativar: () => void } {
     const notas: string[] = [];
     if (t.urlPortal !== null && !t.apiIntegrada) notas.push('Portal cadastrado — integração API não disponível');
     if (t.whatsappCadastrado && !t.canaisDisponiveis.includes('WHATSAPP')) notas.push('WhatsApp cadastrado inválido — corrija o número no cadastro');
+    if (t.apiNaoConfigurada === true) notas.push('Integração API não configurada no servidor — API indisponível');
     return notas;
   }
 
@@ -2045,7 +2193,7 @@ export function inicializarFretes(): { ativar: () => void } {
 
   function selecionarTransportadora(t: TransportadoraBusca): void {
     if (motivoNaoSelecionavel(t) !== null) return;
-    selecionadas.push({ ...t, canal: t.canalSugerido, emailManual: '' });
+    selecionadas.push({ ...t, canal: t.canalSugerido, emailManual: '', observacoesTransportadora: '', cienteObservacaoNaoEnviadaApi: false });
     renderizarSelecionadas();
     renderizarResultadosBusca(ultimosResultadosBusca);
   }
@@ -2119,7 +2267,8 @@ export function inicializarFretes(): { ativar: () => void } {
       renderizarResultadosBusca([]);
       return;
     }
-    const dados = (await resposta.json()) as { transportadoras: TransportadoraBusca[] };
+    const dados = (await resposta.json()) as { transportadoras: TransportadoraBusca[]; whatsappModo?: 'TEMPLATE' | 'TEXTO' | 'N8N' };
+    whatsappModo = dados.whatsappModo ?? null;
     infoBuscaTransportadora.hidden = true;
     // Não achou no cadastro ETK: oferece a busca na Omie (somente leitura, nunca cadastra sozinha).
     ofertaBuscaOmie.hidden = dados.transportadoras.length > 0 || envioBloqueadoPorStatus;
@@ -2364,6 +2513,7 @@ export function inicializarFretes(): { ativar: () => void } {
         });
         tdCanal.appendChild(inputEmail);
       }
+      tdCanal.appendChild(campoObservacoesTransportadora(s));
       tr.appendChild(tdCanal);
 
       const tdRemover = document.createElement('td');
@@ -2377,6 +2527,65 @@ export function inicializarFretes(): { ativar: () => void } {
       corpoSelecionadas.appendChild(tr);
     }
     atualizarConferenciaEnvio();
+  }
+
+  /**
+   * "Observações para a transportadora": instrução opcional SÓ desta transportadora (gravada na
+   * solicitação dela; nunca vai para as outras). Não confundir com as Observações da cotação.
+   * Canal API (Braspress) não tem esse campo: aviso + confirmação explícita antes do envio.
+   */
+  function campoObservacoesTransportadora(s: TransportadoraSelecionada): HTMLElement {
+    const nome = nomeTransportadoraBusca(s);
+    const bloco = document.createElement('div');
+    bloco.className = 'fretes-selecionada-observacoes';
+    const idCampo = `fretes-obs-transportadora-${s.id}`;
+    const label = document.createElement('label');
+    label.htmlFor = idCampo;
+    label.textContent = 'Observações para a transportadora';
+    const textarea = document.createElement('textarea');
+    textarea.id = idCampo;
+    textarea.rows = 2;
+    textarea.maxLength = LIMITE_OBSERVACOES_TRANSPORTADORA;
+    textarea.value = s.observacoesTransportadora;
+    textarea.placeholder = 'Opcional — enviada só para esta transportadora';
+    const contador = document.createElement('span');
+    contador.className = 'filtro-data-legenda';
+    const contadorTemplate = document.createElement('span');
+    contadorTemplate.className = 'filtro-data-legenda';
+    const avisoApi = document.createElement('div');
+    avisoApi.className = 'fretes-selecionada-aviso-api';
+    const textoAviso = document.createElement('p');
+    textoAviso.textContent = `A API da Braspress não tem campo para observações: este texto NÃO será enviado para ${nome}. Para enviá-lo, escolha E-mail ou WhatsApp.`;
+    const labelCiente = document.createElement('label');
+    const checkCiente = document.createElement('input');
+    checkCiente.type = 'checkbox';
+    checkCiente.checked = s.cienteObservacaoNaoEnviadaApi;
+    labelCiente.append(checkCiente, ' Ciente — enviar pela API sem a observação');
+    avisoApi.append(textoAviso, labelCiente);
+    const atualizar = () => {
+      contador.textContent = `${textarea.value.length}/${LIMITE_OBSERVACOES_TRANSPORTADORA}`;
+      // Template do WhatsApp: total REAL do parâmetro {{6}} (observações da cotação + rótulo + esta observação).
+      const mostrarTemplate = s.canal === 'WHATSAPP' && whatsappModo === 'TEMPLATE';
+      contadorTemplate.hidden = !mostrarTemplate;
+      if (mostrarTemplate) {
+        const total = tamanhoParametroObservacoes(s);
+        contadorTemplate.textContent = `WhatsApp (template) — observações da cotação + rótulo + esta observação: ${total}/${LIMITE_PARAMETRO_TEMPLATE_WHATSAPP}`;
+        contadorTemplate.classList.toggle('fretes-texto-alerta', total > LIMITE_PARAMETRO_TEMPLATE_WHATSAPP);
+      }
+      avisoApi.hidden = !(s.canal === 'API' && observacaoPreenchida(s));
+    };
+    textarea.addEventListener('input', () => {
+      s.observacoesTransportadora = textarea.value;
+      atualizar();
+      atualizarConferenciaEnvio();
+    });
+    checkCiente.addEventListener('change', () => {
+      s.cienteObservacaoNaoEnviadaApi = checkCiente.checked;
+      atualizarConferenciaEnvio();
+    });
+    atualizar();
+    bloco.append(label, textarea, contador, contadorTemplate, avisoApi);
+    return bloco;
   }
 
   /** Dados da carga: só leitura, direto da cotação (nenhuma segunda fonte de verdade). */
@@ -2504,6 +2713,17 @@ export function inicializarFretes(): { ativar: () => void } {
     const c = cotacaoEnvioAtual;
     for (const s of selecionadas) {
       const nome = nomeTransportadoraBusca(s).toUpperCase();
+      if (s.observacoesTransportadora.length > LIMITE_OBSERVACOES_TRANSPORTADORA) {
+        bloqueios.push(`${nome}: "Observações para a transportadora" excede ${LIMITE_OBSERVACOES_TRANSPORTADORA} caracteres.`);
+      }
+      if (excedeTemplateWhatsapp(s)) {
+        bloqueios.push(
+          `${nome}: observações da cotação + "${ROTULO_OBSERVACOES_TRANSPORTADORA}" somam ${tamanhoParametroObservacoes(s)} caracteres no WhatsApp (limite ${LIMITE_PARAMETRO_TEMPLATE_WHATSAPP}) — reduza o texto.`,
+        );
+      }
+      if (s.canal === 'API' && observacaoPreenchida(s) && !s.cienteObservacaoNaoEnviadaApi) {
+        bloqueios.push(`${nome}: a API não envia "Observações para a transportadora" — confirme o aviso, apague a observação ou escolha outro canal.`);
+      }
       if (s.canal === null) continue;
       if (s.canal === 'EMAIL' && s.emailManual.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.emailManual.trim())) {
         avisos.push(`${nome}: e-mail manual inválido.`);
@@ -2584,6 +2804,8 @@ export function inicializarFretes(): { ativar: () => void } {
           id: s.id,
           canal: s.canal,
           emailManual: s.canal === 'EMAIL' ? textoOuNulo(s.emailManual) : null,
+          observacoesTransportadora: observacaoPreenchida(s) ? s.observacoesTransportadora : null,
+          cienteObservacaoNaoEnviadaApi: s.canal === 'API' && observacaoPreenchida(s) && s.cienteObservacaoNaoEnviadaApi,
         })),
         cubagem: embalagens.length > 0 ? embalagens : null,
       };

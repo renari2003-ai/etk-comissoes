@@ -71,9 +71,23 @@ export async function enviarWhatsappYCloud(mensagem: MensagemWhatsapp, fetchImpl
     throw new ErroEnvioYCloudFalhou(true, 'YCLOUD_DESTINO_INVALIDO: número de WhatsApp de destino fora do formato internacional — nada foi enviado.');
   }
 
+  // Nunca corta o texto em silêncio (2026-10-06): acima do limite do WhatsApp, nada é enviado.
+  if (mensagem.tipo === 'texto' && mensagem.texto.length > 4096) {
+    throw new ErroEnvioYCloudFalhou(false, `YCLOUD_MENSAGEM_LONGA: a mensagem tem ${mensagem.texto.length} caracteres (limite 4096) — nada foi enviado.`);
+  }
+  // Template: cada parâmetro do corpo tem limite de 1024 caracteres (referência da API YCloud) — nunca cortado.
+  if (mensagem.tipo === 'template') {
+    const indice = mensagem.parametros.findIndex((p) => p.length > 1024);
+    if (indice >= 0) {
+      throw new ErroEnvioYCloudFalhou(
+        false,
+        `YCLOUD_PARAMETRO_LONGO: o parâmetro {{${indice + 1}}} tem ${mensagem.parametros[indice]!.length} caracteres (limite 1024) — nada foi enviado.`,
+      );
+    }
+  }
   const corpo =
     mensagem.tipo === 'texto'
-      ? { from: remetente, to: mensagem.para, type: 'text', text: { body: mensagem.texto.slice(0, 4096), preview_url: false } }
+      ? { from: remetente, to: mensagem.para, type: 'text', text: { body: mensagem.texto, preview_url: false } }
       : {
           from: remetente,
           to: mensagem.para,
