@@ -29,6 +29,12 @@ function respostaJson(corpo: unknown, status = 200): Response {
 const base = { cnpj: CNPJ_TESTE, senha: SENHA_TESTE, url: 'https://exemplo.invalido/cotar', timeoutMs: 200 };
 
 describe('Fase Braspress 1 — cliente', () => {
+  it('preserva erros oficiais de cadastro sem expor a senha', async () => {
+    const fetchImpl = async () => respostaJson({ statusCode: 400, message: 'Remetente não cadastrado', errorList: [`password=${SENHA_TESTE}`, 'CEP não atendido'] }, 400);
+    await expect(cotarNaBraspress(entrada, { ...base, fetchImpl })).rejects.toThrow(/Remetente não cadastrado.*CEP não atendido/);
+    const erro = await cotarNaBraspress(entrada, { ...base, fetchImpl }).catch((e: Error) => e);
+    expect((erro as Error).message).not.toContain(SENHA_TESTE);
+  });
   it('autentica com Basic (CNPJ:senha) e monta o request conforme a API oficial', async () => {
     const fetchImpl = vi.fn(async () => respostaJson({ id: 147670114, prazo: 5, totalFrete: 42.14 }));
     await cotarNaBraspress(entrada, { ...base, fetchImpl: fetchImpl as unknown as typeof fetch });

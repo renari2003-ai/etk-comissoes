@@ -11,6 +11,7 @@
  * nunca são logados nem incluídos em mensagens de erro.
  */
 import { config } from '../../config.js';
+import { sanitizarTextoErro } from './sanitizacao.js';
 
 export interface ItemCubagemBraspress {
   /** Metros. */
@@ -146,16 +147,23 @@ export async function cotarNaBraspress(entrada: EntradaCotacaoBraspress, opcoes:
       }
       throw new ErroBraspressFalhou('Falha de rede ao consultar a Braspress.');
     }
-    if (resposta.status === 401 || resposta.status === 403) {
-      throw new ErroBraspressFalhou('A Braspress recusou as credenciais configuradas.');
-    }
-    if (!resposta.ok) throw new ErroBraspressFalhou(`A Braspress respondeu HTTP ${resposta.status}.`);
-
     let json: unknown;
     try {
       json = await resposta.json();
     } catch {
+      if (!resposta.ok) throw new ErroBraspressFalhou(`A Braspress respondeu HTTP ${resposta.status}.`);
       throw new ErroBraspressFalhou('Resposta da Braspress não é um JSON válido.');
+    }
+    const objeto = typeof json === 'object' && json !== null ? json as Record<string, unknown> : null;
+    // Contrato oficial de erro: statusCode/message/errorList. Não expõe o corpo bruto.
+    if (!resposta.ok || (objeto && Number(objeto.statusCode) >= 400)) {
+      const mensagens = [objeto?.message, ...(Array.isArray(objeto?.errorList) ? objeto.errorList : [])]
+        .map((item) => typeof item === 'string' ? item : (typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).message === 'string' ? (item as Record<string, unknown>).message as string : ''))
+        .filter(Boolean);
+      const detalhe = sanitizarTextoErro(mensagens.join('; '), [senha, autorizacao, Buffer.from(`${cnpj}:${senha}`).toString('base64')]).slice(0, 1000);
+      const codigo = !resposta.ok ? resposta.status : Number(objeto?.statusCode);
+      const resumo = codigo === 401 ? 'A Braspress recusou a autenticação' : 'A Braspress recusou a cotação';
+      throw new ErroBraspressFalhou(`${resumo} (HTTP ${codigo}).${detalhe ? ` ${detalhe}` : ''}`);
     }
     return normalizarRespostaBraspress(json);
   } finally {

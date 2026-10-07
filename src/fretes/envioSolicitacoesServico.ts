@@ -420,7 +420,7 @@ async function processarItemEnvio(
       return falha(nome, MENSAGEM_CADASTRO_INVALIDO[item.canal], detalhe);
     }
     if (erro instanceof ErroBraspressNaoConfigurada || erro instanceof ErroBraspressFalhou) {
-      return falha(nome, MENSAGENS_ENVIO.API_FALHOU, detalhe);
+      return falha(nome, `${MENSAGENS_ENVIO.API_FALHOU} ${detalhe}`, detalhe);
     }
     // Dados da cotação que o operador precisa corrigir (ex.: dimensões faltando) — mensagem acionável.
     if (erro instanceof ErroValidacao) return falha(nome, `Erro: ${erro.message}`, detalhe);

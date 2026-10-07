@@ -345,7 +345,7 @@ export interface DadosComplementaresCotacaoOmie {
   custoManual: number | null;
   valorMercadoria: number | null;
   observacoes: string | null;
-  /** Só complementam o que a Omie não trouxe (peso/volumes da Omie sempre têm prioridade). */
+  /** Peso confirmado pelo operador tem prioridade; volumes complementam a Omie. */
   peso?: number | null;
   volumes?: number | null;
 }
@@ -396,8 +396,8 @@ export async function servicoCriarCotacaoDeOmie(
     cidadeDestino: destinoFinal.cidade,
     ufDestino: destinoFinal.uf,
     codigoMunicipioDestino: destinoFinal.codigoMunicipio,
-    peso: preparacao.logistica.pesoBruto ?? dadosComplementares.peso ?? null,
-    pesoBruto: preparacao.logistica.pesoBruto,
+    peso: dadosComplementares.peso ?? preparacao.logistica.pesoBruto ?? null,
+    pesoBruto: dadosComplementares.peso ?? preparacao.logistica.pesoBruto,
     pesoLiquido: preparacao.logistica.pesoLiquido,
     volumes: preparacao.logistica.quantidadeVolumes ?? dadosComplementares.volumes ?? null,
     especieVolumes: preparacao.logistica.especieVolumes,

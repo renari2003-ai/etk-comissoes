@@ -81,6 +81,13 @@ describe('template do e-mail de cotação', () => {
   it('nenhum dado comercial interno no e-mail', () => {
     const { texto, html } = montarEmailCotacao(payload());
     const tudo = `${texto} ${html}`.toLowerCase();
-    for (const proibido of ['margem', 'markup', 'comiss', 'custo', 'valor de venda', 'valor da mercadoria']) expect(tudo).not.toContain(proibido);
+    for (const proibido of ['margem', 'markup', 'comiss', 'custo', 'valor de venda']) expect(tudo).not.toContain(proibido);
+  });
+
+  it('inclui valor declarado da nota em HTML e texto, sem inventar valor ausente', () => {
+    const email = montarEmailCotacao(payload({ valorMercadoria: 264.72 }));
+    expect(email.texto).toMatch(/Valor da mercadoria \(nota\): R\$\s*264,72/);
+    expect(email.html).toMatch(/R\$\s*264,72/);
+    expect(montarEmailCotacao(payload()).texto).not.toContain('Valor da mercadoria');
   });
 });

@@ -464,7 +464,7 @@ describe('orquestrador de envio (serviços existentes mockados)', () => {
         }) as unknown as DependenciasEnvio['cotarBraspress'],
       });
       const [erroApi] = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, [{ transportadoraId: BRASPRESS.id, canal: 'API', emailManual: null }], CUBAGEM, USUARIO_TESTE, falhou);
-      expect(erroApi).toMatchObject({ status: 'FALHOU', mensagem: MENSAGENS_ENVIO.API_FALHOU });
+      expect(erroApi).toMatchObject({ status: 'FALHOU', mensagem: `${MENSAGENS_ENVIO.API_FALHOU} A Braspress respondeu HTTP 503.` });
       expect(falhou.registrarAuditoria).toHaveBeenCalledWith(
         expect.objectContaining({ valorNovo: expect.objectContaining({ detalheTecnico: 'A Braspress respondeu HTTP 503.' }) }),
       );

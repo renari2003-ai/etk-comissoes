@@ -99,6 +99,7 @@ export function montarPayloadN8n(
       pesoBruto: cotacao.pesoBruto,
       pesoLiquido: cotacao.pesoLiquido,
       peso: cotacao.peso,
+      valorMercadoria: cotacao.valorMercadoria,
       volumes: cotacao.volumes,
       especie: cotacao.especieVolumes,
       cnpjOrigem: cnpjs.cnpjOrigem,

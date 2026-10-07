@@ -663,6 +663,15 @@ describe('servicoPrepararCotacaoDeOmie (Fase 3.2 — preparação, nunca persist
 });
 
 describe('servicoCriarCotacaoDeOmie (Fase 3.2 — confirmação)', () => {
+  it('mantém o peso confirmado pelo operador mesmo quando a Omie informa outro', async () => {
+    const servico = await importarServico();
+    const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);
+    const cotacao = await servico.servicoCriarCotacaoDeOmie(cliente, '888001', 'PEDIDO', null,
+      { modalidade: 'CIF', modalidadeExecucao: 'TRANSPORTADORA', veiculoId: null, motoristaNome: null, custoManual: null, valorMercadoria: 264.72, observacoes: null, peso: 3.292 }, USUARIO_TESTE);
+    expect(cotacao.peso).toBe(3.292);
+    expect(cotacao.pesoBruto).toBe(3.292);
+    expect(cotacao.pesoLiquido).toBe(7);
+  });
   it('cria a cotação com snapshot do destino resolvido (CLIENTE_ENTREGA) e dados logísticos preservados', async () => {
     const servico = await importarServico();
     const cliente = clienteOmieFakeComEndereco(pedidoOmieDeTeste(), CLIENTE_TESTE_COM_ENTREGA);

@@ -3,7 +3,7 @@
  * workflow n8n "ETK - Homologação Cotação Frete" (backup em `n8n Backup/Workflows`), mantendo
  * assunto, layout, linhas e campos de resposta. Função pura: recebe o MESMO payload v1 que ia
  * para o n8n (`PayloadSolicitacaoN8n`), que por contrato só tem dado logístico — nenhum campo
- * comercial (margem, custo, markup, valor de venda) chega aqui.
+ * comercial interno (margem, custo, markup) chega aqui. O valor declarado da carga é necessário para cotar/segurar o frete.
  */
 import type { PayloadSolicitacaoN8n } from '../integracoes/n8nCliente.js';
 
@@ -70,6 +70,7 @@ export function linhasDadosCotacao(payload: PayloadSolicitacaoN8n): [string, str
     ['Destino', local(L.destino, L.cepDestino)],
     ['CNPJ Destino', fmtCnpj(L.cnpjDestino)],
     ['Modalidade', L.modalidade],
+    ['Valor da mercadoria (nota)', L.valorMercadoria == null ? null : L.valorMercadoria.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })],
     [
       'Peso total',
       pesoT === null ? null : `${fmtN(pesoT)} kg${pesoL !== null && pesoL !== pesoT ? ` (líquido: ${fmtN(pesoL)} kg)` : ''}`,

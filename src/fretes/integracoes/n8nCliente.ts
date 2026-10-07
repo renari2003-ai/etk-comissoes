@@ -39,6 +39,8 @@ export interface PayloadSolicitacaoN8n {
     pesoBruto: number | null;
     pesoLiquido: number | null;
     peso: number | null;
+    /** Valor declarado da carga para seguro/cotação; não é margem nem custo interno. */
+    valorMercadoria?: number | null;
     volumes: number | null;
     especie: string | null;
     /**
