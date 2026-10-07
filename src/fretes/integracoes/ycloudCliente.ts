@@ -124,12 +124,34 @@ export async function enviarWhatsappYCloud(mensagem: MensagemWhatsapp, fetchImpl
   } catch {
     dados = {};
   }
-  const codigo = typeof dados.errorCode === 'string' || typeof dados.errorCode === 'number' ? String(dados.errorCode) : '';
-  const textoErro = typeof dados.errorMessage === 'string' ? dados.errorMessage : typeof dados.message === 'string' ? dados.message : '';
+  const erroApi = dados.error !== null && typeof dados.error === 'object' && !Array.isArray(dados.error)
+    ? dados.error as Record<string, unknown> : {};
+  const codigoBruto = erroApi.code ?? dados.errorCode;
+  const codigo = typeof codigoBruto === 'string' || typeof codigoBruto === 'number' ? String(codigoBruto) : '';
+  const textoErro = typeof erroApi.message === 'string' ? erroApi.message : typeof dados.errorMessage === 'string' ? dados.errorMessage : typeof dados.message === 'string' ? dados.message : '';
+  const motivos: Record<string, string> = {
+    ACCOUNT_LIMITED: 'Conta limitada: confira os destinatários autorizados para teste.',
+    ACCOUNT_UNAVAILABLE: 'Conta indisponível: consulte o suporte YCloud.',
+    BALANCE_INSUFFICIENT: 'Saldo insuficiente na YCloud.',
+    WHATSAPP_PHONE_NUMBER_UNAVAILABLE: 'Número remetente de WhatsApp indisponível: confira sua vinculação na YCloud.',
+    WHATSAPP_TEMPLATE_UNAVAILABLE: 'Template indisponível: confira o nome, idioma e aprovação pela Meta.',
+    WHATSAPP_WABA_UNAVAILABLE: 'Conta WhatsApp Business indisponível.',
+    RECIPIENT_IN_BLOCK_LIST: 'Destinatário bloqueado na YCloud.',
+    RECIPIENT_UNSUBSCRIBED: 'Destinatário cancelou o recebimento de mensagens.',
+    CONTENT_PROHIBITED: 'Conteúdo recusado pela YCloud.',
+    UNAUTHORIZED: 'Autenticação recusada pela YCloud.',
+  };
 
   if (!resposta.ok) {
-    if (resposta.status === 401 || resposta.status === 403) {
-      throw new ErroEnvioYCloudFalhou(false, `YCLOUD_AUTENTICACAO: a YCloud recusou a API key configurada (HTTP ${resposta.status}).`);
+    if (resposta.status === 401) {
+      const detalhe = sanitizar([codigo, textoErro].filter(Boolean).join(' '));
+      throw new ErroEnvioYCloudFalhou(false, `YCLOUD_AUTENTICACAO: a YCloud recusou a autenticação (HTTP 401).${detalhe ? ` Detalhe: ${detalhe}` : ''}`);
+    }
+    if (resposta.status === 403) {
+      const conhecido = Object.prototype.hasOwnProperty.call(motivos, codigo);
+      const detalhe = sanitizar(textoErro);
+      throw new ErroEnvioYCloudFalhou(false,
+        `YCLOUD_RECUSADO: envio negado (HTTP 403).${conhecido ? ` ${codigo}: ${motivos[codigo]}` : codigo ? ` Código: ${sanitizar(codigo)}.` : ''}${detalhe ? ` Detalhe: ${detalhe}` : ''}`);
     }
     const destino = ehDestinoInvalido(codigo, textoErro);
     const detalhe = sanitizar([codigo, textoErro].filter(Boolean).join(' '));

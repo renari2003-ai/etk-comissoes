@@ -34,6 +34,21 @@ describe('telefoneE164 (só whatsapp_cotacao do cadastro)', () => {
 });
 
 describe('envio pela YCloud', () => {
+  it.each(['WHATSAPP_TEMPLATE_UNAVAILABLE', 'BALANCE_INSUFFICIENT', 'ACCOUNT_LIMITED', 'WHATSAPP_PHONE_NUMBER_UNAVAILABLE'])('preserva motivo %s do erro 403 aninhado sem expor segredo', async (code) => {
+    const { enviarWhatsappYCloud } = await cliente();
+    const f = fetchFalso(403, { error: { code, message: `Motivo API key=${CHAVE}` } });
+    const erro = await enviarWhatsappYCloud({ tipo: 'texto', para: '+5511987654321', texto: 'x' }, f.impl).catch((e: unknown) => e) as Error;
+    expect(erro.message).toContain(code);
+    expect(erro.message).toContain('HTTP 403');
+    expect(erro.message).not.toContain('YCLOUD_AUTENTICACAO');
+    expect(erro.message).not.toContain(CHAVE);
+    expect(f.chamadas).toHaveLength(1);
+  });
+  it('403 sem JSON não acusa chave inválida', async () => {
+    const { enviarWhatsappYCloud } = await cliente();
+    const erro = await enviarWhatsappYCloud({ tipo: 'texto', para: '+5511987654321', texto: 'x' }, (async () => new Response('Forbidden', { status: 403 })) as typeof fetch).catch((e: unknown) => e) as Error;
+    expect(erro.message).toBe('YCLOUD_RECUSADO: envio negado (HTTP 403).');
+  });
   it('aceita: POST sendDirectly com X-API-Key, from/to e texto; devolve id, wamid e status', async () => {
     const { enviarWhatsappYCloud } = await cliente();
     const f = fetchFalso(200, { id: 'yc-1', wamid: 'wamid.ABC', status: 'sent' });
