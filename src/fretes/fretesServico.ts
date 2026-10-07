@@ -547,12 +547,12 @@ function temVisaoAmpliadaFrete(usuario: UsuarioPublico): boolean {
   return usuario.papel === 'administrador' || usuario.permissoes.fretesGerencia;
 }
 
-/** Central do Vendedor (seção "Mostrar somente propostas liberadas para aquele vendedor"): só LIBERADA/EM_NEGOCIACAO/ESCOLHIDA, filtradas pelo vendedor dono — exceto visão ampliada. */
+/** Central do Vendedor: propostas triadas do responsável e cotações sem vendedor, visíveis a todos com acesso à central. */
 export async function servicoListarCentralVendedor(usuario: UsuarioPublico): Promise<LinhaCentralFrete[]> {
   const propostas = await listarPropostasPorStatusRevisao(['LIBERADA', 'EM_NEGOCIACAO', 'ESCOLHIDA']);
   const linhas = await montarLinhasCentral(propostas);
   if (temVisaoAmpliadaFrete(usuario)) return linhas;
-  return linhas.filter((linha) => ehVendedorResponsavel(usuario, linha.cotacao));
+  return linhas.filter((linha) => linha.cotacao.vendedorOmieId === null || linha.cotacao.vendedorOmieId === 0 || ehVendedorResponsavel(usuario, linha.cotacao));
 }
 
 function exigirPermissaoLogistica(usuario: UsuarioPublico): void {
