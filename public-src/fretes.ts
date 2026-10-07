@@ -61,6 +61,7 @@ const ROTULOS_MODALIDADE_EXECUCAO: Record<ModalidadeExecucao, string> = {
 };
 
 interface Transportadora {
+  whatsappCotacao: string | null;
   id: string;
   nomeRazaoSocial: string;
   nomeFantasia: string | null;
@@ -1195,6 +1196,12 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(t.ativo ? 'Ativa' : 'Inativa'));
 
       const tdAcoes = document.createElement('td');
+      const editar = document.createElement('button');
+      editar.type = 'button';
+      editar.className = 'botao-secundario';
+      editar.textContent = 'Editar';
+      editar.addEventListener('click', () => editarTransportadora(t));
+      tdAcoes.appendChild(editar);
       const botao = document.createElement('button');
       botao.type = 'button';
       botao.className = 'botao-secundario';
@@ -1235,6 +1242,44 @@ export function inicializarFretes(): { ativar: () => void } {
 
   const formNovaTransportadora = el<HTMLFormElement>('fretes-form-nova-transportadora');
   const erroTransportadora = el<HTMLElement>('fretes-transportadora-erro');
+  const salvarTransportadora = el<HTMLButtonElement>('fretes-transportadora-salvar');
+  const cancelarTransportadora = el<HTMLButtonElement>('fretes-transportadora-cancelar');
+  let transportadoraEditandoId: string | null = null;
+  function encerrarEdicaoTransportadora(): void {
+    transportadoraEditandoId = null;
+    formNovaTransportadora.reset();
+    campoCodigoOmieOculto.value = '';
+    salvarTransportadora.textContent = 'Criar transportadora';
+    cancelarTransportadora.hidden = true;
+    botaoBuscarOmie.disabled = false;
+    erroTransportadora.hidden = true;
+    statusBuscaOmie.hidden = true;
+    areaOpcoesOmie.hidden = true;
+    campoUrlPortal.classList.remove('campo-filtro-destaque');
+  }
+  cancelarTransportadora.addEventListener('click', encerrarEdicaoTransportadora);
+  function editarTransportadora(t: Transportadora): void {
+    if (salvarTransportadora.disabled) return;
+    encerrarEdicaoTransportadora();
+    transportadoraEditandoId = t.id;
+    for (const [campo, valor] of Object.entries({
+      nomeRazaoSocial: t.nomeRazaoSocial, nomeFantasia: t.nomeFantasia, cnpj: t.cnpj,
+      email: t.email, whatsappCotacao: t.whatsappCotacao, telefone: t.telefone,
+      contato: t.contato, canalPrincipal: t.canalPrincipal, urlPortal: t.urlPortal,
+      codigoClienteOmie: t.codigoClienteOmie,
+    })) {
+      const input = formNovaTransportadora.elements.namedItem(campo) as HTMLInputElement | HTMLSelectElement | null;
+      if (input) input.value = valor === null || valor === undefined ? '' : String(valor);
+    }
+    salvarTransportadora.textContent = 'Salvar alterações';
+    cancelarTransportadora.hidden = false;
+    botaoBuscarOmie.disabled = true;
+    campoUrlPortal.classList.toggle('campo-filtro-destaque', t.canalPrincipal === 'SITE');
+    statusBuscaOmie.textContent = `Editando: ${t.nomeRazaoSocial}. Confira os dados e salve as alterações.`;
+    statusBuscaOmie.hidden = false;
+    formNovaTransportadora.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el<HTMLInputElement>('fretes-transportadora-email').focus({ preventScroll: true });
+  }
 
   // Arquitetura de canais — Fase 1: só destaque visual discreto, nenhuma lógica de navegação/obrigatoriedade ainda.
   const selectCanalPrincipal = el<HTMLSelectElement>('fretes-transportadora-canal-principal');
@@ -1362,8 +1407,13 @@ export function inicializarFretes(): { ativar: () => void } {
     void (async () => {
       erroTransportadora.hidden = true;
       const dadosForm = new FormData(formNovaTransportadora);
-      const resposta = await fetch('/api/fretes/transportadoras', {
-        method: 'POST',
+      if (salvarTransportadora.disabled) return;
+      const idEdicao = transportadoraEditandoId;
+      salvarTransportadora.disabled = true;
+      cancelarTransportadora.disabled = true;
+      try {
+      const resposta = await fetch(idEdicao ? `/api/fretes/transportadoras/${idEdicao}` : '/api/fretes/transportadoras', {
+        method: idEdicao ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           nomeRazaoSocial: dadosForm.get('nomeRazaoSocial'),
@@ -1383,10 +1433,17 @@ export function inicializarFretes(): { ativar: () => void } {
         erroTransportadora.hidden = false;
         return;
       }
-      formNovaTransportadora.reset();
-      statusBuscaOmie.hidden = true;
-      areaOpcoesOmie.hidden = true;
-      void carregarTransportadoras();
+      encerrarEdicaoTransportadora();
+      await carregarTransportadoras();
+      statusBuscaOmie.textContent = idEdicao ? 'Transportadora atualizada com sucesso.' : 'Transportadora criada com sucesso.';
+      statusBuscaOmie.hidden = false;
+      } catch {
+        erroTransportadora.textContent = 'Não foi possível concluir a operação. Confira a lista antes de tentar novamente.';
+        erroTransportadora.hidden = false;
+      } finally {
+        salvarTransportadora.disabled = false;
+        cancelarTransportadora.disabled = false;
+      }
     })();
   });
 

@@ -859,6 +859,12 @@ export function inicializarFretes() {
             tr.appendChild(celulaCanalPrincipalEditavel(t));
             tr.appendChild(celula(t.ativo ? 'Ativa' : 'Inativa'));
             const tdAcoes = document.createElement('td');
+            const editar = document.createElement('button');
+            editar.type = 'button';
+            editar.className = 'botao-secundario';
+            editar.textContent = 'Editar';
+            editar.addEventListener('click', () => editarTransportadora(t));
+            tdAcoes.appendChild(editar);
             const botao = document.createElement('button');
             botao.type = 'button';
             botao.className = 'botao-secundario';
@@ -898,6 +904,46 @@ export function inicializarFretes() {
     }
     const formNovaTransportadora = el('fretes-form-nova-transportadora');
     const erroTransportadora = el('fretes-transportadora-erro');
+    const salvarTransportadora = el('fretes-transportadora-salvar');
+    const cancelarTransportadora = el('fretes-transportadora-cancelar');
+    let transportadoraEditandoId = null;
+    function encerrarEdicaoTransportadora() {
+        transportadoraEditandoId = null;
+        formNovaTransportadora.reset();
+        campoCodigoOmieOculto.value = '';
+        salvarTransportadora.textContent = 'Criar transportadora';
+        cancelarTransportadora.hidden = true;
+        botaoBuscarOmie.disabled = false;
+        erroTransportadora.hidden = true;
+        statusBuscaOmie.hidden = true;
+        areaOpcoesOmie.hidden = true;
+        campoUrlPortal.classList.remove('campo-filtro-destaque');
+    }
+    cancelarTransportadora.addEventListener('click', encerrarEdicaoTransportadora);
+    function editarTransportadora(t) {
+        if (salvarTransportadora.disabled)
+            return;
+        encerrarEdicaoTransportadora();
+        transportadoraEditandoId = t.id;
+        for (const [campo, valor] of Object.entries({
+            nomeRazaoSocial: t.nomeRazaoSocial, nomeFantasia: t.nomeFantasia, cnpj: t.cnpj,
+            email: t.email, whatsappCotacao: t.whatsappCotacao, telefone: t.telefone,
+            contato: t.contato, canalPrincipal: t.canalPrincipal, urlPortal: t.urlPortal,
+            codigoClienteOmie: t.codigoClienteOmie,
+        })) {
+            const input = formNovaTransportadora.elements.namedItem(campo);
+            if (input)
+                input.value = valor === null || valor === undefined ? '' : String(valor);
+        }
+        salvarTransportadora.textContent = 'Salvar alterações';
+        cancelarTransportadora.hidden = false;
+        botaoBuscarOmie.disabled = true;
+        campoUrlPortal.classList.toggle('campo-filtro-destaque', t.canalPrincipal === 'SITE');
+        statusBuscaOmie.textContent = `Editando: ${t.nomeRazaoSocial}. Confira os dados e salve as alterações.`;
+        statusBuscaOmie.hidden = false;
+        formNovaTransportadora.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el('fretes-transportadora-email').focus({ preventScroll: true });
+    }
     // Arquitetura de canais — Fase 1: só destaque visual discreto, nenhuma lógica de navegação/obrigatoriedade ainda.
     const selectCanalPrincipal = el('fretes-transportadora-canal-principal');
     const campoUrlPortal = el('fretes-transportadora-campo-url-portal');
@@ -1009,31 +1055,46 @@ export function inicializarFretes() {
         void (async () => {
             erroTransportadora.hidden = true;
             const dadosForm = new FormData(formNovaTransportadora);
-            const resposta = await fetch('/api/fretes/transportadoras', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    nomeRazaoSocial: dadosForm.get('nomeRazaoSocial'),
-                    nomeFantasia: textoOuNulo(dadosForm.get('nomeFantasia')),
-                    cnpj: textoOuNulo(dadosForm.get('cnpj')),
-                    email: textoOuNulo(dadosForm.get('email')),
-                    telefone: textoOuNulo(dadosForm.get('telefone')),
-                    contato: textoOuNulo(dadosForm.get('contato')),
-                    codigoClienteOmie: numeroOuNulo(dadosForm.get('codigoClienteOmie')),
-                    canalPrincipal: textoOuNulo(dadosForm.get('canalPrincipal')),
-                    urlPortal: textoOuNulo(dadosForm.get('urlPortal')),
-                    whatsappCotacao: textoOuNulo(dadosForm.get('whatsappCotacao')),
-                }),
-            });
-            if (!resposta.ok) {
-                erroTransportadora.textContent = await extrairMensagemErro(resposta);
-                erroTransportadora.hidden = false;
+            if (salvarTransportadora.disabled)
                 return;
+            const idEdicao = transportadoraEditandoId;
+            salvarTransportadora.disabled = true;
+            cancelarTransportadora.disabled = true;
+            try {
+                const resposta = await fetch(idEdicao ? `/api/fretes/transportadoras/${idEdicao}` : '/api/fretes/transportadoras', {
+                    method: idEdicao ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        nomeRazaoSocial: dadosForm.get('nomeRazaoSocial'),
+                        nomeFantasia: textoOuNulo(dadosForm.get('nomeFantasia')),
+                        cnpj: textoOuNulo(dadosForm.get('cnpj')),
+                        email: textoOuNulo(dadosForm.get('email')),
+                        telefone: textoOuNulo(dadosForm.get('telefone')),
+                        contato: textoOuNulo(dadosForm.get('contato')),
+                        codigoClienteOmie: numeroOuNulo(dadosForm.get('codigoClienteOmie')),
+                        canalPrincipal: textoOuNulo(dadosForm.get('canalPrincipal')),
+                        urlPortal: textoOuNulo(dadosForm.get('urlPortal')),
+                        whatsappCotacao: textoOuNulo(dadosForm.get('whatsappCotacao')),
+                    }),
+                });
+                if (!resposta.ok) {
+                    erroTransportadora.textContent = await extrairMensagemErro(resposta);
+                    erroTransportadora.hidden = false;
+                    return;
+                }
+                encerrarEdicaoTransportadora();
+                await carregarTransportadoras();
+                statusBuscaOmie.textContent = idEdicao ? 'Transportadora atualizada com sucesso.' : 'Transportadora criada com sucesso.';
+                statusBuscaOmie.hidden = false;
             }
-            formNovaTransportadora.reset();
-            statusBuscaOmie.hidden = true;
-            areaOpcoesOmie.hidden = true;
-            void carregarTransportadoras();
+            catch {
+                erroTransportadora.textContent = 'Não foi possível concluir a operação. Confira a lista antes de tentar novamente.';
+                erroTransportadora.hidden = false;
+            }
+            finally {
+                salvarTransportadora.disabled = false;
+                cancelarTransportadora.disabled = false;
+            }
         })();
     });
     // --- Veículos próprios (Fase 2) -------------------------------------------
