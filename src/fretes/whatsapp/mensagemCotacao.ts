@@ -143,7 +143,7 @@ export function parametrosTemplateWhatsapp(payload: PayloadSolicitacaoN8n): stri
   const mapa = new Map(linhasDadosCotacao(payload));
   const origem = [mapa.get('Origem'), mapa.get('CNPJ Origem') ? `CNPJ ${mapa.get('CNPJ Origem')}` : undefined].filter(Boolean).join(' - ');
   const destino = [mapa.get('Destino'), mapa.get('CNPJ Destino') ? `CNPJ ${mapa.get('CNPJ Destino')}` : undefined].filter(Boolean).join(' - ');
-  const carga = [mapa.get('Modalidade'), mapa.get('Peso total'), mapa.get('Total de volumes') ? `${mapa.get('Total de volumes')} volumes` : undefined]
+  const carga = [mapa.get('Modalidade'), mapa.get('Peso total'), mapa.get('Total de volumes') ? `${mapa.get('Total de volumes')} volumes` : undefined, mapa.get('Valor da mercadoria (nota)') ? `Valor da nota: ${mapa.get('Valor da mercadoria (nota)')}` : undefined]
     .filter(Boolean)
     .join(' - ');
   const observacoes = parametroObservacoesTemplate(mapa.get('Observações'), mapa.get(ROTULO_OBSERVACOES_TRANSPORTADORA));

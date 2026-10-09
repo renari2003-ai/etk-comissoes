@@ -62,6 +62,7 @@ vi.mock('../../src/fretes/fretesServico.js', () => ({
         peso: 80,
         pesoBruto: 80,
         pesoLiquido: null,
+        valorMercadoria: 264.72,
         especieVolumes: 'CAIXA',
         modalidade: 'CIF',
         observacoes: 'Cobrar TDE no destino',
@@ -75,7 +76,7 @@ vi.mock('../../src/fretes/auditoriaRepositorio.js', () => ({
   }),
 }));
 
-async function carregar(caminho: 'ycloud' | 'n8n', extra: Record<string, string> = {}) {
+async function carregar(caminho: 'ycloud' | 'n8n' | 'meta', extra: Record<string, string> = {}) {
   Object.assign(process.env, { YCLOUD_API_KEY: CHAVE, YCLOUD_WHATSAPP_FROM: '+5511900000000', YCLOUD_TEMPLATE_NOME: '', FRETES_WHATSAPP: caminho, ...extra });
   vi.resetModules();
   return {
@@ -101,6 +102,25 @@ beforeEach(() => {
 });
 
 describe('canal WHATSAPP pela YCloud direto', () => {
+  it('Meta envia template à Graph API e grava WAMID sem identificador YCloud', async () => {
+    respostaYCloud = { status: 200, corpo: { messages: [{ id: 'wamid.META1' }] } };
+    const { servico, repo, n8n } = await carregar('meta', { META_WHATSAPP_ACCESS_TOKEN: 'token-meta-teste', META_WHATSAPP_PHONE_NUMBER_ID: '1433778859808018', META_WHATSAPP_TEMPLATE_NOME: 'cotacao_frete_etk' });
+    await servico.servicoReenviarSolicitacao({} as ClienteOmie, 'sol-1', 'u-1');
+    expect(chamadasYCloud[0]?.url).toBe('https://graph.facebook.com/v26.0/1433778859808018/messages');
+    expect(chamadasYCloud[0]?.corpo).toMatchObject({ messaging_product: 'whatsapp', to: '5511987654321', type: 'template' });
+    const t = chamadasYCloud[0]?.corpo.template as { components: { parameters: { text: string }[] }[] };
+    expect(t.components[0]?.parameters[3]?.text).toContain('264,72');
+    expect(t.components[0]?.parameters[3]?.text).toContain('80 kg');
+    expect(repo.registrarWamidOutbound).toHaveBeenCalledWith(expect.objectContaining({ wamidOutbound: 'wamid.META1', ycloudMessageId: null }));
+    expect(n8n.enviarSolicitacaoAoN8n).not.toHaveBeenCalled();
+  });
+  it('Meta sem template recusa e nunca tenta YCloud ou n8n', async () => {
+    const { servico, n8n } = await carregar('meta', { META_WHATSAPP_TEMPLATE_NOME: '' });
+    const r = await servico.servicoReenviarSolicitacao({} as ClienteOmie, 'sol-1', 'u-1');
+    expect(r.erroUltimaTentativa).toContain('META_TEMPLATE_NAO_CONFIGURADO');
+    expect(chamadasYCloud).toHaveLength(0);
+    expect(n8n.enviarSolicitacaoAoN8n).not.toHaveBeenCalled();
+  });
   it('padrão: envia à YCloud (sem n8n) para o whatsapp_cotacao, com a mensagem completa; grava wamid; ENVIADA', async () => {
     const { servico, n8n, repo } = await carregar('ycloud');
     const r = await servico.servicoReenviarSolicitacao({} as ClienteOmie, 'sol-1', 'u-1');

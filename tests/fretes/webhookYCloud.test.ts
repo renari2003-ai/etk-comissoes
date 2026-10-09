@@ -68,6 +68,18 @@ function ambiente() {
 
 const processar = (corpo: unknown, deps: DependenciasWebhookYCloud) => servicoProcessarEventoYCloud(validarEventoYCloud(corpo), deps);
 
+describe('núcleo WhatsApp usado pela Meta', () => {
+  it('processa reply Meta uma vez e mantém origem do extrator sem ID YCloud', async () => {
+    const { deps, recebidas } = ambiente();
+    const evento = validarEventoYCloud(eventoTexto('VALOR_FRETE: 100\nPRAZO_DIAS: 3'));
+    await servicoProcessarEventoYCloud(evento, deps, 'meta');
+    await servicoProcessarEventoYCloud(evento, deps, 'meta');
+    expect(deps.processarResposta).toHaveBeenCalledTimes(1);
+    expect(deps.processarResposta).toHaveBeenCalledWith(expect.objectContaining({ canal: 'WHATSAPP', versaoExtrator: 'whatsapp-meta-v1', mensagemId: 'wamid.RESPOSTA1' }));
+    expect([...recebidas.values()][0]?.ycloudId).toBeNull();
+  });
+});
+
 describe('assinatura YCloud-Signature', () => {
   const corpo = JSON.stringify(eventoTexto('oi'));
   const agora = 1_790_000_000;

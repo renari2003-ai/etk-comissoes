@@ -335,10 +335,10 @@ async function processarItemEnvio(
     // desta transportadora + rótulos + dados da carga) precisa caber no limite do modo em uso —
     // template: parâmetro {{6}} ≤ 1000; texto: corpo ≤ 4096. Acima disso, recusa ANTES de criar a
     // solicitação (um "Reenviar" usaria o mesmo texto e falharia de novo). Nunca corta.
-    if (item.canal === 'WHATSAPP' && config.fretesWhatsapp === 'ycloud') {
+    if (item.canal === 'WHATSAPP' && (config.fretesWhatsapp === 'ycloud' || config.fretesWhatsapp === 'meta')) {
       const problema = problemaLimiteWhatsapp(
         payloadProvisorioWhatsapp(cotacao, transportadora, cubagem, observacoes),
-        config.ycloudTemplateNome !== '' ? 'TEMPLATE' : 'TEXTO',
+        config.fretesWhatsapp === 'meta' || config.ycloudTemplateNome !== '' ? 'TEMPLATE' : 'TEXTO',
       );
       if (problema !== null) return falha(nome, `Erro: ${problema}`, 'Mensagem de WhatsApp excederia o limite; nada foi criado nem enviado.');
     }

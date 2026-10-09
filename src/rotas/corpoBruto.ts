@@ -6,7 +6,7 @@ import type { IncomingMessage } from 'node:http';
  * `YCloud-Signature`), que são calculadas sobre os bytes e não sobre o JSON reinterpretado.
  * Guardado fora do objeto da requisição (WeakMap) e só para essas rotas.
  */
-const PREFIXOS_COM_CORPO_BRUTO = ['/api/fretes/integracoes/ycloud/'];
+const PREFIXOS_COM_CORPO_BRUTO = ['/api/fretes/integracoes/ycloud/', '/api/fretes/integracoes/meta/'];
 const corpos = new WeakMap<IncomingMessage, Buffer>();
 
 /** Usado como `verify` do `express.json()`. */

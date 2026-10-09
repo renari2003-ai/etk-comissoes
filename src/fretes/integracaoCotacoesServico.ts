@@ -48,6 +48,8 @@ import { enviarSolicitacaoAoN8n, type PayloadSolicitacaoN8n } from './integracoe
 import { enviarEmailSmtp, ErroEnvioSmtpFalhou } from './integracoes/smtpCliente.js';
 import { montarEmailCotacao } from './email/templateCotacao.js';
 import { enviarWhatsappYCloud, telefoneE164, type MensagemWhatsapp } from './integracoes/ycloudCliente.js';
+import { enviarTemplateMeta } from './integracoes/metaCliente.js';
+import { sanitizarTextoErro } from './integracoes/sanitizacao.js';
 import { montarTextoWhatsapp, parametrosTemplateWhatsapp } from './whatsapp/mensagemCotacao.js';
 import { montarDestinoEnviado } from './destinoEnviado.js';
 import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, EmbalagemSolicitacao, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
@@ -214,6 +216,9 @@ async function tentarEnviarSolicitacao(
   if (solicitacao.canal === 'EMAIL' && config.fretesEmailOutbound === 'smtp') {
     return tentarEnviarPorSmtp(cotacao, solicitacao, cnpjs, usuarioId);
   }
+  if (solicitacao.canal === 'WHATSAPP' && config.fretesWhatsapp === 'meta') {
+    return tentarEnviarPorMeta(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
+  }
   if (solicitacao.canal === 'WHATSAPP' && config.fretesWhatsapp === 'ycloud') {
     return tentarEnviarPorYCloud(cotacao, solicitacao, cnpjs, whatsapp, usuarioId);
   }
@@ -268,6 +273,26 @@ async function tentarEnviarPorSmtp(
  * solicitação para correlacionar o reply (`context.id`); se a YCloud ainda não o devolveu, o
  * webhook de status completa depois pelo id da YCloud.
  */
+async function tentarEnviarPorMeta(cotacao: CotacaoFrete, solicitacao: SolicitacaoCotacao, cnpjs: CnpjsPayloadN8n, whatsapp: string | null, usuarioId: string | null): Promise<SolicitacaoCotacao> {
+  try {
+    const para = telefoneE164(whatsapp);
+    if (para === null) throw new ErroValidacao('META_DESTINO_INVALIDO: informe o WhatsApp para cotação no cadastro.');
+    if (!config.metaTemplateNome) throw new Error('META_TEMPLATE_NAO_CONFIGURADO: configure o template aprovado antes de solicitar cotações.');
+    const payload = montarPayloadN8n(cotacao, solicitacao, cnpjs, whatsapp);
+    const parametros = parametrosTemplateWhatsapp(payload);
+    const enviado = await enviarTemplateMeta({ para, nome: config.metaTemplateNome, idioma: config.metaTemplateIdioma, parametros });
+    await marcarSolicitacaoEnviada(solicitacao.id, enviado.wamid);
+    const registro = await registrarWamidOutbound({ solicitacaoId: solicitacao.id, wamidOutbound: enviado.wamid, ycloudMessageId: null, telefoneDestino: para, enviadoEm: new Date().toISOString() });
+    await registrarAuditoria({ usuarioId, acao: 'SOLICITACAO_ENVIADA_META', entidade: 'solicitacao_cotacao_frete', entidadeId: solicitacao.id, valorNovo: { wamid: enviado.wamid, tipoMensagem: 'template' } });
+    return registro.solicitacao;
+  } catch (erro) {
+    const motivo = sanitizarTextoErro(erro instanceof Error ? erro.message : 'META_FALHA: envio não confirmado.', [config.metaAccessToken, config.metaAppSecret]);
+    const atualizada = await marcarSolicitacaoErro(solicitacao.id, motivo);
+    await registrarAuditoria({ usuarioId, acao: 'SOLICITACAO_ERRO_META', entidade: 'solicitacao_cotacao_frete', entidadeId: solicitacao.id, valorNovo: { erro: motivo } });
+    return atualizada;
+  }
+}
+
 async function tentarEnviarPorYCloud(
   cotacao: CotacaoFrete,
   solicitacao: SolicitacaoCotacao,

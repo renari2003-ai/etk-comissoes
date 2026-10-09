@@ -108,7 +108,15 @@ export const config = {
   ycloudTemplateNome: (process.env.YCLOUD_TEMPLATE_NOME ?? '').trim(),
   ycloudTemplateIdioma: (process.env.YCLOUD_TEMPLATE_IDIOMA ?? '').trim() || 'pt_BR',
   /** Caminho do canal WHATSAPP: `ycloud` (padrão, direto) ou `n8n` (rollback). */
-  fretesWhatsapp: (process.env.FRETES_WHATSAPP ?? '').trim().toLowerCase() === 'n8n' ? ('n8n' as const) : ('ycloud' as const),
+  fretesWhatsapp: (process.env.FRETES_WHATSAPP ?? '').trim().toLowerCase() === 'meta' ? ('meta' as const) : (process.env.FRETES_WHATSAPP ?? '').trim().toLowerCase() === 'n8n' ? ('n8n' as const) : ('ycloud' as const),
+  metaAccessToken: (process.env.META_WHATSAPP_ACCESS_TOKEN ?? '').trim(),
+  metaPhoneNumberId: (process.env.META_WHATSAPP_PHONE_NUMBER_ID ?? '').trim(),
+  metaAppSecret: (process.env.META_WHATSAPP_APP_SECRET ?? '').trim(),
+  metaVerifyToken: (process.env.META_WHATSAPP_VERIFY_TOKEN ?? '').trim(),
+  metaGraphVersion: (process.env.META_WHATSAPP_GRAPH_VERSION ?? '').trim() || 'v26.0',
+  metaTemplateNome: (process.env.META_WHATSAPP_TEMPLATE_NOME ?? '').trim(),
+  metaTemplateIdioma: (process.env.META_WHATSAPP_TEMPLATE_IDIOMA ?? '').trim() || 'pt_BR',
+  metaTimeoutMs: numeroDoAmbiente('META_WHATSAPP_TIMEOUT_MS', 15000),
 };
 
 /** true se ambas as credenciais foram carregadas (nunca expor os valores em si). */

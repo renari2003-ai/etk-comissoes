@@ -112,6 +112,7 @@ import { servicoProcessarEmailsResposta } from '../fretes/jobEmailsRespostaServi
 import { listarEmailsParaRevisao } from '../fretes/emailsRespostaRepositorio.js';
 import { validarEventoYCloud, verificarAssinaturaYCloud } from '../fretes/webhookYCloud.js';
 import { servicoProcessarEventoYCloud } from '../fretes/webhookYCloudServico.js';
+import { desafioWebhookMeta, validarEventosMeta, verificarAssinaturaMeta } from '../fretes/webhookMeta.js';
 import { listarWhatsappParaRevisao } from '../fretes/whatsappRecebidasRepositorio.js';
 import { obterCorpoBruto } from './corpoBruto.js';
 
@@ -385,7 +386,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       const termo = typeof req.query.q === 'string' ? req.query.q.trim() : '';
       if (termo.length < 2 || termo.length > 100) throw new ErroValidacao('Informe de 2 a 100 caracteres para buscar.');
       // `whatsappModo` (aditivo): a tela mostra o total do parâmetro {{6}} quando o envio usa o template aprovado.
-      const whatsappModo = config.fretesWhatsapp !== 'ycloud' ? 'N8N' : config.ycloudTemplateNome !== '' ? 'TEMPLATE' : 'TEXTO';
+      const whatsappModo = config.fretesWhatsapp === 'meta' ? 'TEMPLATE' : config.fretesWhatsapp !== 'ycloud' ? 'N8N' : config.ycloudTemplateNome !== '' ? 'TEMPLATE' : 'TEXTO';
       res.json({ transportadoras: await servicoBuscarTransportadorasParaSolicitacao(termo), whatsappModo });
     }),
   );
@@ -1165,6 +1166,19 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
   // Sem sessão de usuário: autenticidade só pela assinatura oficial `YCloud-Signature`
   // (HMAC-SHA256 do corpo bruto com `YCLOUD_WEBHOOK_SECRET`). Assinatura ausente/errada/antiga
   // → 401 sem tocar o banco; payload malformado → 400.
+  rotas.get('/api/fretes/integracoes/meta/webhook', (req, res) => {
+    const desafio = desafioWebhookMeta(req.query, config.metaVerifyToken);
+    if (desafio === null) { res.status(403).send('Verificação inválida.'); return; }
+    res.status(200).type('text/plain').send(desafio);
+  });
+  rotas.post('/api/fretes/integracoes/meta/webhook', assincrono(async (req, res) => {
+    if (!verificarAssinaturaMeta(req.header('x-hub-signature-256'), obterCorpoBruto(req), config.metaAppSecret)) {
+      res.status(401).json({ erro: 'Assinatura do webhook inválida.' }); return;
+    }
+    const eventos = validarEventosMeta(req.body, config.metaPhoneNumberId);
+    for (const evento of eventos) await servicoProcessarEventoYCloud(evento, undefined, 'meta');
+    res.status(200).json({ recebido: true });
+  }));
   rotas.post(
     '/api/fretes/integracoes/ycloud/webhook',
     assincrono(async (req, res) => {

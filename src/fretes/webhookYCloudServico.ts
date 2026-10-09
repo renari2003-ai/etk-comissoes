@@ -63,15 +63,13 @@ export type ResultadoWebhookYCloud =
   | { evento: 'STATUS'; desfecho: 'ATUALIZADO' | 'SEM_SOLICITACAO' | 'SEM_MUDANCA' }
   | { evento: 'IGNORADO'; desfecho: 'IGNORADO' };
 
-const ORIGEM = 'webhook_ycloud';
-
-async function processarMensagemRecebida(deps: DependenciasWebhookYCloud, m: MensagemRecebidaYCloud): Promise<ResultadoWebhookYCloud> {
+async function processarMensagemRecebida(deps: DependenciasWebhookYCloud, m: MensagemRecebidaYCloud, provedor: 'ycloud' | 'meta'): Promise<ResultadoWebhookYCloud> {
   const chave = m.wamid ?? `ycloud:${m.ycloudId}`;
   if ((await deps.buscarRecebida(chave)) !== null) return { evento: 'MENSAGEM_RECEBIDA', desfecho: 'DUPLICADA', motivo: null };
 
   const base: Omit<DadosWhatsappRecebida, 'status' | 'motivo' | 'referencia' | 'solicitacaoId' | 'respostaId'> = {
     chaveMensagem: chave,
-    ycloudId: m.ycloudId,
+    ycloudId: provedor === 'meta' ? null : m.ycloudId,
     telefoneOrigem: m.de,
     contextoId: m.contextoId,
     tipo: m.tipo,
@@ -83,7 +81,7 @@ async function processarMensagemRecebida(deps: DependenciasWebhookYCloud, m: Men
     if (registro === null) return { evento: 'MENSAGEM_RECEBIDA', desfecho: 'DUPLICADA', motivo: null }; // reentrega concorrente
     await deps.registrarAuditoria({
       usuarioId: null,
-      origem: ORIGEM,
+      origem: `webhook_${provedor}`,
       acao: dados.status === 'PROCESSADO' ? 'WHATSAPP_RECEBIDO' : 'WHATSAPP_REVISAO_MANUAL',
       entidade: 'whatsapp_recebida_frete',
       entidadeId: registro.id,
@@ -112,6 +110,9 @@ async function processarMensagemRecebida(deps: DependenciasWebhookYCloud, m: Men
   if (solicitacao === null) {
     return revisao(m.contextoId !== null ? 'Reply a uma mensagem que não é de solicitação de cotação' : 'Mensagem sem reply (context.id) e sem referência FRE');
   }
+  if (provedor === 'meta' && solicitacao.telefoneDestino !== null && m.de !== null && solicitacao.telefoneDestino.replace(/\D/g, '') !== m.de.replace(/\D/g, '')) {
+    return revisao('Remetente diferente do destinatário da solicitação — conferir correlação manualmente');
+  }
 
   const { extracao, problemas } =
     m.texto === null ? { extracao: extrairRespostaEmail('').extracao, problemas: [`Mensagem do tipo "${m.tipo}" sem texto`] } : extrairRespostaEmail(m.texto);
@@ -120,7 +121,7 @@ async function processarMensagemRecebida(deps: DependenciasWebhookYCloud, m: Men
     canal: 'WHATSAPP',
     mensagemId: chave,
     conteudoBruto: m.texto ?? `[mensagem do tipo ${m.tipo} sem texto]`,
-    versaoExtrator: 'whatsapp-ycloud-v1',
+    versaoExtrator: `whatsapp-${provedor}-v1`,
     extracao,
   });
   const vinculo = { referencia: solicitacao.codigoReferencia, solicitacaoId: solicitacao.id, respostaId: resultado.resposta.id };
@@ -128,14 +129,14 @@ async function processarMensagemRecebida(deps: DependenciasWebhookYCloud, m: Men
   return gravar({ ...base, ...vinculo, status: 'PROCESSADO', motivo: resultado.duplicado ? 'Resposta já registrada anteriormente (mesmo WAMID)' : null });
 }
 
-async function processarStatus(deps: DependenciasWebhookYCloud, s: StatusMensagemYCloud): Promise<ResultadoWebhookYCloud> {
-  let solicitacao = await deps.buscarPorYcloudId(s.ycloudId);
+async function processarStatus(deps: DependenciasWebhookYCloud, s: StatusMensagemYCloud, provedor: 'ycloud' | 'meta'): Promise<ResultadoWebhookYCloud> {
+  let solicitacao = provedor === 'meta' ? null : await deps.buscarPorYcloudId(s.ycloudId);
   if (solicitacao === null && s.wamid !== null) solicitacao = await deps.buscarPorWamid(s.wamid);
   if (solicitacao === null) return { evento: 'STATUS', desfecho: 'SEM_SOLICITACAO' };
 
   let mudou = false;
   if (s.wamid !== null && solicitacao.wamidOutbound !== s.wamid) {
-    const r = await deps.registrarWamid({ solicitacaoId: solicitacao.id, wamidOutbound: s.wamid, ycloudMessageId: s.ycloudId, telefoneDestino: solicitacao.telefoneDestino });
+    const r = await deps.registrarWamid({ solicitacaoId: solicitacao.id, wamidOutbound: s.wamid, ycloudMessageId: provedor === 'meta' ? null : s.ycloudId, telefoneDestino: solicitacao.telefoneDestino });
     solicitacao = r.solicitacao;
     mudou = !r.duplicado;
   }
@@ -143,24 +144,24 @@ async function processarStatus(deps: DependenciasWebhookYCloud, s: StatusMensage
   if (status === 'delivered' || status === 'read') {
     mudou = (await deps.marcarEntregue(solicitacao.id)) !== null || mudou;
   } else if (status === 'failed') {
-    const detalhe = sanitizarTextoErro([s.erroCodigo, s.erroMensagem].filter(Boolean).join(' '), [config.ycloudApiKey]).slice(0, 300);
-    const motivo = `YCLOUD_FALHA_ENTREGA: a YCloud informou que a mensagem não foi entregue.${detalhe === '' ? '' : ` Detalhe: ${detalhe}`}`;
+    const detalhe = sanitizarTextoErro([s.erroCodigo, s.erroMensagem].filter(Boolean).join(' '), [config.ycloudApiKey, config.metaAccessToken, config.metaAppSecret]).slice(0, 300);
+    const motivo = `${provedor.toUpperCase()}_FALHA_ENTREGA: ${provedor === 'meta' ? 'a Meta' : 'a YCloud'} informou que a mensagem não foi entregue.${detalhe === '' ? '' : ` Detalhe: ${detalhe}`}`;
     mudou = (await deps.marcarFalhaEntrega(solicitacao.id, motivo)) !== null || mudou;
   }
   if (!mudou) return { evento: 'STATUS', desfecho: 'SEM_MUDANCA' };
   await deps.registrarAuditoria({
     usuarioId: null,
-    origem: ORIGEM,
+    origem: `webhook_${provedor}`,
     acao: 'WHATSAPP_STATUS_ATUALIZADO',
     entidade: 'solicitacao_cotacao_frete',
     entidadeId: solicitacao.id,
-    valorNovo: { statusYCloud: status, wamid: s.wamid, ycloudMessageId: s.ycloudId, erroCodigo: s.erroCodigo },
+    valorNovo: provedor === 'meta' ? { statusMeta: status, wamid: s.wamid, erroCodigo: s.erroCodigo } : { statusYCloud: status, wamid: s.wamid, ycloudMessageId: s.ycloudId, erroCodigo: s.erroCodigo },
   });
   return { evento: 'STATUS', desfecho: 'ATUALIZADO' };
 }
 
-export async function servicoProcessarEventoYCloud(evento: EventoYCloud, deps: DependenciasWebhookYCloud = DEPENDENCIAS_PADRAO): Promise<ResultadoWebhookYCloud> {
-  if (evento.tipo === 'MENSAGEM_RECEBIDA') return processarMensagemRecebida(deps, evento.mensagem);
-  if (evento.tipo === 'STATUS') return processarStatus(deps, evento.mensagem);
+export async function servicoProcessarEventoYCloud(evento: EventoYCloud, deps: DependenciasWebhookYCloud = DEPENDENCIAS_PADRAO, provedor: 'ycloud' | 'meta' = 'ycloud'): Promise<ResultadoWebhookYCloud> {
+  if (evento.tipo === 'MENSAGEM_RECEBIDA') return processarMensagemRecebida(deps, evento.mensagem, provedor);
+  if (evento.tipo === 'STATUS') return processarStatus(deps, evento.mensagem, provedor);
   return { evento: 'IGNORADO', desfecho: 'IGNORADO' };
 }
