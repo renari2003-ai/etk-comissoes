@@ -263,9 +263,19 @@ export async function servicoAtualizarCotacao(id: string, dados: DadosAtualizaca
   // Destino editado em texto livre (2026-10-06): é uma intervenção explícita do operador — passa a
   // ser MANUAL e a estrutura anterior (ex.: endereço da Omie) é descartada, para nunca enviar à
   // transportadora um endereço estruturado antigo junto com o texto novo (nem misturar os dois).
-  const destinoEditado =
-    (dados.destino !== undefined && dados.destino !== anterior.destino) ||
-    (dados.cepDestino !== undefined && dados.cepDestino !== anterior.cepDestino);
+  // Só o CEP (2026-10-20): completar/corrigir o CEP de um endereço ESTRUTURADO (ex.: Omie sem CEP)
+  // não descarta o endereço — o CEP faz parte dessa mesma estrutura e é ele que vai para API,
+  // e-mail e WhatsApp (`montarDestinoEnviado`). A origem do endereço é mantida e a intervenção
+  // fica registrada em auditoria própria. Em cotação só com texto livre, segue a regra anterior.
+  const textoDestinoEditado = dados.destino !== undefined && dados.destino !== anterior.destino;
+  const cepEditado = dados.cepDestino !== undefined && somenteDigitosCep(dados.cepDestino) !== somenteDigitosCep(anterior.cepDestino);
+  const temEstrutura =
+    anterior.origemDestino !== null &&
+    [anterior.logradouroDestino, anterior.numeroDestino, anterior.complementoDestino, anterior.bairroDestino, anterior.cidadeDestino, anterior.ufDestino].some(
+      (v) => typeof v === 'string' && v.trim() !== '',
+    );
+  const somenteCepEditado = cepEditado && !textoDestinoEditado && temEstrutura;
+  const destinoEditado = textoDestinoEditado || (cepEditado && !somenteCepEditado);
   const dadosFinais: DadosAtualizacaoCotacao = destinoEditado
     ? {
         ...dados,
@@ -289,6 +299,16 @@ export async function servicoAtualizarCotacao(id: string, dados: DadosAtualizaca
       entidadeId: cotacao.id,
       valorAnterior: { origemDestino: anterior.origemDestino, destino: anterior.destino, cepDestino: anterior.cepDestino },
       valorNovo: { origemDestino: cotacao.origemDestino, destino: cotacao.destino, cepDestino: cotacao.cepDestino },
+    });
+  }
+  if (somenteCepEditado) {
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'CEP_DESTINO_ALTERADO_MANUALMENTE',
+      entidade: 'cotacao_frete',
+      entidadeId: cotacao.id,
+      valorAnterior: { cepDestino: anterior.cepDestino, origemDestino: anterior.origemDestino },
+      valorNovo: { cepDestino: cotacao.cepDestino, origemDestino: cotacao.origemDestino },
     });
   }
   if (dados.modalidadeExecucao !== undefined && dados.modalidadeExecucao !== anterior.modalidadeExecucao) {
@@ -348,6 +368,16 @@ export interface DadosComplementaresCotacaoOmie {
   /** Peso confirmado pelo operador tem prioridade; volumes complementam a Omie. */
   peso?: number | null;
   volumes?: number | null;
+  /**
+   * CEP informado/corrigido pelo operador para o endereço vindo da Omie (2026-10-20), já
+   * normalizado ("00000-000"). Vale só para esta cotação — nunca grava na Omie nem no cadastro.
+   * Não se combina com `destinoOverride` (o endereço manual já traz o próprio CEP).
+   */
+  cepDestino?: string | null;
+}
+
+function somenteDigitosCep(cep: string | null | undefined): string {
+  return (cep ?? '').replace(/\D/g, '');
 }
 
 /**
@@ -366,11 +396,25 @@ export async function servicoCriarCotacaoDeOmie(
 ): Promise<CotacaoFrete> {
   const preparacao = await prepararCotacaoDeOmie(cliente, numeroDocumento, tipoDocumento);
 
+  const cepManual = dadosComplementares.cepDestino ?? null;
+  if (cepManual !== null && destinoOverride !== null) {
+    throw new ErroValidacao('Informe o CEP no próprio endereço manual ("destinoOverride.cep"), não nos dois lugares.');
+  }
+
   let destinoFinal: EnderecoDestino;
+  /** CEP da Omie substituído/completado pelo operador — `undefined` quando não houve intervenção. */
+  let cepCorrigido: { anterior: string | null; novo: string } | undefined;
   if (destinoOverride !== null) {
     destinoFinal = { origem: 'MANUAL', codigoMunicipio: null, ...destinoOverride };
   } else if (preparacao.destino !== null) {
-    destinoFinal = preparacao.destino;
+    // Só o CEP muda: o restante do endereço estruturado da Omie (e a origem dele) é preservado,
+    // então o que vai para a transportadora continua sendo um endereço único e coerente.
+    if (cepManual !== null && somenteDigitosCep(cepManual) !== somenteDigitosCep(preparacao.destino.cep)) {
+      cepCorrigido = { anterior: preparacao.destino.cep, novo: cepManual };
+      destinoFinal = { ...preparacao.destino, cep: cepManual };
+    } else {
+      destinoFinal = preparacao.destino;
+    }
   } else {
     throw new ErroValidacao(
       'Não foi possível determinar um destino automaticamente a partir da Omie. Informe o destino manualmente ("destinoOverride") antes de confirmar.',
@@ -428,6 +472,16 @@ export async function servicoCriarCotacaoDeOmie(
     entidadeId: cotacao.id,
     valorNovo: { origemDestino: destinoFinal.origem },
   });
+  if (cepCorrigido !== undefined) {
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'CEP_DESTINO_ALTERADO_MANUALMENTE',
+      entidade: 'cotacao_frete',
+      entidadeId: cotacao.id,
+      valorAnterior: { cepDestino: cepCorrigido.anterior, fonte: 'OMIE' },
+      valorNovo: { cepDestino: cepCorrigido.novo, origemDestino: destinoFinal.origem },
+    });
+  }
   return cotacao;
 }
 

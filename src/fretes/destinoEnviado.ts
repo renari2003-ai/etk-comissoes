@@ -8,7 +8,24 @@
  * livre), usa-se o texto e o CEP como sempre. Nunca mistura partes de duas fontes.
  */
 import { formatarDestinoTexto } from './omieFretes.js';
-import type { CotacaoFrete, DestinoEnviado } from './tipos.js';
+import type { CotacaoFrete, DestinoEnviado, SolicitacaoCotacao } from './tipos.js';
+
+function digitosCep(cep: string | null | undefined): string {
+  return (cep ?? '').replace(/\D/g, '');
+}
+
+/**
+ * A solicitação foi registrada com um CEP diferente do CEP atual (válido) da cotação — ex.: o
+ * operador completou/corrigiu o CEP depois do envio (2026-10-20). O snapshot NÃO é alterado
+ * (histórico e "Reenviar" continuam com o endereço original); isto só sinaliza que o CEP
+ * atualizado exige uma NOVA solicitação. Solicitação antiga sem snapshot usa o destino atual da
+ * cotação, então nunca fica desatualizada.
+ */
+export function cepDestinoDesatualizado(solicitacao: Pick<SolicitacaoCotacao, 'destinoEnviado'>, cotacao: Pick<CotacaoFrete, 'cepDestino'>): boolean {
+  if (solicitacao.destinoEnviado === null || solicitacao.destinoEnviado === undefined) return false;
+  const atual = digitosCep(cotacao.cepDestino);
+  return atual.length === 8 && digitosCep(solicitacao.destinoEnviado.cep) !== atual;
+}
 
 function textoOuNulo(valor: string | null | undefined): string | null {
   return typeof valor === 'string' && valor.trim() !== '' ? valor.trim() : null;

@@ -23,6 +23,8 @@ vi.mock('../../src/fretes/omieFretes.js', async (original) => ({
 vi.mock('../../src/fretes/cotacoesRepositorio.js', async (original) => ({
   ...(await original<typeof import('../../src/fretes/cotacoesRepositorio.js')>()),
   criarCotacao: vi.fn(async (dados: Record<string, unknown>) => ({ id: 'cot-nova', ...dados })),
+  buscarCotacaoPorId: vi.fn(),
+  atualizarCotacao: vi.fn(),
 }));
 vi.mock('../../src/fretes/transportadorasRepositorio.js', async (original) => ({
   ...(await original<typeof import('../../src/fretes/transportadorasRepositorio.js')>()),
@@ -37,7 +39,7 @@ vi.mock('../../src/fretes/auditoriaRepositorio.js', () => ({
 
 import { servicoEnviarSolicitacoes } from '../../src/fretes/envioSolicitacoesServico.js';
 import { prepararCotacaoDeOmie } from '../../src/fretes/omieFretes.js';
-import { criarCotacao } from '../../src/fretes/cotacoesRepositorio.js';
+import { atualizarCotacao, buscarCotacaoPorId, criarCotacao } from '../../src/fretes/cotacoesRepositorio.js';
 import { atualizarTransportadora, buscarTransportadoraPorId, listarTransportadoras } from '../../src/fretes/transportadorasRepositorio.js';
 import { criarRotaFretes } from '../../src/rotas/fretes.js';
 import { tratadorDeErros } from '../../src/rotas/erroHttp.js';
@@ -155,6 +157,68 @@ describe('POST omie/documentos/:numero/confirmar — endereço de entrega', () =
     prepararOmie(destinoOmie);
     expect((await confirmar({ cep: '123', logradouro: 'X', cidade: 'Y' })).status).toBe(400);
     expect(criarCotacao).not.toHaveBeenCalled();
+  });
+
+  function confirmarComCep(cepDestino: unknown) {
+    return fetch(`${base}/api/fretes/omie/documentos/123/confirmar`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ tipoDocumento: 'ORCAMENTO', modalidade: 'CIF', destinoOverride: null, cepDestino }),
+    });
+  }
+
+  it('Omie sem CEP + "cepDestino" do operador: normalizado e gravado, endereço da Omie preservado', async () => {
+    prepararOmie({ ...destinoOmie, cep: null as unknown as string });
+    expect((await confirmarComCep('01310100')).status).toBe(201);
+    expect(vi.mocked(criarCotacao).mock.calls[0]?.[0]).toMatchObject({ cepDestino: '01310-100', origemDestino: 'PEDIDO', logradouroDestino: 'Rua Omie' });
+  });
+
+  it.each([['abc'], ['1234567'], [1310100]])('"cepDestino" malformado (%s) → 400, nada criado', async (cep) => {
+    prepararOmie(destinoOmie);
+    expect((await confirmarComCep(cep)).status).toBe(400);
+    expect(criarCotacao).not.toHaveBeenCalled();
+  });
+});
+
+describe('PUT/POST cotacoes — CEP de destino', () => {
+  const cotacaoOmie = {
+    id: COTACAO,
+    modalidadeExecucao: 'TRANSPORTADORA',
+    veiculoId: null,
+    destino: 'Rua Omie, nº 10, Centro, Curitiba/PR',
+    cepDestino: null,
+    origemDestino: 'PEDIDO',
+    logradouroDestino: 'Rua Omie',
+    numeroDestino: '10',
+    bairroDestino: 'Centro',
+    cidadeDestino: 'Curitiba',
+    ufDestino: 'PR',
+  } as unknown as CotacaoFrete;
+
+  it('PUT só com cepDestino: normaliza e grava só o CEP (endereço estruturado mantido)', async () => {
+    vi.mocked(buscarCotacaoPorId).mockResolvedValue(cotacaoOmie);
+    vi.mocked(atualizarCotacao).mockImplementation(async (_id, dados) => ({ ...cotacaoOmie, ...dados }) as CotacaoFrete);
+    const r = await fetch(`${base}/api/fretes/cotacoes/${COTACAO}`, { method: 'PUT', headers, body: JSON.stringify({ cepDestino: '80010-000' }) });
+    expect(r.status).toBe(200);
+    expect(atualizarCotacao).toHaveBeenCalledWith(COTACAO, { cepDestino: '80010-000' });
+    expect(((await r.json()) as CotacaoFrete).logradouroDestino).toBe('Rua Omie');
+  });
+
+  it.each([['123'], ['8001O-000'], [80010000]])('PUT com CEP malformado (%s) → 400, nada gravado', async (cep) => {
+    vi.mocked(buscarCotacaoPorId).mockResolvedValue(cotacaoOmie);
+    const r = await fetch(`${base}/api/fretes/cotacoes/${COTACAO}`, { method: 'PUT', headers, body: JSON.stringify({ cepDestino: cep }) });
+    expect(r.status).toBe(400);
+    expect(atualizarCotacao).not.toHaveBeenCalled();
+  });
+
+  it('POST manual com CEP malformado → 400; válido é normalizado', async () => {
+    const corpo = { modalidade: 'CIF', destino: 'Curitiba/PR' };
+    const ruim = await fetch(`${base}/api/fretes/cotacoes`, { method: 'POST', headers, body: JSON.stringify({ ...corpo, cepDestino: '800' }) });
+    expect(ruim.status).toBe(400);
+    expect(criarCotacao).not.toHaveBeenCalled();
+    const ok = await fetch(`${base}/api/fretes/cotacoes`, { method: 'POST', headers, body: JSON.stringify({ ...corpo, cepDestino: '80000000' }) });
+    expect(ok.status).toBe(201);
+    expect(vi.mocked(criarCotacao).mock.calls[0]?.[0]).toMatchObject({ cepDestino: '80000-000' });
   });
 });
 

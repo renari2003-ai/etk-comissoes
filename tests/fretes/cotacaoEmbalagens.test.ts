@@ -30,7 +30,8 @@ describe('tela de detalhe da cotação', () => {
     expect(codigo).toContain('selecionadas = selecionadas.filter((s) => s.id !== id);');
     expect(codigo).toContain('canal: t.canalSugerido');
     expect(codigo).toContain('Escolha o canal...');
-    expect(codigo).toContain('${nome}: escolha o canal de envio.');
+    // Mensagem agregada desde ff9c934 (antes era uma por transportadora): bloqueia o envio sem canal.
+    expect(codigo).toContain('Selecione o canal de envio para todas as transportadoras. Sem canal: ${semCanal.join(\', \')}.');
   });
 
   it('um único botão de envio; "Cotar Braspress" separado removido; conferência por transportadora/canal', () => {

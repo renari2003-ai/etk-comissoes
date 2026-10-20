@@ -251,6 +251,10 @@ interface SolicitacaoCotacao {
   /** Fase 4A.4.1 — snapshot do e-mail efetivamente usado (só canal EMAIL). */
   emailDestino: string | null;
   emailOrigem: 'OMIE' | 'MANUAL' | null;
+  /** Snapshot do destino gravado no envio (só o CEP é usado na tela). */
+  destinoEnviado?: { cep: string | null } | null;
+  /** Enviada com CEP diferente do CEP atual da cotação — "Reenviar" mandaria o CEP antigo. */
+  cepDestinoDesatualizado?: boolean;
 }
 
 /** Fase 4A.1 (seção 14/15/17) — origem bruta + extraída de uma proposta automática, para a revisão lado a lado. */
@@ -1689,8 +1693,9 @@ export function inicializarFretes(): { ativar: () => void } {
    */
   function exibirDestinoDoDocumento(p: PreparacaoCotacaoOmie | null): void {
     const comDocumento = p !== null;
-    for (const id of ['fretes-cotacao-destino', 'fretes-cotacao-cep-destino']) el<HTMLInputElement>(id).readOnly = comDocumento;
+    el<HTMLInputElement>('fretes-cotacao-destino').readOnly = comDocumento;
     checkboxDestinoOutro.checked = false;
+    atualizarCampoCepDestinoDocumento(p);
     for (const campo of CAMPOS_DESTINO_MANUAL) inputDestinoManual(campo).value = '';
     if (p === null) {
       infoDestinoOrigem.hidden = true;
@@ -1700,7 +1705,10 @@ export function inicializarFretes(): { ativar: () => void } {
     }
     infoDestinoOrigem.hidden = false;
     if (p.destino !== null) {
-      infoDestinoOrigem.textContent = 'Endereço de entrega conforme a Omie (somente leitura). Para entregar em outro endereço, marque a opção abaixo.';
+      infoDestinoOrigem.textContent =
+        p.destino.cep === null || p.destino.cep.trim() === ''
+          ? 'Endereço de entrega conforme a Omie, mas SEM CEP — informe o CEP de destino acima (vale só para esta cotação; não altera a Omie). Para entregar em outro endereço, marque a opção abaixo.'
+          : 'Endereço de entrega conforme a Omie (somente leitura; o CEP pode ser corrigido e vale só para esta cotação). Para entregar em outro endereço, marque a opção abaixo.';
       campoDestinoOutro.hidden = false;
       fieldsetDestinoManual.hidden = true;
     } else {
@@ -1710,9 +1718,22 @@ export function inicializarFretes(): { ativar: () => void } {
     }
   }
 
+  /**
+   * CEP destino com documento Omie: editável quando o endereço da Omie é usado (completar CEP
+   * ausente ou corrigir só o CEP, sem redigitar o endereço). Fica somente leitura quando o endereço
+   * manual completo está em uso — ali o CEP é o do próprio formulário manual (nunca dois CEPs).
+   */
+  function atualizarCampoCepDestinoDocumento(p: PreparacaoCotacaoOmie | null): void {
+    const inputCep = el<HTMLInputElement>('fretes-cotacao-cep-destino');
+    const usaEnderecoManual = p !== null && (p.destino === null || checkboxDestinoOutro.checked);
+    inputCep.readOnly = usaEnderecoManual;
+    if (usaEnderecoManual) inputCep.value = p?.destino?.cep ?? '';
+  }
+
   checkboxDestinoOutro.addEventListener('change', () => {
     fieldsetDestinoManual.hidden = !checkboxDestinoOutro.checked;
     if (!checkboxDestinoOutro.checked) for (const campo of CAMPOS_DESTINO_MANUAL) inputDestinoManual(campo).value = '';
+    atualizarCampoCepDestinoDocumento(orcamentoPreparado?.preparacao ?? null);
   });
 
   /** Endereço manual estruturado (nunca mesclado com o da Omie); `null` se o formulário manual não está em uso. */
@@ -1816,7 +1837,10 @@ export function inicializarFretes(): { ativar: () => void } {
         // Documento Omie: o backend relê a Omie (fonte da verdade) exigindo o MESMO tipo conferido
         // aqui. O destino só é enviado quando o operador informa um endereço manual (completo e
         // estruturado) — o endereço da Omie pré-preenchido nunca é reenviado nem marcado como MANUAL.
+        // Sem endereço manual, o CEP digitado vai à parte: o backend só o aplica (e audita) se ele
+        // completar ou divergir do CEP da Omie, preservando o restante do endereço.
         const destinoOverride = lerDestinoManualNovaCotacao();
+        const cepDestino = destinoOverride === null ? textoOuNulo(dadosForm.get('cepDestino')) : null;
         if (checkboxDestinoOutro.checked && destinoOverride === null) {
           erroCotacao.textContent = 'Preencha o endereço de entrega manual ou desmarque "Informar outro endereço de entrega".';
           erroCotacao.hidden = false;
@@ -1829,6 +1853,7 @@ export function inicializarFretes(): { ativar: () => void } {
             ...comuns,
             tipoDocumento: orcamentoPreparado.preparacao.documentoOmieTipo,
             destinoOverride,
+            cepDestino,
             peso: numeroOuNulo(dadosForm.get('peso')),
             volumes: numeroOuNulo(dadosForm.get('volumes')),
           }),
@@ -2094,6 +2119,18 @@ export function inicializarFretes(): { ativar: () => void } {
       tr.appendChild(celula(s.emailOrigem === 'OMIE' ? 'Omie' : s.emailOrigem === 'MANUAL' ? 'Manual' : '—'));
 
       const tdAcoes = document.createElement('td');
+      // CEP corrigido depois do envio: o histórico (e o "Reenviar") mantém o endereço original.
+      const avisoCepDesatualizado =
+        s.cepDestinoDesatualizado === true
+          ? `Enviada com CEP ${s.destinoEnviado?.cep ?? 'não informado'}; a cotação agora tem CEP ${cotacaoEnvioAtual?.cepDestino ?? '—'}. ` +
+            '"Reenviar" manda o endereço ORIGINAL. Para enviar o CEP atualizado, crie uma nova solicitação: selecione a transportadora novamente e clique em enviar.'
+          : null;
+      if (avisoCepDesatualizado !== null) {
+        const aviso = document.createElement('p');
+        aviso.className = 'fretes-texto-alerta';
+        aviso.textContent = `⚠ ${avisoCepDesatualizado}`;
+        tdAcoes.appendChild(aviso);
+      }
       if (s.status === 'ERRO') {
         const detalhes = document.createElement('details');
         detalhes.className = 'fretes-solicitacao-detalhes';
@@ -2110,6 +2147,7 @@ export function inicializarFretes(): { ativar: () => void } {
         botaoReenviar.textContent = 'Reenviar';
         botaoReenviar.addEventListener('click', () => {
           void (async () => {
+            if (avisoCepDesatualizado !== null && !window.confirm(`${avisoCepDesatualizado}\n\nReenviar mesmo assim com o endereço original?`)) return;
             const respostaReenvio = await fetch(`/api/fretes/solicitacoes/${s.id}/reenviar`, { method: 'POST' });
             if (!respostaReenvio.ok) {
               window.alert('Falha ao enviar solicitação ao serviço de automação. Tente novamente em instantes.');
@@ -2648,6 +2686,9 @@ export function inicializarFretes(): { ativar: () => void } {
   /** Dados da carga: só leitura, direto da cotação (nenhuma segunda fonte de verdade). */
   function renderizarDadosCarga(): void {
     const c = cotacaoEnvioAtual;
+    // CEP digitado e ainda não salvo sobrevive à re-renderização (ex.: ao mexer nas embalagens).
+    const inputCepAnterior = document.getElementById('fretes-dados-carga-cep-destino') as HTMLInputElement | null;
+    const rascunhoCep = inputCepAnterior !== null && inputCepAnterior.dataset.cotacaoId === c?.id ? inputCepAnterior.value : null;
     dadosCarga.textContent = '';
     if (c === null) return;
     const naoInformado = (v: string | number | null) => (v === null || v === '' ? 'Não informado' : String(v));
@@ -2663,6 +2704,70 @@ export function inicializarFretes(): { ativar: () => void } {
     linhaInfo(dadosCarga, 'Total de volumes', totalEmbalagens > 0 ? `${totalEmbalagens} (embalagens)` : naoInformado(c.volumes));
     linhaInfo(dadosCarga, 'Modalidade', c.modalidade);
     linhaInfo(dadosCarga, 'Observações', naoInformado(c.observacoes));
+    if (!envioBloqueadoPorStatus) dadosCarga.appendChild(criarEditorCepDestino(c, rascunhoCep));
+  }
+
+  /**
+   * Completar/corrigir só o CEP de destino de uma cotação já criada (2026-10-20). Grava na cotação
+   * (PUT) — nunca na Omie nem no cadastro do cliente. O backend valida os 8 dígitos, preserva o
+   * endereço estruturado e audita a intervenção; os envios seguintes (API, e-mail, WhatsApp) leem
+   * o CEP salvo na cotação.
+   */
+  function criarEditorCepDestino(c: CotacaoFrete, rascunho: string | null): HTMLElement {
+    const bloco = document.createElement('div');
+    bloco.className = 'campo-filtro';
+    const idCampo = 'fretes-dados-carga-cep-destino';
+    const label = document.createElement('label');
+    label.htmlFor = idCampo;
+    label.textContent = c.cepDestino === null || c.cepDestino.trim() === '' ? 'Informar CEP de destino' : 'Corrigir CEP de destino';
+    const input = document.createElement('input');
+    input.id = idCampo;
+    input.type = 'text';
+    input.inputMode = 'numeric';
+    input.maxLength = 10;
+    input.placeholder = '00000-000';
+    input.dataset.cotacaoId = c.id;
+    input.value = rascunho ?? c.cepDestino ?? '';
+    const botao = document.createElement('button');
+    botao.type = 'button';
+    botao.className = 'botao-secundario';
+    botao.textContent = 'Salvar CEP';
+    const mensagem = document.createElement('span');
+    mensagem.className = 'filtro-data-legenda';
+    mensagem.setAttribute('aria-live', 'polite');
+    mensagem.textContent = 'Vale só para esta cotação — não altera a Omie nem o cadastro do cliente.';
+    botao.addEventListener('click', () => {
+      void (async () => {
+        const digitos = input.value.replace(/\D/g, '');
+        if (digitos.length !== 8 || !/^[\d.\-\s]+$/.test(input.value.trim())) {
+          mensagem.textContent = 'Informe um CEP com 8 dígitos (com ou sem hífen).';
+          return;
+        }
+        botao.disabled = true;
+        try {
+          const resposta = await fetch(`/api/fretes/cotacoes/${c.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cepDestino: input.value.trim() }),
+          });
+          if (!resposta.ok) {
+            mensagem.textContent = await extrairMensagemErro(resposta);
+            return;
+          }
+          cotacaoEnvioAtual = (await resposta.json()) as CotacaoFrete;
+          input.value = cotacaoEnvioAtual.cepDestino ?? '';
+          renderizarDadosCarga();
+          atualizarConferenciaEnvio();
+          void carregarSolicitacoes(); // reavalia o aviso de CEP desatualizado nas solicitações já enviadas
+          const mensagemNova = document.querySelector<HTMLElement>(`#${idCampo} ~ .filtro-data-legenda`);
+          if (mensagemNova !== null) mensagemNova.textContent = `CEP ${cotacaoEnvioAtual.cepDestino ?? ''} salvo nesta cotação.`;
+        } finally {
+          botao.disabled = false;
+        }
+      })();
+    });
+    bloco.append(label, input, botao, mensagem);
+    return bloco;
   }
 
   // Várias embalagens: cada linha vira um item de `cubagem` (formato já aceito pela rota,

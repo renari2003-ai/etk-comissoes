@@ -112,6 +112,23 @@ export function validarUuidOpcional(valor: unknown, campo: string): string | nul
   return validarUuid(valor, campo);
 }
 
+/**
+ * CEP de destino informado pelo operador (2026-10-20): 8 dígitos, com ou sem hífen/ponto, sempre
+ * normalizado para "00000-000" (preserva zeros à esquerda — nunca vira número). Ausente/vazio =
+ * `null`; qualquer outra coisa malformada é rejeitada (nunca "aproveitada" pela metade).
+ */
+export function validarCepDestinoOpcional(valor: unknown, campo: string): string | null {
+  if (valor === undefined || valor === null || valor === '') return null;
+  if (typeof valor !== 'string') throw new ErroValidacao(`O campo "${campo}" deve ser um texto.`);
+  const texto = valor.trim();
+  if (texto === '') return null;
+  const digitos = texto.replace(/\D/g, '');
+  if (texto.length > 10 || digitos.length !== 8 || !/^[\d.\-\s]+$/.test(texto)) {
+    throw new ErroValidacao('O CEP de destino informado deve ter 8 dígitos.');
+  }
+  return `${digitos.slice(0, 5)}-${digitos.slice(5)}`;
+}
+
 /** Fase 3.2 — usado só para o override manual de destino vindo do frontend (seção 16). */
 export interface DestinoManualInformado {
   cep: string | null;
@@ -143,11 +160,7 @@ export function validarDestinoManualOpcional(valor: unknown): DestinoManualInfor
   };
   // Formato conferido na borda (2026-10-06): CEP com 8 dígitos e UF com 2 letras — nunca
   // "aproveitado" pela metade nem completado com outro endereço.
-  if (destino.cep !== null) {
-    const digitos = destino.cep.replace(/\D/g, '');
-    if (digitos.length !== 8 || !/^[\d.\-\s]+$/.test(destino.cep)) throw new ErroValidacao('O CEP de destino informado deve ter 8 dígitos.');
-    destino.cep = `${digitos.slice(0, 5)}-${digitos.slice(5)}`;
-  }
+  destino.cep = validarCepDestinoOpcional(destino.cep, 'destinoOverride.cep');
   if (destino.uf !== null) {
     if (!/^[A-Za-z]{2}$/.test(destino.uf)) throw new ErroValidacao('A UF de destino informada deve ter 2 letras.');
     destino.uf = destino.uf.toUpperCase();

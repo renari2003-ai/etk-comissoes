@@ -86,6 +86,7 @@ import {
   validarCanalPrincipalOpcional,
   validarCnpjOpcional,
   validarDestinoManualOpcional,
+  validarCepDestinoOpcional,
   validarEmailOpcional,
   validarIdOmieOpcional,
   validarInteiroNaoNegativoOpcional,
@@ -292,6 +293,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         custoManual: validarNumeroNaoNegativoOpcional(req.body?.custoManual, 'custoManual'),
         valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
         observacoes: validarTextoOpcional(req.body?.observacoes, 'observacoes'),
+        cepDestino: validarCepDestinoOpcional(req.body?.cepDestino, 'cepDestino'),
       };
       const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, 'PEDIDO', destinoOverride, dadosComplementares, req.usuario!.id);
       res.status(201).json(cotacao);
@@ -327,6 +329,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         observacoes: aplicarObservacaoTde(validarTextoOpcional(req.body?.observacoes, 'observacoes'), req.body?.entregaProgramadaTde === true),
         peso: validarNumeroNaoNegativoOpcional(req.body?.peso, 'peso'),
         volumes: validarInteiroNaoNegativoOpcional(req.body?.volumes, 'volumes'),
+        cepDestino: validarCepDestinoOpcional(req.body?.cepDestino, 'cepDestino'),
       };
       const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, tipoDocumento, destinoOverride, dadosComplementares, req.usuario!.id);
       res.status(201).json(cotacao);
@@ -358,6 +361,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         observacoes: aplicarObservacaoTde(validarTextoOpcional(req.body?.observacoes, 'observacoes'), req.body?.entregaProgramadaTde === true),
         peso: validarNumeroNaoNegativoOpcional(req.body?.peso, 'peso'),
         volumes: validarInteiroNaoNegativoOpcional(req.body?.volumes, 'volumes'),
+        cepDestino: validarCepDestinoOpcional(req.body?.cepDestino, 'cepDestino'),
       };
       const cotacao = await servicoCriarCotacaoDeOmie(cliente, numero, 'ORCAMENTO', destinoOverride, dadosComplementares, req.usuario!.id);
       res.status(201).json(cotacao);
@@ -585,7 +589,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
         origem: validarTextoOpcional(req.body?.origem, 'origem'),
         cepOrigem: validarTextoOpcional(req.body?.cepOrigem, 'cepOrigem'),
         destino: validarTextoOpcional(req.body?.destino, 'destino'),
-        cepDestino: validarTextoOpcional(req.body?.cepDestino, 'cepDestino'),
+        cepDestino: validarCepDestinoOpcional(req.body?.cepDestino, 'cepDestino'),
         peso: validarNumeroNaoNegativoOpcional(req.body?.peso, 'peso'),
         volumes: validarInteiroNaoNegativoOpcional(req.body?.volumes, 'volumes'),
         valorMercadoria: validarNumeroNaoNegativoOpcional(req.body?.valorMercadoria, 'valorMercadoria'),
@@ -618,7 +622,7 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       const dados: Record<string, unknown> = {};
       if (req.body?.origem !== undefined) dados.origem = validarTextoOpcional(req.body.origem, 'origem');
       if (req.body?.destino !== undefined) dados.destino = validarTextoOpcional(req.body.destino, 'destino');
-      if (req.body?.cepDestino !== undefined) dados.cepDestino = validarTextoOpcional(req.body.cepDestino, 'cepDestino');
+      if (req.body?.cepDestino !== undefined) dados.cepDestino = validarCepDestinoOpcional(req.body.cepDestino, 'cepDestino');
       if (req.body?.peso !== undefined) dados.peso = validarNumeroNaoNegativoOpcional(req.body.peso, 'peso');
       if (req.body?.volumes !== undefined) dados.volumes = validarInteiroNaoNegativoOpcional(req.body.volumes, 'volumes');
       if (req.body?.valorMercadoria !== undefined) dados.valorMercadoria = validarNumeroNaoNegativoOpcional(req.body.valorMercadoria, 'valorMercadoria');

@@ -245,9 +245,11 @@ describe('payload/e-mail/WhatsApp — destino e observação desta transportador
     const p = montarPayloadN8n(cotacao(), solicitacao({ observacoesTransportadora: 'Só para esta' }), CNPJS, null);
     expect(p.logistica.observacoesTransportadora).toBe('Só para esta');
     const json = JSON.stringify(p);
-    for (const proibido of ['valorMercadoria', 'custoManual', 'margem', 'markup', 'comissao', '12345.67', '999']) {
+    for (const proibido of ['custoManual', 'margem', 'markup', 'comissao', '999']) {
       expect(json).not.toContain(proibido);
     }
+    // Valor declarado da carga (seguro/ad valorem) faz parte do payload desde 9132631 — não é custo nem margem.
+    expect(p.logistica.valorMercadoria).toBe(12345.67);
     expect(montarPayloadN8n(cotacao(), solicitacao(), CNPJS, null).logistica.observacoesTransportadora).toBeNull();
   });
 
