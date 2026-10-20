@@ -27,7 +27,7 @@ import {
 import { emailValido } from './validacao.js';
 import { problemaLimiteWhatsapp } from './whatsapp/mensagemCotacao.js';
 import { montarPayloadN8n, problemaObservacaoViaN8n } from './integracaoCotacoesServico.js';
-import { cepDestinoDesatualizado, montarDestinoEnviado } from './destinoEnviado.js';
+import { destinoEnviadoDesatualizado, montarDestinoEnviado } from './destinoEnviado.js';
 import type { CotacaoFrete, SolicitacaoCotacao, Transportadora } from './tipos.js';
 
 // Regras de canal ficam em `canaisTransportadora.ts` (também usadas na edição do cadastro); reexportadas aqui por compatibilidade.
@@ -361,11 +361,12 @@ async function processarItemEnvio(
 
     // Idempotência: nunca cria uma segunda solicitação para a mesma transportadora/canal
     // nesta cotação — com ERRO, o caminho é o "Reenviar" existente (mesma referência).
-    // Única exceção (2026-10-20): solicitação registrada com CEP diferente do CEP atual da cotação
-    // (corrigido depois). Ela fica intacta no histórico e uma nova leva o CEP atualizado.
+    // Única exceção (2026-10-20): solicitação registrada com destino (endereço e/ou CEP) diferente do
+    // destino atual da cotação (corrigido depois). Ela fica intacta no histórico e uma nova leva o
+    // destino atual. Mesmo destino (só máscara/formatação diferente) continua bloqueado.
     const anterior = solicitacoesExistentes.find(
       (s) =>
-        s.transportadoraId === transportadora.id && s.canal === item.canal && s.status !== 'CANCELADA' && !cepDestinoDesatualizado(s, cotacao),
+        s.transportadoraId === transportadora.id && s.canal === item.canal && s.status !== 'CANCELADA' && !destinoEnviadoDesatualizado(s, cotacao),
     );
     if (anterior !== undefined) {
       return {

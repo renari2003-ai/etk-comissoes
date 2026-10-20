@@ -14,12 +14,43 @@ function digitosCep(cep: string | null | undefined): string {
   return (cep ?? '').replace(/\D/g, '');
 }
 
+/** Texto do destino sem acento, caixa, pontuação nem espaços repetidos — só para comparar. */
+function normalizarTextoDestino(texto: string | null | undefined): string {
+  return (texto ?? '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 /**
- * A solicitação foi registrada com um CEP diferente do CEP atual (válido) da cotação — ex.: o
- * operador completou/corrigiu o CEP depois do envio (2026-10-20). O snapshot NÃO é alterado
- * (histórico e "Reenviar" continuam com o endereço original); isto só sinaliza que o CEP
- * atualizado exige uma NOVA solicitação. Solicitação antiga sem snapshot usa o destino atual da
- * cotação, então nunca fica desatualizada.
+ * Mesmo destino de entrega? Compara CEP (só dígitos) e o texto do endereço normalizado (que já
+ * reúne logradouro, número, complemento, bairro e cidade/UF). Máscara, espaços, caixa, acentos e
+ * pontuação não contam como mudança; a origem do endereço (PEDIDO/MANUAL...) também não.
+ */
+export function mesmoDestino(a: Pick<DestinoEnviado, 'cep' | 'texto'>, b: Pick<DestinoEnviado, 'cep' | 'texto'>): boolean {
+  return digitosCep(a.cep) === digitosCep(b.cep) && normalizarTextoDestino(a.texto) === normalizarTextoDestino(b.texto);
+}
+
+/**
+ * A solicitação foi registrada com um destino (endereço e/ou CEP) diferente do destino atual da
+ * cotação — o operador corrigiu depois do envio (2026-10-20). O snapshot NÃO é alterado (histórico
+ * e "Reenviar" continuam com os dados originais); isto só sinaliza que o destino atual exige uma
+ * NOVA solicitação. Solicitação antiga sem snapshot usa o destino atual da cotação, então nunca
+ * fica desatualizada; destino atual vazio nunca justifica nova solicitação.
+ */
+export function destinoEnviadoDesatualizado(solicitacao: Pick<SolicitacaoCotacao, 'destinoEnviado'>, cotacao: CotacaoFrete): boolean {
+  if (solicitacao.destinoEnviado === null || solicitacao.destinoEnviado === undefined) return false;
+  const atual = montarDestinoEnviado(cotacao);
+  const atualUtilizavel = digitosCep(atual.cep).length === 8 || normalizarTextoDestino(atual.texto) !== '';
+  return atualUtilizavel && !mesmoDestino(solicitacao.destinoEnviado, atual);
+}
+
+/**
+ * COMPATIBILIDADE TEMPORÁRIA (semântica do commit 2bc0021): compara SÓ o CEP. Mantido para abas
+ * abertas com o frontend anterior, que ainda leem `cepDestinoDesatualizado`. A regra vigente
+ * (envio e tela nova) é `destinoEnviadoDesatualizado`. Remover quando não houver mais clientes antigos.
  */
 export function cepDestinoDesatualizado(solicitacao: Pick<SolicitacaoCotacao, 'destinoEnviado'>, cotacao: Pick<CotacaoFrete, 'cepDestino'>): boolean {
   if (solicitacao.destinoEnviado === null || solicitacao.destinoEnviado === undefined) return false;

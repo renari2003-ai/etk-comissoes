@@ -260,3 +260,46 @@ describe('cadastro de transportadoras — canal', () => {
     }
   });
 });
+
+describe('PUT cotacoes — endereço completo (destinoOverride)', () => {
+  const cotacaoOmie = {
+    id: COTACAO,
+    modalidadeExecucao: 'TRANSPORTADORA',
+    veiculoId: null,
+    destino: 'Rua Omie, nº 10, Centro, Curitiba/PR',
+    cepDestino: '80000-000',
+    origemDestino: 'PEDIDO',
+    logradouroDestino: 'Rua Omie',
+    numeroDestino: '10',
+    complementoDestino: 'Fundos',
+    bairroDestino: 'Centro',
+    cidadeDestino: 'Curitiba',
+    ufDestino: 'PR',
+  } as unknown as CotacaoFrete;
+  const put = (corpo: unknown) => fetch(`${base}/api/fretes/cotacoes/${COTACAO}`, { method: 'PUT', headers, body: JSON.stringify(corpo) });
+
+  beforeEach(() => {
+    vi.mocked(buscarCotacaoPorId).mockResolvedValue(cotacaoOmie);
+    vi.mocked(atualizarCotacao).mockImplementation(async (_id, dados) => ({ ...cotacaoOmie, ...dados }) as CotacaoFrete);
+  });
+
+  it('válido: CEP normalizado, UF em maiúsculas, estrutura antiga substituída inteira', async () => {
+    const r = await put({ destinoOverride: { cep: '80010000', logradouro: 'Rua Nova', numero: '5', bairro: 'Batel', cidade: 'Curitiba', uf: 'pr' } });
+    expect(r.status).toBe(200);
+    expect(atualizarCotacao).toHaveBeenCalledWith(
+      COTACAO,
+      expect.objectContaining({ cepDestino: '80010-000', ufDestino: 'PR', origemDestino: 'MANUAL', complementoDestino: null, destino: 'Rua Nova, nº 5, Batel, Curitiba/PR' }),
+    );
+  });
+
+  it.each([
+    ['CEP malformado', { destinoOverride: { cep: '800', logradouro: 'Rua', cidade: 'Curitiba' } }],
+    ['sem CEP nem logradouro+cidade', { destinoOverride: { bairro: 'Centro' } }],
+    ['null', { destinoOverride: null }],
+    ['não-objeto', { destinoOverride: 'Rua Nova' }],
+    ['junto com cepDestino', { destinoOverride: { cep: '80010000', logradouro: 'Rua', cidade: 'Curitiba' }, cepDestino: '80010000' }],
+  ])('%s → 400, nada gravado', async (_nome, corpo) => {
+    expect((await put(corpo)).status).toBe(400);
+    expect(atualizarCotacao).not.toHaveBeenCalled();
+  });
+});

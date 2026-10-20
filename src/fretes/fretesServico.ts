@@ -29,6 +29,7 @@ import { CEP_ORIGEM_ETK } from './origemEtk.js';
 import { problemaCanalPrincipal } from './canaisTransportadora.js';
 import { formatarDestinoTexto, prepararCotacaoDeOmie, type PreparacaoCotacaoOmie } from './omieFretes.js';
 import type { DestinoManualInformado } from './validacao.js';
+import { mesmoDestino, montarDestinoEnviado } from './destinoEnviado.js';
 import { buscarFechamentoPorCotacao, inserirFechamento, resumirFechamentos, resumirFechamentosPorModalidade, type ResumoFechamentos } from './fechamentosRepositorio.js';
 import {
   atualizarStatusProposta,
@@ -254,8 +255,43 @@ export async function servicoBuscarCotacao(id: string): Promise<CotacaoFrete> {
   return cotacao;
 }
 
-export async function servicoAtualizarCotacao(id: string, dados: DadosAtualizacaoCotacao, usuarioId: string): Promise<CotacaoFrete> {
+/**
+ * `destinoOverride` (2026-10-20): troca o endereço de entrega INTEIRO de uma cotação já criada, de
+ * forma estruturada (mesma validação e formatação da criação) — vale só para esta cotação, nunca
+ * grava na Omie nem no cadastro do cliente. Não se combina com `destino`/`cepDestino` no mesmo pedido.
+ */
+export type DadosAtualizacaoCotacaoServico = DadosAtualizacaoCotacao & { destinoOverride?: DestinoManualInformado };
+
+export async function servicoAtualizarCotacao(id: string, dadosRecebidos: DadosAtualizacaoCotacaoServico, usuarioId: string): Promise<CotacaoFrete> {
+  const { destinoOverride, ...dadosSemEndereco } = dadosRecebidos;
+  if (destinoOverride !== undefined && (dadosSemEndereco.destino !== undefined || dadosSemEndereco.cepDestino !== undefined)) {
+    throw new ErroValidacao('Informe o endereço completo ("destinoOverride") OU só o destino/CEP, não os dois no mesmo pedido.');
+  }
   const anterior = await servicoBuscarCotacao(id);
+  // Endereço completo informado pelo operador: substitui a estrutura anterior inteira (nada da
+  // estrutura antiga sobrevive) e vira MANUAL — o texto é sempre remontado a partir dos campos.
+  // Mesmo endereço reenviado (só máscara/formatação diferente): nada muda — nem a origem.
+  const enderecoInformado: EnderecoDestino | null = destinoOverride !== undefined ? { origem: 'MANUAL', codigoMunicipio: null, ...destinoOverride } : null;
+  const enderecoNovo =
+    enderecoInformado !== null && !mesmoDestino(montarDestinoEnviado(anterior), { cep: enderecoInformado.cep, texto: formatarDestinoTexto(enderecoInformado) })
+      ? enderecoInformado
+      : null;
+  const dados: DadosAtualizacaoCotacao =
+    enderecoNovo !== null
+      ? {
+          ...dadosSemEndereco,
+          destino: formatarDestinoTexto(enderecoNovo),
+          cepDestino: enderecoNovo.cep,
+          origemDestino: 'MANUAL',
+          logradouroDestino: enderecoNovo.logradouro,
+          numeroDestino: enderecoNovo.numero,
+          complementoDestino: enderecoNovo.complemento,
+          bairroDestino: enderecoNovo.bairro,
+          cidadeDestino: enderecoNovo.cidade,
+          ufDestino: enderecoNovo.uf,
+          codigoMunicipioDestino: null,
+        }
+      : dadosSemEndereco;
   const modalidadeExecucaoFinal = dados.modalidadeExecucao ?? anterior.modalidadeExecucao;
   const veiculoIdFinal = dados.veiculoId !== undefined ? dados.veiculoId : anterior.veiculoId;
   await validarCamposPorModalidadeExecucao(modalidadeExecucaoFinal, veiculoIdFinal);
@@ -274,8 +310,9 @@ export async function servicoAtualizarCotacao(id: string, dados: DadosAtualizaca
     [anterior.logradouroDestino, anterior.numeroDestino, anterior.complementoDestino, anterior.bairroDestino, anterior.cidadeDestino, anterior.ufDestino].some(
       (v) => typeof v === 'string' && v.trim() !== '',
     );
-  const somenteCepEditado = cepEditado && !textoDestinoEditado && temEstrutura;
-  const destinoEditado = textoDestinoEditado || (cepEditado && !somenteCepEditado);
+  const somenteCepEditado = enderecoNovo === null && cepEditado && !textoDestinoEditado && temEstrutura;
+  const destinoEditado = enderecoNovo === null && (textoDestinoEditado || (cepEditado && !somenteCepEditado));
+  const enderecoSubstituido = enderecoNovo !== null;
   const dadosFinais: DadosAtualizacaoCotacao = destinoEditado
     ? {
         ...dados,
@@ -299,6 +336,27 @@ export async function servicoAtualizarCotacao(id: string, dados: DadosAtualizaca
       entidadeId: cotacao.id,
       valorAnterior: { origemDestino: anterior.origemDestino, destino: anterior.destino, cepDestino: anterior.cepDestino },
       valorNovo: { origemDestino: cotacao.origemDestino, destino: cotacao.destino, cepDestino: cotacao.cepDestino },
+    });
+  }
+  if (enderecoSubstituido) {
+    const estrutura = (c: CotacaoFrete) => ({
+      origemDestino: c.origemDestino,
+      destino: c.destino,
+      cepDestino: c.cepDestino,
+      logradouroDestino: c.logradouroDestino,
+      numeroDestino: c.numeroDestino,
+      complementoDestino: c.complementoDestino,
+      bairroDestino: c.bairroDestino,
+      cidadeDestino: c.cidadeDestino,
+      ufDestino: c.ufDestino,
+    });
+    await registrarAuditoria({
+      usuarioId,
+      acao: 'DESTINO_ALTERADO_MANUALMENTE',
+      entidade: 'cotacao_frete',
+      entidadeId: cotacao.id,
+      valorAnterior: estrutura(anterior),
+      valorNovo: estrutura(cotacao),
     });
   }
   if (somenteCepEditado) {

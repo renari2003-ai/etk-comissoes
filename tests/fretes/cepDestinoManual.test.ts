@@ -39,7 +39,7 @@ import { cotarNaBraspress } from '../../src/fretes/integracoes/braspressCliente.
 import { servicoAtualizarCotacao, servicoCriarCotacaoDeOmie } from '../../src/fretes/fretesServico.js';
 import { servicoCotarBraspress } from '../../src/fretes/braspressServico.js';
 import * as solicitacoesRepo from '../../src/fretes/solicitacoesRepositorio.js';
-import { cepDestinoDesatualizado, montarDestinoEnviado } from '../../src/fretes/destinoEnviado.js';
+import { cepDestinoDesatualizado, destinoEnviadoDesatualizado, mesmoDestino, montarDestinoEnviado } from '../../src/fretes/destinoEnviado.js';
 import { montarPayloadN8n, servicoListarSolicitacoes } from '../../src/fretes/integracaoCotacoesServico.js';
 import { servicoEnviarSolicitacoes, type DependenciasEnvio } from '../../src/fretes/envioSolicitacoesServico.js';
 import { montarEmailCotacao } from '../../src/fretes/email/templateCotacao.js';
@@ -321,6 +321,7 @@ describe('uso do CEP salvo no envio', () => {
 
 describe('tela (código-fonte do frontend)', () => {
   const codigo = readFileSync('public-src/fretes.ts', 'utf8');
+  const html = readFileSync('public/index.html', 'utf8');
 
   it('Nova cotação com documento Omie: CEP não fica travado e vai à parte na confirmação', () => {
     expect(codigo).not.toContain("for (const id of ['fretes-cotacao-destino', 'fretes-cotacao-cep-destino']) el<HTMLInputElement>(id).readOnly = comDocumento;");
@@ -329,15 +330,24 @@ describe('tela (código-fonte do frontend)', () => {
     expect(bloco).toMatch(/destinoOverride,\s*cepDestino,/);
   });
 
-  it('detalhe: editor de CEP grava na cotação via PUT só com cepDestino', () => {
-    const bloco = codigo.slice(codigo.indexOf('function criarEditorCepDestino'), codigo.indexOf('function criarEditorCepDestino') + 4000);
+  it('Nova cotação com endereço manual: CEP da Omie não fica exibido como se valesse; lembrete quando o CEP é o mesmo', () => {
+    const bloco = codigo.slice(codigo.indexOf('function atualizarCampoCepDestinoDocumento'), codigo.indexOf('function atualizarLembreteCepEnderecoManual') + 1200);
+    expect(bloco).toContain("inputCep.value = usaEnderecoManual ? '' : (p.destino?.cep ?? '')");
+    expect(bloco).toContain('confira se ele corresponde ao novo endereço');
+    expect(html).toContain('id="fretes-cotacao-destino-manual-lembrete"');
+  });
+
+  it('detalhe: "Salvar CEP" manda só cepDestino; "Salvar endereço" manda o endereço completo; lembrete sem afirmar erro', () => {
+    const bloco = codigo.slice(codigo.indexOf('function criarEditorDestino'), codigo.indexOf('function criarEditorDestino') + 7000);
     expect(bloco).toContain("method: 'PUT'");
-    expect(bloco).toContain('JSON.stringify({ cepDestino: input.value.trim() })');
-    expect(bloco).not.toContain('/api/omie');
+    expect(bloco).toContain('{ cepDestino: inputCep.value.trim() }');
+    expect(bloco).toContain('{ destinoOverride: endereco }');
+    expect(bloco).toContain('confira se ele corresponde ao novo endereço');
+    expect(bloco).not.toContain('/api/fretes/omie');
   });
 });
 
-describe('CEP corrigido depois do envio: aviso e nova solicitação (histórico preservado)', () => {
+describe('destino corrigido depois do envio: comparação, aviso e nova solicitação (histórico preservado)', () => {
   const corrigida = cotacaoOmieSemCep({ cepDestino: '01310-100' });
   const snapshotSemCep = montarDestinoEnviado(cotacaoOmieSemCep());
   const TRANSPORTADORA = {
@@ -356,9 +366,9 @@ describe('CEP corrigido depois do envio: aviso e nova solicitação (histórico 
     whatsappCotacao: null,
   };
 
-  function depsEnvio(existentes: SolicitacaoCotacao[]) {
+  function depsEnvio(existentes: SolicitacaoCotacao[], cot: CotacaoFrete = corrigida) {
     const d = {
-      buscarCotacao: vi.fn(async () => corrigida),
+      buscarCotacao: vi.fn(async () => cot),
       buscarTransportadora: vi.fn(async () => TRANSPORTADORA),
       listarSolicitacoes: vi.fn(async () => existentes),
       solicitar: vi.fn(async () => [{ id: 'sol-nova', status: 'ENVIADA' } as SolicitacaoCotacao]),
@@ -368,47 +378,163 @@ describe('CEP corrigido depois do envio: aviso e nova solicitação (histórico 
     return d as unknown as DependenciasEnvio & typeof d;
   }
   const item = [{ transportadoraId: 'tr-1', canal: 'EMAIL' as const, emailManual: null }];
-
-  it('sinaliza só quando o snapshot tem CEP diferente do CEP atual válido', () => {
-    expect(cepDestinoDesatualizado({ destinoEnviado: snapshotSemCep }, corrigida)).toBe(true);
-    expect(cepDestinoDesatualizado({ destinoEnviado: { ...snapshotSemCep, cep: '01310100' } }, corrigida)).toBe(false);
-    expect(cepDestinoDesatualizado({ destinoEnviado: null }, corrigida)).toBe(false); // sem snapshot: usa o destino atual
-    expect(cepDestinoDesatualizado({ destinoEnviado: { ...snapshotSemCep, cep: '13200-000' } }, { cepDestino: null })).toBe(false);
+  /** Mesmo CEP, outro número/complemento — mudança real de endereço. */
+  const outroNumeroMesmoCep = cotacaoOmieSemCep({
+    cepDestino: '01310-100',
+    numeroDestino: '720',
+    complementoDestino: null,
+    destino: 'Rua das Indústrias, nº 720, Distrito Industrial, Jundiaí/SP',
   });
 
-  it('solicitação anterior com CEP antigo: nova solicitação é criada; a anterior não é alterada', async () => {
+  it('normalização: máscara, espaços, caixa, acentos e pontuação não contam; número/complemento contam', () => {
+    const base = { cep: '01310-100', texto: 'Rua das Indústrias, nº 500, Galpão B, Distrito Industrial, Jundiaí/SP' };
+    expect(mesmoDestino(base, { cep: '01310100', texto: '  RUA DAS INDUSTRIAS nº 500 galpao b   distrito industrial - jundiai sp ' })).toBe(true);
+    expect(mesmoDestino(base, { ...base, texto: 'Rua das Indústrias, nº 501, Galpão B, Distrito Industrial, Jundiaí/SP' })).toBe(false);
+    expect(mesmoDestino(base, { ...base, texto: 'Rua das Indústrias, nº 500, Distrito Industrial, Jundiaí/SP' })).toBe(false);
+    expect(mesmoDestino(base, { ...base, cep: '01310-101' })).toBe(false);
+  });
+
+  it('sinaliza quando CEP OU endereço mudou; não sinaliza sem snapshot, sem mudança real ou com destino atual vazio', () => {
+    expect(destinoEnviadoDesatualizado({ destinoEnviado: snapshotSemCep }, corrigida)).toBe(true); // CEP completado
+    const enviadoComCep = montarDestinoEnviado(corrigida);
+    expect(destinoEnviadoDesatualizado({ destinoEnviado: enviadoComCep }, outroNumeroMesmoCep)).toBe(true); // endereço mudou, CEP igual
+    expect(destinoEnviadoDesatualizado({ destinoEnviado: { ...enviadoComCep, cep: '01310100', texto: enviadoComCep.texto?.toUpperCase() ?? null } }, corrigida)).toBe(false);
+    expect(destinoEnviadoDesatualizado({ destinoEnviado: { ...enviadoComCep, origem: 'MANUAL' } }, corrigida)).toBe(false); // só a origem: não é mudança
+    expect(destinoEnviadoDesatualizado({ destinoEnviado: null }, corrigida)).toBe(false); // sem snapshot: usa o destino atual
+    const vazia = cotacaoOmieSemCep({ origemDestino: null, logradouroDestino: null, numeroDestino: null, complementoDestino: null, bairroDestino: null, cidadeDestino: null, ufDestino: null, destino: null, cepDestino: null });
+    expect(destinoEnviadoDesatualizado({ destinoEnviado: enviadoComCep }, vazia)).toBe(false);
+  });
+
+  it('CEP completado depois: nova solicitação é criada; a anterior não é alterada', async () => {
     const antiga = solicitacao({ id: 'sol-antiga', status: 'ENVIADA', destinoEnviado: snapshotSemCep } as Partial<SolicitacaoCotacao>);
+    const copia = structuredClone(antiga);
     const d = depsEnvio([antiga]);
     const r = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, item, null, USUARIO, d);
     expect(r[0]?.status).toBe('ENVIADO');
     expect(d.solicitar).toHaveBeenCalledTimes(1);
-    expect(antiga.destinoEnviado).toEqual(snapshotSemCep);
+    expect(antiga).toEqual(copia);
   });
 
-  it('solicitação anterior já com o CEP atual: idempotência mantida (nada criado)', async () => {
-    const atual = solicitacao({ status: 'ENVIADA', destinoEnviado: montarDestinoEnviado(corrigida) } as Partial<SolicitacaoCotacao>);
-    const d = depsEnvio([atual]);
+  it('endereço mudou mantendo o CEP: nova solicitação é criada (antes ficava bloqueada)', async () => {
+    const antiga = solicitacao({ id: 'sol-antiga', status: 'ERRO', destinoEnviado: montarDestinoEnviado(corrigida) } as Partial<SolicitacaoCotacao>);
+    const copia = structuredClone(antiga);
+    const d = depsEnvio([antiga], outroNumeroMesmoCep);
     const r = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, item, null, USUARIO, d);
-    expect(r[0]?.status).toBe('NAO_ENVIADO');
-    expect(d.solicitar).not.toHaveBeenCalled();
+    expect(r[0]?.status).toBe('ENVIADO');
+    expect(d.solicitar).toHaveBeenCalledTimes(1);
+    expect(antiga).toEqual(copia);
   });
 
-  it('listagem informa cepDestinoDesatualizado (aditivo) para a tela avisar', async () => {
-    buscarCotacao.mockResolvedValue(corrigida);
+  it('mesmo destino (só formatação diferente): duplicidade continua bloqueada, com ENVIADA ou ERRO', async () => {
+    const enviado = montarDestinoEnviado(corrigida);
+    for (const status of ['ENVIADA', 'ERRO'] as const) {
+      const anterior = solicitacao({ status, destinoEnviado: { ...enviado, cep: '01310100', texto: `  ${enviado.texto?.toLowerCase() ?? ''}  ` } } as Partial<SolicitacaoCotacao>);
+      const d = depsEnvio([anterior]);
+      const r = await servicoEnviarSolicitacoes(cliente, COTACAO_ID, item, null, USUARIO, d);
+      expect(r[0]?.status).toBe('NAO_ENVIADO');
+      expect(d.solicitar).not.toHaveBeenCalled();
+    }
+  });
+
+  it('listagem: destinoDesatualizado + destinoAtual (aditivos); destinoEnviado devolvido exatamente como gravado', async () => {
+    buscarCotacao.mockResolvedValue(outroNumeroMesmoCep);
+    const enviado = montarDestinoEnviado(corrigida);
     vi.mocked(solicitacoesRepo.listarSolicitacoesPorCotacao).mockResolvedValue([
-      solicitacao({ id: 'a', destinoEnviado: snapshotSemCep }),
-      solicitacao({ id: 'b', destinoEnviado: montarDestinoEnviado(corrigida) }),
+      solicitacao({ id: 'a', destinoEnviado: enviado }),
+      solicitacao({ id: 'b', destinoEnviado: montarDestinoEnviado(outroNumeroMesmoCep) }),
     ]);
     const lista = await servicoListarSolicitacoes(COTACAO_ID);
-    expect(lista.map((s) => [s.id, s.cepDestinoDesatualizado])).toEqual([
-      ['a', true],
-      ['b', false],
-    ]);
+    expect(lista[0]).toMatchObject({ id: 'a', destinoDesatualizado: true, destinoEnviado: enviado });
+    expect(lista[0]?.destinoAtual).toEqual({ texto: 'Rua das Indústrias, nº 720, Distrito Industrial, Jundiaí/SP', cep: '01310-100' });
+    expect(lista[1]).toMatchObject({ id: 'b', destinoDesatualizado: false, destinoAtual: null });
   });
 
-  it('tela: aviso na linha e confirmação antes de "Reenviar" com o endereço original', () => {
+  it('compatibilidade: cepDestinoDesatualizado mantém a semântica antiga (só CEP) ao lado dos campos novos', async () => {
+    // a: CEP completado depois → os dois campos sinalizam. b: endereço mudou com o MESMO CEP → só o novo sinaliza.
+    // c: nada mudou → nenhum sinaliza.
+    const daOmieComCep = cotacaoOmieSemCep({ cepDestino: '01310-100' });
+    buscarCotacao.mockResolvedValue(outroNumeroMesmoCep);
+    vi.mocked(solicitacoesRepo.listarSolicitacoesPorCotacao).mockResolvedValue([
+      solicitacao({ id: 'a', destinoEnviado: snapshotSemCep }),
+      solicitacao({ id: 'b', destinoEnviado: montarDestinoEnviado(daOmieComCep) }),
+      solicitacao({ id: 'c', destinoEnviado: montarDestinoEnviado(outroNumeroMesmoCep) }),
+    ]);
+    const lista = await servicoListarSolicitacoes(COTACAO_ID);
+    expect(lista.map((s) => [s.id, s.cepDestinoDesatualizado, s.destinoDesatualizado])).toEqual([
+      ['a', true, true],
+      ['b', false, true],
+      ['c', false, false],
+    ]);
+    expect(cepDestinoDesatualizado({ destinoEnviado: null }, daOmieComCep)).toBe(false);
+    expect(cepDestinoDesatualizado({ destinoEnviado: { ...snapshotSemCep, cep: '01310100' } }, daOmieComCep)).toBe(false);
+  });
+
+  it('reenvio de solicitação antiga usa o snapshot original (histórico), não o destino atual', () => {
+    const enviado = montarDestinoEnviado(corrigida);
+    const p = montarPayloadN8n(outroNumeroMesmoCep, solicitacao({ destinoEnviado: enviado }), { cnpjOrigem: '11222333000181', cnpjDestino: null }, null);
+    expect(p.logistica.destino).toBe(enviado.texto);
+    expect(p.logistica.destino).toContain('nº 500');
+  });
+
+  it('tela: aviso mostra o destino usado e o atual; "Reenviar" pede confirmação e nunca reenvia sozinho', () => {
     const codigo = readFileSync('public-src/fretes.ts', 'utf8');
-    expect(codigo).toContain('"Reenviar" manda o endereço ORIGINAL. Para enviar o CEP atualizado, crie uma nova solicitação');
+    expect(codigo).toContain('Esta solicitação usou: ${descreverDestino(s.destinoEnviado)}. A cotação agora tem: ${descreverDestino(s.destinoAtual)}.');
+    expect(codigo).toContain('"Reenviar" repete os dados ORIGINAIS desta solicitação. Para enviar o endereço e o CEP atuais, crie uma nova solicitação');
     expect(codigo).toContain('window.confirm(`${avisoCepDesatualizado}');
+  });
+});
+
+describe('edição posterior: endereço completo (destinoOverride)', () => {
+  const daOmieComCep = cotacaoOmieSemCep({ cepDestino: '01310-100' });
+  const novoEndereco = { cep: '04538-132', logradouro: 'Av. Brigadeiro Faria Lima', numero: '3477', complemento: null, bairro: 'Itaim Bibi', cidade: 'São Paulo', uf: 'SP' };
+
+  beforeEach(() => {
+    buscarCotacao.mockResolvedValue(daOmieComCep);
+    atualizarCotacao.mockImplementation(async (_id, dados) => ({ ...daOmieComCep, ...dados }) as CotacaoFrete);
+  });
+
+  it('substitui a estrutura INTEIRA (nada da antiga sobrevive), vira MANUAL, texto remontado; auditoria antes/depois', async () => {
+    const cotacao = await servicoAtualizarCotacao(COTACAO_ID, { destinoOverride: novoEndereco }, USUARIO);
+    expect(atualizarCotacao).toHaveBeenCalledWith(COTACAO_ID, {
+      destino: 'Av. Brigadeiro Faria Lima, nº 3477, Itaim Bibi, São Paulo/SP',
+      cepDestino: '04538-132',
+      origemDestino: 'MANUAL',
+      logradouroDestino: 'Av. Brigadeiro Faria Lima',
+      numeroDestino: '3477',
+      complementoDestino: null, // o "Galpão B" da Omie não prevalece
+      bairroDestino: 'Itaim Bibi',
+      cidadeDestino: 'São Paulo',
+      ufDestino: 'SP',
+      codigoMunicipioDestino: null,
+    });
+    expect(auditar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        acao: 'DESTINO_ALTERADO_MANUALMENTE',
+        valorAnterior: expect.objectContaining({ origemDestino: 'PEDIDO', complementoDestino: 'Galpão B', cepDestino: '01310-100' }),
+        valorNovo: expect.objectContaining({ origemDestino: 'MANUAL', complementoDestino: null, cepDestino: '04538-132' }),
+      }),
+    );
+    // envio seguinte usa o endereço novo inteiro
+    const p = montarPayloadN8n(cotacao, solicitacao({ destinoEnviado: montarDestinoEnviado(cotacao) }), { cnpjOrigem: '11222333000181', cnpjDestino: null }, null);
+    expect(p.logistica).toMatchObject({ destino: 'Av. Brigadeiro Faria Lima, nº 3477, Itaim Bibi, São Paulo/SP', cepDestino: '04538-132' });
+  });
+
+  it('endereço mudou mantendo o CEP: grava e audita (o lembrete é só da tela)', async () => {
+    await servicoAtualizarCotacao(COTACAO_ID, { destinoOverride: { ...novoEndereco, cep: '01310-100' } }, USUARIO);
+    expect(atualizarCotacao).toHaveBeenCalledWith(COTACAO_ID, expect.objectContaining({ cepDestino: '01310-100', logradouroDestino: 'Av. Brigadeiro Faria Lima' }));
+    expect(auditar).toHaveBeenCalledWith(expect.objectContaining({ acao: 'DESTINO_ALTERADO_MANUALMENTE' }));
+  });
+
+  it('mesmo endereço reenviado (só formatação): nada muda e nenhuma intervenção é registrada', async () => {
+    const mesmo = { cep: '01310100', logradouro: 'Rua das Indústrias', numero: '500', complemento: 'Galpão B', bairro: 'Distrito Industrial', cidade: 'Jundiaí', uf: 'SP' };
+    await servicoAtualizarCotacao(COTACAO_ID, { destinoOverride: mesmo }, USUARIO);
+    expect(atualizarCotacao).toHaveBeenCalledWith(COTACAO_ID, {}); // nem a origem (PEDIDO) é trocada
+    expect(auditar).not.toHaveBeenCalledWith(expect.objectContaining({ acao: 'DESTINO_ALTERADO_MANUALMENTE' }));
+  });
+
+  it('endereço completo junto com destino/CEP avulsos → erro explícito, nada gravado', async () => {
+    await expect(servicoAtualizarCotacao(COTACAO_ID, { destinoOverride: novoEndereco, cepDestino: '04538-132' }, USUARIO)).rejects.toBeInstanceOf(ErroValidacao);
+    await expect(servicoAtualizarCotacao(COTACAO_ID, { destinoOverride: novoEndereco, destino: 'x' }, USUARIO)).rejects.toBeInstanceOf(ErroValidacao);
+    expect(atualizarCotacao).not.toHaveBeenCalled();
   });
 });

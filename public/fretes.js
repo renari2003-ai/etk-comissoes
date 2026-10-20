@@ -1322,9 +1322,9 @@ export function inicializarFretes() {
         const comDocumento = p !== null;
         el('fretes-cotacao-destino').readOnly = comDocumento;
         checkboxDestinoOutro.checked = false;
-        atualizarCampoCepDestinoDocumento(p);
         for (const campo of CAMPOS_DESTINO_MANUAL)
             inputDestinoManual(campo).value = '';
+        atualizarCampoCepDestinoDocumento(p);
         if (p === null) {
             infoDestinoOrigem.hidden = true;
             campoDestinoOutro.hidden = true;
@@ -1355,9 +1355,29 @@ export function inicializarFretes() {
         const inputCep = el('fretes-cotacao-cep-destino');
         const usaEnderecoManual = p !== null && (p.destino === null || checkboxDestinoOutro.checked);
         inputCep.readOnly = usaEnderecoManual;
-        if (usaEnderecoManual)
-            inputCep.value = p?.destino?.cep ?? '';
+        // Endereço manual em uso: o CEP da Omie NÃO vale — o campo fica vazio e aponta para o CEP do
+        // endereço manual (nunca exibe um CEP que não será usado). Voltando ao endereço da Omie, o CEP
+        // da Omie é preenchido de novo.
+        inputCep.placeholder = usaEnderecoManual ? 'Use o CEP do endereço abaixo' : '';
+        if (p !== null)
+            inputCep.value = usaEnderecoManual ? '' : (p.destino?.cep ?? '');
+        atualizarLembreteCepEnderecoManual();
     }
+    /** Endereço manual com o MESMO CEP da Omie: só um lembrete para conferir (nunca bloqueia nem afirma erro). */
+    function atualizarLembreteCepEnderecoManual() {
+        // Elemento novo no HTML: tolera um index.html antigo ainda em cache (sem lembrete, sem quebrar a tela).
+        const lembrete = document.getElementById('fretes-cotacao-destino-manual-lembrete');
+        if (lembrete === null)
+            return;
+        const cepOmie = (orcamentoPreparado?.preparacao.destino?.cep ?? '').replace(/\D/g, '');
+        const cepManual = inputDestinoManual('cep').value.replace(/\D/g, '');
+        const enderecoInformado = CAMPOS_DESTINO_MANUAL.some((campo) => campo !== 'cep' && inputDestinoManual(campo).value.trim() !== '');
+        const mostrar = !fieldsetDestinoManual.hidden && cepOmie !== '' && cepManual === cepOmie && enderecoInformado;
+        lembrete.hidden = !mostrar;
+        lembrete.textContent = mostrar ? 'O endereço foi alterado, mas o CEP é o mesmo da Omie — confira se ele corresponde ao novo endereço.' : '';
+    }
+    for (const campo of CAMPOS_DESTINO_MANUAL)
+        inputDestinoManual(campo).addEventListener('input', atualizarLembreteCepEnderecoManual);
     checkboxDestinoOutro.addEventListener('change', () => {
         fieldsetDestinoManual.hidden = !checkboxDestinoOutro.checked;
         if (!checkboxDestinoOutro.checked)
@@ -1741,10 +1761,11 @@ export function inicializarFretes() {
             tr.appendChild(celula(s.emailDestino ?? '—'));
             tr.appendChild(celula(s.emailOrigem === 'OMIE' ? 'Omie' : s.emailOrigem === 'MANUAL' ? 'Manual' : '—'));
             const tdAcoes = document.createElement('td');
-            // CEP corrigido depois do envio: o histórico (e o "Reenviar") mantém o endereço original.
-            const avisoCepDesatualizado = s.cepDestinoDesatualizado === true
-                ? `Enviada com CEP ${s.destinoEnviado?.cep ?? 'não informado'}; a cotação agora tem CEP ${cotacaoEnvioAtual?.cepDestino ?? '—'}. ` +
-                    '"Reenviar" manda o endereço ORIGINAL. Para enviar o CEP atualizado, crie uma nova solicitação: selecione a transportadora novamente e clique em enviar.'
+            // Destino corrigido depois do envio: o histórico (e o "Reenviar") mantém os dados originais.
+            const descreverDestino = (d) => `${d?.texto ?? 'endereço não informado'} — CEP ${d?.cep ?? 'não informado'}`;
+            const avisoCepDesatualizado = s.destinoDesatualizado === true
+                ? `Esta solicitação usou: ${descreverDestino(s.destinoEnviado)}. A cotação agora tem: ${descreverDestino(s.destinoAtual)}. ` +
+                    '"Reenviar" repete os dados ORIGINAIS desta solicitação. Para enviar o endereço e o CEP atuais, crie uma nova solicitação: selecione a transportadora novamente e clique em enviar.'
                 : null;
             if (avisoCepDesatualizado !== null) {
                 const aviso = document.createElement('p');
@@ -1767,7 +1788,7 @@ export function inicializarFretes() {
                 botaoReenviar.textContent = 'Reenviar';
                 botaoReenviar.addEventListener('click', () => {
                     void (async () => {
-                        if (avisoCepDesatualizado !== null && !window.confirm(`${avisoCepDesatualizado}\n\nReenviar mesmo assim com o endereço original?`))
+                        if (avisoCepDesatualizado !== null && !window.confirm(`${avisoCepDesatualizado}\n\nReenviar mesmo assim com os dados originais?`))
                             return;
                         const respostaReenvio = await fetch(`/api/fretes/solicitacoes/${s.id}/reenviar`, { method: 'POST' });
                         if (!respostaReenvio.ok) {
@@ -2237,9 +2258,8 @@ export function inicializarFretes() {
     /** Dados da carga: só leitura, direto da cotação (nenhuma segunda fonte de verdade). */
     function renderizarDadosCarga() {
         const c = cotacaoEnvioAtual;
-        // CEP digitado e ainda não salvo sobrevive à re-renderização (ex.: ao mexer nas embalagens).
-        const inputCepAnterior = document.getElementById('fretes-dados-carga-cep-destino');
-        const rascunhoCep = inputCepAnterior !== null && inputCepAnterior.dataset.cotacaoId === c?.id ? inputCepAnterior.value : null;
+        // CEP/endereço digitados e ainda não salvos sobrevivem à re-renderização (ex.: ao mexer nas embalagens).
+        const rascunhoDestino = lerRascunhoEditorDestino(c?.id ?? null);
         dadosCarga.textContent = '';
         if (c === null)
             return;
@@ -2257,70 +2277,156 @@ export function inicializarFretes() {
         linhaInfo(dadosCarga, 'Modalidade', c.modalidade);
         linhaInfo(dadosCarga, 'Observações', naoInformado(c.observacoes));
         if (!envioBloqueadoPorStatus)
-            dadosCarga.appendChild(criarEditorCepDestino(c, rascunhoCep));
+            dadosCarga.appendChild(criarEditorDestino(c, rascunhoDestino));
+    }
+    const ID_EDITOR_DESTINO = 'fretes-dados-carga-destino-editor';
+    const CAMPOS_ENDERECO_DESTINO = [
+        { campo: 'endereco-cep', rotulo: 'CEP', chave: 'cepDestino' },
+        { campo: 'logradouro', rotulo: 'Logradouro', chave: 'logradouroDestino' },
+        { campo: 'numero', rotulo: 'Número', chave: 'numeroDestino' },
+        { campo: 'complemento', rotulo: 'Complemento', chave: 'complementoDestino' },
+        { campo: 'bairro', rotulo: 'Bairro', chave: 'bairroDestino' },
+        { campo: 'cidade', rotulo: 'Cidade', chave: 'cidadeDestino' },
+        { campo: 'uf', rotulo: 'UF', chave: 'ufDestino' },
+    ];
+    function lerRascunhoEditorDestino(cotacaoId) {
+        const bloco = document.getElementById(ID_EDITOR_DESTINO);
+        if (bloco === null || cotacaoId === null || bloco.dataset.cotacaoId !== cotacaoId)
+            return null;
+        const valores = {};
+        for (const input of Array.from(bloco.querySelectorAll('input[data-campo]')))
+            valores[input.dataset.campo ?? ''] = input.value;
+        return { valores, enderecoAberto: bloco.querySelector('details')?.open === true };
+    }
+    function cepValido(valor) {
+        return valor.replace(/\D/g, '').length === 8 && /^[\d.\-\s]+$/.test(valor.trim());
+    }
+    function criarCampoEditorDestino(id, campo, rotulo, valor) {
+        const div = document.createElement('div');
+        div.className = 'campo-filtro';
+        const label = document.createElement('label');
+        label.htmlFor = id;
+        label.textContent = rotulo;
+        const input = document.createElement('input');
+        input.id = id;
+        input.type = 'text';
+        input.dataset.campo = campo;
+        input.value = valor;
+        if (campo === 'cep' || campo === 'endereco-cep') {
+            input.inputMode = 'numeric';
+            input.maxLength = 10;
+            input.placeholder = '00000-000';
+        }
+        if (campo === 'uf')
+            input.maxLength = 2;
+        div.append(label, input);
+        return div;
     }
     /**
-     * Completar/corrigir só o CEP de destino de uma cotação já criada (2026-10-20). Grava na cotação
-     * (PUT) — nunca na Omie nem no cadastro do cliente. O backend valida os 8 dígitos, preserva o
-     * endereço estruturado e audita a intervenção; os envios seguintes (API, e-mail, WhatsApp) leem
-     * o CEP salvo na cotação.
+     * Destino de uma cotação já criada (2026-10-20). Duas ações, sempre só nesta cotação (PUT) — nunca
+     * na Omie nem no cadastro do cliente; o backend valida e audita:
+     * - "Salvar CEP": completa/corrige só o CEP, preservando o endereço estruturado.
+     * - "Salvar endereço": troca o endereço INTEIRO (estruturado, vira MANUAL) — a estrutura antiga
+     *   nunca prevalece. Endereço mudou e o CEP ficou igual → lembrete para conferir o CEP.
+     * Os envios seguintes (API, e-mail, WhatsApp) leem o destino salvo na cotação.
      */
-    function criarEditorCepDestino(c, rascunho) {
+    function criarEditorDestino(c, rascunho) {
         const bloco = document.createElement('div');
-        bloco.className = 'campo-filtro';
-        const idCampo = 'fretes-dados-carga-cep-destino';
-        const label = document.createElement('label');
-        label.htmlFor = idCampo;
-        label.textContent = c.cepDestino === null || c.cepDestino.trim() === '' ? 'Informar CEP de destino' : 'Corrigir CEP de destino';
-        const input = document.createElement('input');
-        input.id = idCampo;
-        input.type = 'text';
-        input.inputMode = 'numeric';
-        input.maxLength = 10;
-        input.placeholder = '00000-000';
-        input.dataset.cotacaoId = c.id;
-        input.value = rascunho ?? c.cepDestino ?? '';
-        const botao = document.createElement('button');
-        botao.type = 'button';
-        botao.className = 'botao-secundario';
-        botao.textContent = 'Salvar CEP';
-        const mensagem = document.createElement('span');
+        bloco.id = ID_EDITOR_DESTINO;
+        bloco.dataset.cotacaoId = c.id;
+        const valor = (campo, salvo) => rascunho?.valores[campo] ?? salvo ?? '';
+        const mensagem = document.createElement('p');
         mensagem.className = 'filtro-data-legenda';
         mensagem.setAttribute('aria-live', 'polite');
-        mensagem.textContent = 'Vale só para esta cotação — não altera a Omie nem o cadastro do cliente.';
-        botao.addEventListener('click', () => {
-            void (async () => {
-                const digitos = input.value.replace(/\D/g, '');
-                if (digitos.length !== 8 || !/^[\d.\-\s]+$/.test(input.value.trim())) {
-                    mensagem.textContent = 'Informe um CEP com 8 dígitos (com ou sem hífen).';
+        mensagem.textContent = 'Alterações de CEP/endereço valem só para esta cotação — não alteram a Omie nem o cadastro do cliente.';
+        // Só o CEP
+        const semCep = c.cepDestino === null || c.cepDestino.trim() === '';
+        const campoCep = criarCampoEditorDestino('fretes-dados-carga-cep-destino', 'cep', semCep ? 'Informar CEP de destino' : 'Corrigir CEP de destino', valor('cep', c.cepDestino));
+        const inputCep = campoCep.querySelector('input');
+        const botaoCep = document.createElement('button');
+        botaoCep.type = 'button';
+        botaoCep.className = 'botao-secundario';
+        botaoCep.textContent = 'Salvar CEP';
+        campoCep.appendChild(botaoCep);
+        // Endereço completo (pré-preenchido com o endereço estruturado atual; vazio se só texto livre)
+        const detalhes = document.createElement('details');
+        detalhes.open = rascunho?.enderecoAberto ?? false;
+        const resumo = document.createElement('summary');
+        resumo.textContent = 'Alterar endereço de entrega';
+        detalhes.appendChild(resumo);
+        const estruturado = c.origemDestino !== null && c.origemDestino !== undefined;
+        for (const { campo, rotulo, chave } of CAMPOS_ENDERECO_DESTINO) {
+            const salvo = chave === 'cepDestino' ? c.cepDestino : estruturado ? (c[chave] ?? null) : null;
+            detalhes.appendChild(criarCampoEditorDestino(`${ID_EDITOR_DESTINO}-${campo}`, campo, rotulo, valor(campo, salvo)));
+        }
+        const botaoEndereco = document.createElement('button');
+        botaoEndereco.type = 'button';
+        botaoEndereco.className = 'botao-secundario';
+        botaoEndereco.textContent = 'Salvar endereço';
+        detalhes.appendChild(botaoEndereco);
+        async function salvar(corpo, botao, sucesso) {
+            botao.disabled = true;
+            try {
+                const resposta = await fetch(`/api/fretes/cotacoes/${c.id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(corpo),
+                });
+                if (!resposta.ok) {
+                    mensagem.textContent = await extrairMensagemErro(resposta);
                     return;
                 }
-                botao.disabled = true;
-                try {
-                    const resposta = await fetch(`/api/fretes/cotacoes/${c.id}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ cepDestino: input.value.trim() }),
-                    });
-                    if (!resposta.ok) {
-                        mensagem.textContent = await extrairMensagemErro(resposta);
-                        return;
-                    }
-                    cotacaoEnvioAtual = (await resposta.json());
-                    input.value = cotacaoEnvioAtual.cepDestino ?? '';
-                    renderizarDadosCarga();
-                    atualizarConferenciaEnvio();
-                    void carregarSolicitacoes(); // reavalia o aviso de CEP desatualizado nas solicitações já enviadas
-                    const mensagemNova = document.querySelector(`#${idCampo} ~ .filtro-data-legenda`);
-                    if (mensagemNova !== null)
-                        mensagemNova.textContent = `CEP ${cotacaoEnvioAtual.cepDestino ?? ''} salvo nesta cotação.`;
-                }
-                finally {
-                    botao.disabled = false;
-                }
-            })();
+                const nova = (await resposta.json());
+                cotacaoEnvioAtual = nova;
+                bloco.remove(); // descarta o rascunho: a tela volta a mostrar exatamente o que foi salvo
+                renderizarDadosCarga();
+                atualizarConferenciaEnvio();
+                void carregarSolicitacoes(); // reavalia o aviso de destino desatualizado nas solicitações já enviadas
+                const mensagemNova = document.querySelector(`#${ID_EDITOR_DESTINO} > p.filtro-data-legenda`);
+                if (mensagemNova !== null)
+                    mensagemNova.textContent = sucesso(c, nova);
+            }
+            finally {
+                botao.disabled = false;
+            }
+        }
+        botaoCep.addEventListener('click', () => {
+            if (!cepValido(inputCep.value)) {
+                mensagem.textContent = 'Informe um CEP com 8 dígitos (com ou sem hífen).';
+                return;
+            }
+            void salvar({ cepDestino: inputCep.value.trim() }, botaoCep, (_anterior, nova) => `CEP ${nova.cepDestino ?? ''} salvo nesta cotação.`);
         });
-        bloco.append(label, input, botao, mensagem);
+        botaoEndereco.addEventListener('click', () => {
+            const lido = (campo) => textoOuNulo(detalhes.querySelector(`input[data-campo="${campo}"]`)?.value ?? '');
+            const endereco = {
+                cep: lido('endereco-cep'),
+                logradouro: lido('logradouro'),
+                numero: lido('numero'),
+                complemento: lido('complemento'),
+                bairro: lido('bairro'),
+                cidade: lido('cidade'),
+                uf: lido('uf'),
+            };
+            if (endereco.cep !== null && !cepValido(endereco.cep)) {
+                mensagem.textContent = 'Informe um CEP com 8 dígitos (com ou sem hífen).';
+                return;
+            }
+            if (endereco.cep === null && (endereco.logradouro === null || endereco.cidade === null)) {
+                mensagem.textContent = 'Informe ao menos o CEP, ou logradouro e cidade.';
+                return;
+            }
+            void salvar({ destinoOverride: endereco }, botaoEndereco, (anterior, nova) => {
+                const digitos = (v) => (v ?? '').replace(/\D/g, '');
+                const mesmoCep = digitos(anterior.cepDestino) !== '' && digitos(anterior.cepDestino) === digitos(nova.cepDestino);
+                const enderecoMudou = (anterior.destino ?? '') !== (nova.destino ?? '');
+                // Só um lembrete: o CEP pode estar certo (mesma rua/região) — nunca afirma que está errado.
+                return mesmoCep && enderecoMudou
+                    ? `Endereço salvo nesta cotação. O CEP continuou ${nova.cepDestino ?? ''} — confira se ele corresponde ao novo endereço.`
+                    : 'Endereço salvo nesta cotação.';
+            });
+        });
+        bloco.append(campoCep, detalhes, mensagem);
         return bloco;
     }
     // Várias embalagens: cada linha vira um item de `cubagem` (formato já aceito pela rota,

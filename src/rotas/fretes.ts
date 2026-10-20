@@ -623,6 +623,12 @@ export function criarRotaFretes(cliente: ClienteOmie): Router {
       if (req.body?.origem !== undefined) dados.origem = validarTextoOpcional(req.body.origem, 'origem');
       if (req.body?.destino !== undefined) dados.destino = validarTextoOpcional(req.body.destino, 'destino');
       if (req.body?.cepDestino !== undefined) dados.cepDestino = validarCepDestinoOpcional(req.body.cepDestino, 'cepDestino');
+      if (req.body?.destinoOverride !== undefined) {
+        // Endereço completo só desta cotação: mesma validação estrita da criação (CEP 8 dígitos, UF, mínimo usável).
+        const destinoOverride = validarDestinoManualOpcional(req.body.destinoOverride);
+        if (destinoOverride === null) throw new ErroValidacao('O campo "destinoOverride" deve ser um objeto com o endereço de entrega.');
+        dados.destinoOverride = destinoOverride;
+      }
       if (req.body?.peso !== undefined) dados.peso = validarNumeroNaoNegativoOpcional(req.body.peso, 'peso');
       if (req.body?.volumes !== undefined) dados.volumes = validarInteiroNaoNegativoOpcional(req.body.volumes, 'volumes');
       if (req.body?.valorMercadoria !== undefined) dados.valorMercadoria = validarNumeroNaoNegativoOpcional(req.body.valorMercadoria, 'valorMercadoria');

@@ -51,7 +51,7 @@ import { enviarWhatsappYCloud, telefoneE164, type MensagemWhatsapp } from './int
 import { enviarTemplateMeta } from './integracoes/metaCliente.js';
 import { sanitizarTextoErro } from './integracoes/sanitizacao.js';
 import { montarTextoWhatsapp, parametrosTemplateWhatsapp } from './whatsapp/mensagemCotacao.js';
-import { cepDestinoDesatualizado, montarDestinoEnviado } from './destinoEnviado.js';
+import { cepDestinoDesatualizado, destinoEnviadoDesatualizado, montarDestinoEnviado } from './destinoEnviado.js';
 import type { CanalOrigemProposta, CotacaoFrete, EmailOrigem, EmbalagemSolicitacao, ExtracaoProposta, PropostaFrete, RespostaCotacao, SolicitacaoCotacao, Transportadora } from './tipos.js';
 import type { PayloadCorrelacionarWhatsapp, PayloadOutboundWhatsapp, PayloadRespostaWebhook } from './webhookCotacoes.js';
 
@@ -462,10 +462,29 @@ export async function servicoSolicitarCotacoes(
   return resultado;
 }
 
-/** `cepDestinoDesatualizado` (aditivo, 2026-10-20): enviada com CEP diferente do atual — a tela avisa que é preciso nova solicitação. */
-export async function servicoListarSolicitacoes(cotacaoId: string): Promise<Array<SolicitacaoCotacao & { cepDestinoDesatualizado: boolean }>> {
+/**
+ * Campos aditivos (2026-10-20): `cepDestinoDesatualizado` (compatibilidade, só CEP — ver
+ * `cepDestinoDesatualizado`); `destinoDesatualizado` = enviada com destino (endereço e/ou CEP)
+ * diferente do atual; `destinoAtual` = o que uma NOVA solicitação usaria (só quando desatualizada),
+ * para a tela mostrar os dois lados. O `destinoEnviado` (histórico) volta exatamente como gravado.
+ */
+export async function servicoListarSolicitacoes(
+  cotacaoId: string,
+): Promise<
+  Array<SolicitacaoCotacao & { destinoDesatualizado: boolean; destinoAtual: { texto: string | null; cep: string | null } | null; cepDestinoDesatualizado: boolean }>
+> {
   const cotacao = await servicoBuscarCotacao(cotacaoId); // 404 explícito se a cotação não existir
-  return (await listarSolicitacoesPorCotacao(cotacaoId)).map((s) => ({ ...s, cepDestinoDesatualizado: cepDestinoDesatualizado(s, cotacao) }));
+  const atual = montarDestinoEnviado(cotacao);
+  return (await listarSolicitacoesPorCotacao(cotacaoId)).map((s) => {
+    const desatualizado = destinoEnviadoDesatualizado(s, cotacao);
+    return {
+      ...s,
+      destinoDesatualizado: desatualizado,
+      destinoAtual: desatualizado ? { texto: atual.texto, cep: atual.cep } : null,
+      // Compatibilidade temporária com o frontend de 2bc0021 (abas abertas): semântica antiga, só CEP.
+      cepDestinoDesatualizado: cepDestinoDesatualizado(s, cotacao),
+    };
+  });
 }
 
 const LIMITE_REENVIOS = 5;
