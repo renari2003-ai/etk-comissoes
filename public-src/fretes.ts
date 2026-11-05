@@ -3184,7 +3184,7 @@ export function inicializarFretes(): { ativar: () => void } {
       return;
     }
     lista.textContent = '';
-    const dados = (await resposta.json()) as { pendentesValidacao: PropostaFrete[]; respostasSemProposta: { canal: CanalOrigemProposta; dataRecebimento: string; conteudoBruto: string | null }[] };
+    const dados = (await resposta.json()) as { pendentesValidacao: PropostaFrete[]; respostasSemProposta: { canal: CanalOrigemProposta; dataRecebimento: string; conteudoBruto: string | null; codigoReferencia?: string | null }[] };
 
     vazio.hidden = dados.pendentesValidacao.length > 0;
     if (dados.pendentesValidacao.length > 0) {
@@ -3213,7 +3213,8 @@ export function inicializarFretes(): { ativar: () => void } {
       };
       tr.appendChild(celula(ROTULOS_CANAL[r.canal]));
       tr.appendChild(celula(formatarDataHoraOuTraco(r.dataRecebimento)));
-      tr.appendChild(celula(r.conteudoBruto ?? '—'));
+      // A referência fica na mesma célula para funcionar também com o HTML anterior em cache.
+      tr.appendChild(celula([r.codigoReferencia, r.conteudoBruto ?? '—'].filter(Boolean).join('\n')));
       corpoSemProposta.appendChild(tr);
     }
 

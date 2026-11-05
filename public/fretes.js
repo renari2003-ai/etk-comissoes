@@ -2742,7 +2742,8 @@ export function inicializarFretes() {
             };
             tr.appendChild(celula(ROTULOS_CANAL[r.canal]));
             tr.appendChild(celula(formatarDataHoraOuTraco(r.dataRecebimento)));
-            tr.appendChild(celula(r.conteudoBruto ?? '—'));
+            // A referência fica na mesma célula para funcionar também com o HTML anterior em cache.
+            tr.appendChild(celula([r.codigoReferencia, r.conteudoBruto ?? '—'].filter(Boolean).join('\n')));
             corpoSemProposta.appendChild(tr);
         }
         void atualizarBadgePendentes();

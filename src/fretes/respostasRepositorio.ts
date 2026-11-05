@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { obterPool } from '../db.js';
-import { garantirEsquemaFretes, nomeTabelaRespostas } from './schema.js';
+import { garantirEsquemaFretes, nomeTabelaRespostas, nomeTabelaExtracoes, nomeTabelaSolicitacoes } from './schema.js';
 import type { CanalOrigemProposta, RespostaCotacao, StatusProcessamentoResposta } from './tipos.js';
 
 interface LinhaResposta {
@@ -96,11 +96,28 @@ export async function marcarStatusProcessamentoResposta(id: string, status: Stat
   );
 }
 
-export async function listarRespostasComErroOuSemProposta(): Promise<RespostaCotacao[]> {
+export interface RespostaCotacaoParaRevisao extends RespostaCotacao {
+  codigoReferencia: string | null;
+}
+
+export async function listarRespostasComErroOuSemProposta(): Promise<RespostaCotacaoParaRevisao[]> {
   await garantirEsquemaFretes();
   const pool = obterPool();
-  const { rows } = await pool.query<LinhaResposta>(
-    `SELECT * FROM ${nomeTabelaRespostas()} WHERE status_processamento = 'ERRO' ORDER BY data_recebimento DESC`,
+  // Uma mensagem pode ter sido processada corretamente, mas sem valor utilizável: sua
+  // extração fica REQUER_REVISAO, sem proposta. Não é erro de processamento e não pode
+  // desaparecer da caixa de entrada. EXISTS evita multiplicar a resposta pelos registros
+  // de extração; uma extração com proposta já vinculada não deve reaparecer como "sem proposta".
+  const { rows } = await pool.query<LinhaResposta & { codigo_referencia: string | null }>(
+    `SELECT r.*, s.codigo_referencia
+       FROM ${nomeTabelaRespostas()} r
+       LEFT JOIN ${nomeTabelaSolicitacoes()} s ON s.id = r.solicitacao_id
+      WHERE r.status_processamento = 'ERRO'
+         OR (r.status_processamento = 'PROCESSADA'
+             AND EXISTS (SELECT 1 FROM ${nomeTabelaExtracoes()} e
+                          WHERE e.resposta_id = r.id AND e.status = 'REQUER_REVISAO' AND e.proposta_id IS NULL)
+             AND NOT EXISTS (SELECT 1 FROM ${nomeTabelaExtracoes()} e
+                              WHERE e.resposta_id = r.id AND e.proposta_id IS NOT NULL))
+      ORDER BY r.data_recebimento DESC`,
   );
-  return rows.map(linhaParaResposta);
+  return rows.map((linha) => ({ ...linhaParaResposta(linha), codigoReferencia: linha.codigo_referencia ?? null }));
 }

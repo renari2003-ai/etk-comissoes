@@ -876,6 +876,17 @@
         Mensagens recebidas cuja extração não teve um valor de frete utilizável — nunca inferido automaticamente. Crie a
         proposta manualmente na cotação correspondente, se aplicável.
       </p>
+      <details class="filtro-data-legenda">
+        <summary>Como responder à cotação pelo WhatsApp</summary>
+        <p>Use a função <strong>Responder</strong> na mensagem da cotação e mantenha estes nomes de campos, um por linha:</p>
+        <pre>VALOR_FRETE: 100,00
+PRAZO_DIAS: 20
+VALIDADE: DD/MM/AAAA
+OBSERVACOES: Entrega em horário comercial.</pre>
+        <p>Substitua os valores pelos dados da proposta e DD/MM/AAAA pela data de validade completa.
+          Não use “validade 5 dias”: informe a data. Se a data não estiver definida, omita essa linha.
+          Respostas fora desse formato podem exigir lançamento manual; nenhuma proposta é aprovada automaticamente.</p>
+      </details>
       <div class="tabela-rolagem">
         <table id="fretes-tabela-respostas-sem-proposta">
           <thead>
