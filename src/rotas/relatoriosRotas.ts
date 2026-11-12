@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { ClienteOmie } from '../omie/cliente.js';
 import type { TipoDocumento } from '../omie/classificacaoDocumento.js';
 import { filtrarLinhasPorBusca, gerarRelatorio } from '../relatorio/relatorioVendas.js';
+import { gerarRelatorioVendasFaturadas } from '../relatorio/vendasPorFaturamento.js';
 import { validarBusca, validarCodigoVendedor, validarData } from '../validacao.js';
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { assincrono } from './erroHttp.js';
@@ -31,12 +32,12 @@ export function criarRotasRelatorios(cliente: ClienteOmie, tipo: TipoDocumento):
       const codigoVendedor = validarCodigoVendedor(req.query.vendedor);
       const busca = validarBusca(req.query.busca);
 
-      const resultado = await gerarRelatorio(cliente, {
-        tipoDocumento: tipo,
-        dataDe,
-        dataAte,
-        codigoVendedor,
-      });
+      // Vendas: período pela data de FATURAMENTO (regra de 2026-11-12, ver `vendasPorFaturamento.ts`).
+      // Orçamentos nunca são faturados — continuam pela listagem de sempre.
+      const resultado =
+        tipo === 'PEDIDO'
+          ? await gerarRelatorioVendasFaturadas(cliente, { dataDe, dataAte, codigoVendedor })
+          : { ...(await gerarRelatorio(cliente, { tipoDocumento: tipo, dataDe, dataAte, codigoVendedor })), numerosPedidosSemVendedorNaoVerificados: [] };
 
       res.json({
         linhas: filtrarLinhasPorBusca(resultado.linhas, busca),
@@ -44,6 +45,7 @@ export function criarRotasRelatorios(cliente: ClienteOmie, tipo: TipoDocumento):
         documentosAmbiguosExcluidos: resultado.documentosAmbiguosExcluidos,
         paginasOmieConsultadas: resultado.paginasOmieConsultadas,
         limiteAtingido: resultado.limiteAtingido,
+        numerosPedidosSemVendedorNaoVerificados: resultado.numerosPedidosSemVendedorNaoVerificados,
       });
     }),
   );

@@ -123,16 +123,16 @@ export interface ResultadoRelatorio {
 export type AvaliarRegistroPedido = (pedido: PedidoOmie, codigoVendedor: number | null) => Promise<boolean>;
 
 /** Limite de segurança de páginas da Omie por relatório, para nunca disparar um número ilimitado de chamadas. */
-const MAX_PAGINAS_OMIE = 25;
-const REGISTROS_POR_PAGINA_OMIE = 200;
+export const MAX_PAGINAS_OMIE = 25;
+export const REGISTROS_POR_PAGINA_OMIE = 200;
 
-function extrairCodigoVendedor(pedido: PedidoOmie): number | null {
+export function extrairCodigoVendedor(pedido: PedidoOmie): number | null {
   const bruto = pedido.informacoes_adicionais?.codVend;
   const numero = typeof bruto === 'number' ? bruto : Number(bruto);
   return Number.isFinite(numero) && numero > 0 ? numero : null;
 }
 
-function dataDeHojeFormatoOmie(): string {
+export function dataDeHojeFormatoOmie(): string {
   const agora = new Date();
   const dia = String(agora.getDate()).padStart(2, '0');
   const mes = String(agora.getMonth() + 1).padStart(2, '0');
@@ -209,7 +209,7 @@ function consolidarFaturamentoParcial(linhas: LinhaRelatorio[]): LinhaRelatorio[
   return consolidadas;
 }
 
-function calcularResumo(linhas: LinhaRelatorio[]): ResumoRelatorio {
+export function calcularResumo(linhas: LinhaRelatorio[]): ResumoRelatorio {
   const quantidadeDocumentos = linhas.length;
   const valorBrutoTotal = linhas.reduce((soma, l) => soma + l.valorBruto, 0);
   const valorLiquidoTotal = linhas.reduce((soma, l) => soma + l.receitaTotal, 0);

@@ -177,6 +177,10 @@ export function inicializarRelatorios() {
             legendaPeriodo.textContent = 'Selecione o período de baixa/recebimento da empresa. Vendas anteriores também são consideradas quando recebidas nesse intervalo.';
             campoBusca.placeholder = 'Nº, nota fiscal, cliente ou vendedor…';
         }
+        else if (tipoAtivo === 'vendas') {
+            legendaPeriodo.textContent = 'Período filtrado pela data de faturamento do pedido (emissão da fatura na Omie). Faturamento parcial: só a parte faturada no período.';
+            campoBusca.placeholder = 'Nº, cliente ou vendedor…';
+        }
         else {
             legendaPeriodo.replaceChildren(...legendaOriginal.map(n => n.cloneNode(true)));
             campoBusca.placeholder = 'Nº, cliente ou vendedor…';
@@ -246,11 +250,13 @@ export function inicializarRelatorios() {
     function renderizarTabelaRelatorio(linhas) {
         cabecalhoTabela.textContent = '';
         const trCabecalho = document.createElement('tr');
-        for (const titulo of ['Nº', 'Cliente', 'Vendedor', 'Data', 'Valor líquido', 'Custo', 'Margem R$', 'Margem %', 'Markup %']) {
+        // Vendas: a data exibida é a de faturamento (o período também é por ela — `vendasPorFaturamento.ts`).
+        const rotuloData = tipoAtivo === 'vendas' ? 'Data de faturamento' : 'Data';
+        for (const titulo of ['Nº', 'Cliente', 'Vendedor', rotuloData, 'Valor líquido', 'Custo', 'Margem R$', 'Margem %', 'Markup %']) {
             const th = document.createElement('th');
             th.scope = 'col';
             th.textContent = titulo;
-            if (titulo !== 'Nº' && titulo !== 'Cliente' && titulo !== 'Vendedor' && titulo !== 'Data')
+            if (titulo !== 'Nº' && titulo !== 'Cliente' && titulo !== 'Vendedor' && titulo !== rotuloData)
                 th.className = 'col-num';
             trCabecalho.appendChild(th);
         }
@@ -672,6 +678,10 @@ export function inicializarRelatorios() {
                 }
                 if (dados.limiteAtingido) {
                     avisos.push('O período filtrado tem mais registros do que o relatório processa de uma vez — refine o período para ver o total exato.');
+                }
+                const semVendedor = dados.numerosPedidosSemVendedorNaoVerificados ?? [];
+                if (semVendedor.length > 0) {
+                    avisos.push(`${semVendedor.length} pedido(s) sem vendedor na Omie ficaram fora (sem vendedor não dá para conferir a data de faturamento): ${semVendedor.join(', ')}.`);
                 }
                 if (avisos.length > 0) {
                     avisoRelatorio.textContent = avisos.join(' ');
