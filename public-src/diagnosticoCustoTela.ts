@@ -3,49 +3,104 @@
  * `GET /api/precificacao/diagnostico/:codigo` (`src/rotas/precificacaoDiagnostico.ts`) e a seção
  * `#precificacao-secao-diagnostico` do `index.html`.
  *
- * Só administrador. Mostra a "conferencia" do diagnóstico numa tabela legível — número do
- * relatório, valor que veio da API, campo de onde saiu e se bate — e copia o resultado em texto
- * para colar no chat. Apresentação apenas: a conferência é calculada no servidor.
+ * Os elementos novos (quadro "Conclusão", botão "Ver detalhes técnicos", cabeçalho da tabela) e o
+ * estilo deles são montados aqui, para a seção temporária sair inteira junto com este arquivo.
+ *
+ * Só administrador. Apresentação apenas: a tabela e a conclusão vêm prontas do servidor
+ * (`resumo`, gerado por `resumirDiagnostico`). Aqui só se formata, mostra o JSON bruto em
+ * "Ver detalhes técnicos" e copia o resumo em texto.
  */
 
-interface CampoQueConfere {
-  origem: string;
-  campo: string;
-  valor: number;
-}
-interface ConferenciaValor {
-  rotulo: string;
-  esperado: string | null;
-  confere: CampoQueConfere[];
-  observacao?: string;
-}
-interface ComponenteDiagnostico {
-  codProdMalha: string | null;
+interface LinhaResumo {
+  item: string;
   descricao: string | null;
-  camposNumericosEstoque: Record<string, number> | null;
-  camposNumericosProduto: Record<string, number> | null;
-  erros: string[];
+  nivel: number;
+  pai: string | null;
+  valorRelatorio: string;
+  valorSistema: number | null;
+  origem: string;
+  bate: boolean | null;
+}
+interface ItemConclusao {
+  tipo: 'ok' | 'problema' | 'info';
+  texto: string;
 }
 interface ResultadoDiagnostico {
   codigo: string;
   dataReferenciaEstoque: string;
-  estrutura: { custoProducao?: Record<string, unknown> };
-  dadosProducao: Record<string, unknown>;
-  produtoAcabado: { camposNumericosEstoque: Record<string, number> | null; erros: string[] };
-  componentes: ComponenteDiagnostico[];
-  componentesNaoConsultados: number;
-  conferencia: ConferenciaValor[] | null;
+  componentes: unknown[];
+  resumo: { linhas: LinhaResumo[]; conclusao: ItemConclusao[]; podeUsar: boolean };
 }
 
-interface LinhaTabela {
-  numero: string;
-  esperado: string;
-  valorApi: string;
-  campo: string;
-  bate: 'SIM' | 'NÃO' | '—';
-}
+const ESTILO = `
+.diagnostico-conclusao { margin: 12px 0 16px; padding: 12px 16px; border: 1px solid var(--cor-borda); border-left: 4px solid var(--cor-alerta); border-radius: 8px; background: var(--cor-superficie-alt); }
+.diagnostico-conclusao.pode-usar { border-left-color: var(--cor-positivo); }
+.diagnostico-conclusao h3 { margin: 0 0 8px; font-size: 1rem; }
+.diagnostico-conclusao ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.diagnostico-conclusao li { display: flex; gap: 8px; line-height: 1.4; }
+.diagnostico-conclusao li::before { flex: none; width: 1.2em; font-weight: 700; }
+.diagnostico-conclusao li.ok::before { content: '✔'; color: var(--cor-positivo); }
+.diagnostico-conclusao li.problema::before { content: '✘'; color: var(--cor-negativo); }
+.diagnostico-conclusao li.info::before { content: 'ℹ'; color: var(--cor-texto-suave); }
+.diagnostico-tabela td.bate { text-align: center; font-weight: 700; }
+.diagnostico-tabela td.bate.sim { color: var(--cor-positivo); }
+.diagnostico-tabela td.bate.nao { color: var(--cor-negativo); }
+.diagnostico-tabela td.sem-custo { color: var(--cor-negativo); font-style: italic; }
+.diagnostico-tabela tr.ggf td { font-weight: 600; background: var(--cor-primaria-fundo); }
+.diagnostico-tabela .descricao-item { display: block; color: var(--cor-texto-suave); font-size: 0.85em; }
+.diagnostico-detalhes { max-height: 420px; overflow: auto; margin-top: 8px; padding: 12px; border: 1px solid var(--cor-borda); border-radius: 8px; background: var(--cor-superficie-alt); font-size: 0.8rem; white-space: pre; }
+.diagnostico-botao-detalhes { margin-top: 12px; }
+`;
 
-const CAMPO_DE_CUSTO = /cmc|cust|preco|ggf|mod/i;
+/** Cria (uma vez) o quadro de conclusão, o botão/área de detalhes, o estilo e o novo cabeçalho da tabela. */
+function montarElementos(secao: HTMLElement, areaTabela: HTMLElement): void {
+  if (document.getElementById('precificacao-diagnostico-conclusao') !== null) return;
+  const estilo = document.createElement('style');
+  estilo.textContent = ESTILO;
+  document.head.append(estilo);
+
+  const quadro = document.createElement('div');
+  quadro.id = 'precificacao-diagnostico-conclusao';
+  quadro.className = 'diagnostico-conclusao';
+  quadro.hidden = true;
+  const titulo = document.createElement('h3');
+  titulo.textContent = 'Conclusão';
+  const lista = document.createElement('ul');
+  lista.id = 'precificacao-diagnostico-conclusao-lista';
+  quadro.append(titulo, lista);
+  areaTabela.before(quadro);
+
+  const tabela = areaTabela.querySelector('table');
+  tabela?.classList.add('diagnostico-tabela');
+  const linhaCabecalho = tabela?.querySelector('thead tr');
+  if (linhaCabecalho) {
+    linhaCabecalho.replaceChildren(
+      ...['Item', 'Valor no relatório do Omie', 'Valor que o sistema encontrou', 'De onde veio', 'Bate?'].map((t) => {
+        const th = document.createElement('th');
+        th.scope = 'col';
+        th.textContent = t;
+        return th;
+      }),
+    );
+  }
+
+  const botao = document.createElement('button');
+  botao.type = 'button';
+  botao.id = 'precificacao-diagnostico-detalhes-botao';
+  botao.className = 'botao-secundario diagnostico-botao-detalhes';
+  botao.textContent = 'Ver detalhes técnicos';
+  botao.setAttribute('aria-expanded', 'false');
+  botao.setAttribute('aria-controls', 'precificacao-diagnostico-detalhes');
+  botao.hidden = true;
+  const pre = document.createElement('pre');
+  pre.id = 'precificacao-diagnostico-detalhes';
+  pre.className = 'diagnostico-detalhes';
+  pre.hidden = true;
+  secao.append(botao, pre);
+
+  const legenda = secao.querySelector('p.filtro-data-legenda');
+  if (legenda) legenda.textContent = 'Compara o relatório "Imprimir Estrutura" do Omie com o custo que o sistema encontra para cada item (inclusive dentro dos kits). Só leitura.';
+}
 
 function el<T extends HTMLElement>(id: string): T {
   const elemento = document.getElementById(id);
@@ -53,64 +108,31 @@ function el<T extends HTMLElement>(id: string): T {
   return elemento as T;
 }
 
-function numeroPtBr(valor: number): string {
-  return valor.toLocaleString('pt-BR', { maximumFractionDigits: 6 });
+function valorSistemaTexto(l: LinhaResumo): string {
+  if (l.valorSistema === null) return 'sem custo';
+  return `R$ ${l.valorSistema.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
 }
 
-/** "origem.campo = valor" dos campos de custo de um registro — mostra o que a API trouxe mesmo quando nada bate. */
-function camposDeCusto(origem: string, campos: Record<string, unknown> | null | undefined): string[] {
-  if (campos === null || campos === undefined) return [];
-  return Object.entries(campos)
-    .filter(([campo, valor]) => CAMPO_DE_CUSTO.test(campo) && typeof valor === 'number')
-    .map(([campo, valor]) => `${origem}.${campo} = ${numeroPtBr(valor as number)}`);
+function valorRelatorioTexto(l: LinhaResumo): string {
+  return /^[\d.,]+$/.test(l.valorRelatorio) ? `R$ ${l.valorRelatorio}` : l.valorRelatorio;
 }
 
-function montarLinhas(r: ResultadoDiagnostico): LinhaTabela[] {
-  const linhas: LinhaTabela[] = [];
-  for (const c of r.conferencia ?? []) {
-    if (c.confere.length > 0) {
-      for (const campo of c.confere) {
-        linhas.push({ numero: c.rotulo, esperado: c.esperado ?? '—', valorApi: numeroPtBr(campo.valor), campo: `${campo.origem}.${campo.campo}`, bate: 'SIM' });
-      }
-      continue;
-    }
-    // Nada bate (ou o relatório não tem custo unitário): mostra o que a API trouxe de custo para comparar.
-    let candidatos: string[];
-    if (c.rotulo === 'Valor GGF') {
-      candidatos = [...camposDeCusto('ConsultarEstrutura.custoProducao', r.estrutura.custoProducao), ...camposDeCusto('ConsultarDadosProducao', r.dadosProducao)];
-      if ('erro' in r.dadosProducao) candidatos.push(`ConsultarDadosProducao: ${String(r.dadosProducao.erro)}`);
-    } else {
-      const comp = r.componentes.find((x) => x.codProdMalha === c.rotulo);
-      candidatos =
-        comp === undefined
-          ? ['componente não veio na estrutura']
-          : [...camposDeCusto('ListarPosEstoque', comp.camposNumericosEstoque), ...camposDeCusto('ConsultarProduto', comp.camposNumericosProduto), ...comp.erros];
-    }
-    linhas.push({
-      numero: c.rotulo,
-      esperado: c.esperado ?? 'sem custo unitário',
-      valorApi: candidatos.length === 0 ? 'nenhum campo de custo' : candidatos.join('; '),
-      campo: c.observacao ?? '—',
-      bate: c.esperado === null ? '—' : 'NÃO',
-    });
-  }
-  return linhas;
+function bateTexto(l: LinhaResumo): string {
+  return l.bate === null ? '—' : l.bate ? '✔' : '✘';
 }
 
-function textoParaCopiar(r: ResultadoDiagnostico, linhas: LinhaTabela[]): string {
-  const partes = [
-    `Diagnóstico do custo — ${r.codigo} (posição de estoque de ${r.dataReferenciaEstoque})`,
-    ...linhas.map((l) => `${l.numero} | relatório: ${l.esperado} | API: ${l.valorApi} | campo: ${l.campo} | bate: ${l.bate}`),
-  ];
-  if (r.componentesNaoConsultados > 0) partes.push(`Componentes não consultados (acima do limite): ${r.componentesNaoConsultados}`);
-  const comErro = r.componentes.filter((c) => c.erros.length > 0);
-  if (comErro.length > 0) {
-    partes.push('Componentes com erro:');
-    for (const c of comErro) partes.push(`- ${c.codProdMalha ?? '?'}: ${c.erros.join('; ')}`);
-  }
-  if (r.produtoAcabado.erros.length > 0) partes.push(`Produto acabado: ${r.produtoAcabado.erros.join('; ')}`);
-  partes.push(`Total de componentes na estrutura: ${r.componentes.length + r.componentesNaoConsultados}`);
-  return partes.join('\n');
+function textoParaCopiar(r: ResultadoDiagnostico): string {
+  return [
+    `Diagnóstico do custo — ${r.codigo} (estoque de ${r.dataReferenciaEstoque})`,
+    '',
+    'Conclusão:',
+    ...r.resumo.conclusao.map((c) => `${c.tipo === 'ok' ? '✔' : c.tipo === 'problema' ? '✘' : 'ℹ'} ${c.texto}`),
+    '',
+    'Item | Relatório do Omie | Sistema encontrou | De onde veio | Bate?',
+    ...r.resumo.linhas.map(
+      (l) => `${'  '.repeat(Math.max(0, l.nivel - 1))}${l.item} | ${valorRelatorioTexto(l)} | ${valorSistemaTexto(l)} | ${l.origem} | ${bateTexto(l)}`,
+    ),
+  ].join('\n');
 }
 
 async function copiarTexto(texto: string): Promise<boolean> {
@@ -142,6 +164,11 @@ export function inicializarDiagnosticoCusto(): { ativar: (ehAdmin: boolean) => v
   const erro = el<HTMLElement>('precificacao-diagnostico-erro');
   const areaTabela = el<HTMLElement>('precificacao-diagnostico-resultado');
   const tbody = el<HTMLTableSectionElement>('precificacao-tbody-diagnostico');
+  montarElementos(secao, areaTabela);
+  const quadroConclusao = el<HTMLElement>('precificacao-diagnostico-conclusao');
+  const listaConclusao = el<HTMLUListElement>('precificacao-diagnostico-conclusao-lista');
+  const botaoDetalhes = el<HTMLButtonElement>('precificacao-diagnostico-detalhes-botao');
+  const detalhes = el<HTMLPreElement>('precificacao-diagnostico-detalhes');
 
   let ultimoTexto = '';
 
@@ -150,23 +177,62 @@ export function inicializarDiagnosticoCusto(): { ativar: (ehAdmin: boolean) => v
     erro.hidden = mensagem === null;
   }
 
+  function esconderResultado(): void {
+    quadroConclusao.hidden = true;
+    areaTabela.hidden = true;
+    botaoCopiar.hidden = true;
+    botaoDetalhes.hidden = true;
+    detalhes.hidden = true;
+    detalhes.textContent = '';
+    botaoDetalhes.textContent = 'Ver detalhes técnicos';
+    botaoDetalhes.setAttribute('aria-expanded', 'false');
+  }
+
+  function celula(tr: HTMLTableRowElement, texto: string, classe?: string): HTMLTableCellElement {
+    const td = document.createElement('td');
+    td.textContent = texto;
+    if (classe !== undefined) td.className = classe;
+    tr.append(td);
+    return td;
+  }
+
   function renderizar(r: ResultadoDiagnostico): void {
-    const linhas = montarLinhas(r);
+    listaConclusao.replaceChildren();
+    for (const c of r.resumo.conclusao) {
+      const li = document.createElement('li');
+      li.className = c.tipo;
+      li.textContent = c.texto;
+      listaConclusao.append(li);
+    }
+    quadroConclusao.classList.toggle('pode-usar', r.resumo.podeUsar);
+    quadroConclusao.hidden = false;
+
     tbody.replaceChildren();
-    for (const l of linhas) {
+    for (const l of r.resumo.linhas) {
       const tr = document.createElement('tr');
-      for (const texto of [l.numero, l.esperado, l.valorApi, l.campo, l.bate]) {
-        const td = document.createElement('td');
-        td.textContent = texto;
-        tr.append(td);
+      if (l.nivel === 0) tr.className = 'ggf';
+      const tdItem = celula(tr, `${l.nivel > 1 ? `${'\u00a0\u00a0'.repeat(l.nivel - 1)}↳ ` : ''}${l.item}`);
+      const detalhe = [l.descricao, l.nivel > 1 && l.pai !== null ? `dentro de ${l.pai}` : null].filter((x) => x !== null).join(' · ');
+      if (detalhe !== '') {
+        const desc = document.createElement('span');
+        desc.className = 'descricao-item';
+        desc.textContent = detalhe;
+        tdItem.append(desc);
       }
+      celula(tr, valorRelatorioTexto(l), l.valorRelatorio === 'sem custo' ? 'sem-custo' : undefined);
+      celula(tr, valorSistemaTexto(l), l.valorSistema === null ? 'sem-custo' : undefined);
+      celula(tr, l.origem);
+      const tdBate = celula(tr, bateTexto(l), `bate${l.bate === true ? ' sim' : l.bate === false ? ' nao' : ''}`);
+      tdBate.setAttribute('aria-label', l.bate === null ? 'sem valor do relatório para comparar' : l.bate ? 'bate' : 'não bate');
       tbody.append(tr);
     }
     areaTabela.hidden = false;
-    ultimoTexto = textoParaCopiar(r, linhas);
+
+    detalhes.textContent = JSON.stringify(r, null, 2);
+    botaoDetalhes.hidden = false;
+    ultimoTexto = textoParaCopiar(r);
     botaoCopiar.hidden = false;
-    const extra = r.conferencia === null ? ' Este produto não tem valores do relatório cadastrados para conferir — copie o resultado para ver os campos.' : '';
-    status.textContent = `${r.codigo}: ${r.componentes.length} componente(s) consultado(s), posição de estoque de ${r.dataReferenciaEstoque}.${extra}`;
+    status.textContent = `${r.codigo}: ${r.componentes.length} item(ns) consultado(s), incluindo os de dentro dos kits — estoque de ${r.dataReferenciaEstoque}.`;
   }
 
   form.addEventListener('submit', (evento) => {
@@ -179,13 +245,12 @@ export function inicializarDiagnosticoCusto(): { ativar: (ehAdmin: boolean) => v
         return;
       }
       botaoExecutar.disabled = true;
-      botaoCopiar.hidden = true;
-      areaTabela.hidden = true;
-      status.textContent = 'Consultando o Omie… a primeira consulta do dia lê a posição de estoque inteira e pode levar alguns minutos.';
+      esconderResultado();
+      status.textContent = 'Consultando o Omie (produto e kits)… a primeira consulta do dia lê a posição de estoque inteira e pode levar alguns minutos.';
       try {
         const resposta = await fetch(`/api/precificacao/diagnostico/${encodeURIComponent(codigo)}`);
         const corpo = (await resposta.json().catch(() => null)) as (ResultadoDiagnostico & { erro?: string; motivo?: string }) | null;
-        if (!resposta.ok || corpo === null) {
+        if (!resposta.ok || corpo === null || corpo.resumo === undefined) {
           status.textContent = '';
           mostrarErro(`Falha no diagnóstico (${resposta.status}): ${corpo?.erro ?? corpo?.motivo ?? 'resposta inválida'}`);
           return;
@@ -198,6 +263,13 @@ export function inicializarDiagnosticoCusto(): { ativar: (ehAdmin: boolean) => v
         botaoExecutar.disabled = false;
       }
     })();
+  });
+
+  botaoDetalhes.addEventListener('click', () => {
+    const abrir = detalhes.hidden;
+    detalhes.hidden = !abrir;
+    botaoDetalhes.textContent = abrir ? 'Ocultar detalhes técnicos' : 'Ver detalhes técnicos';
+    botaoDetalhes.setAttribute('aria-expanded', String(abrir));
   });
 
   botaoCopiar.addEventListener('click', () => {

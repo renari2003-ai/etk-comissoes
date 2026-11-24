@@ -14,7 +14,7 @@ import { tratadorDeErros } from '../../src/rotas/erroHttp.js';
 import type { ClienteOmie } from '../../src/omie/cliente.js';
 import { ErroValidacao } from '../../src/validacao.js';
 
-function clienteFalso(sobrescrever: Partial<ClienteOmieDiagnosticoCusto> = {}): ClienteOmieDiagnosticoCusto & { chamadas: string[] } {
+function clienteFalso(sobrescrever: Partial<ClienteOmieDiagnosticoCusto & { chamadas: string[] }> = {}): ClienteOmieDiagnosticoCusto & { chamadas: string[] } {
   const chamadas: string[] = [];
   const estoquePorId: Record<number, Record<string, unknown>> = {
     1: { nCodProd: 1, nCMC: 900, nSaldo: 3 },
@@ -194,5 +194,138 @@ describe('rota de diagnóstico — proteção', () => {
   it('sem sessão responde 401 e não consulta a Omie', async () => {
     const resposta = await fetch(`${baseUrl}/api/precificacao/diagnostico/PA00000001`);
     expect(resposta.status).toBe(401);
+  });
+});
+
+describe('diagnóstico de custo — subníveis (kits) e resumo em linguagem simples', () => {
+  /** PA com 1 item direto e 1 kit (tipo 03); o kit tem MP08 (com 10% de perda), MO13 e MP45 (sem custo). */
+  function clienteComKit(ggfKit = 0): ClienteOmieDiagnosticoCusto & { chamadas: string[] } {
+    const base = clienteFalso();
+    return clienteFalso({
+      chamadas: base.chamadas,
+      async obterEstoqueProduto(id, data) {
+        if (id === 70) return { listaEstoque: [{ nCodProd: 70, nCMC: 25 }] };
+        return base.obterEstoqueProduto(id, data);
+      },
+      async consultarEstrutura(cod) {
+        base.chamadas.push(`estrutura:${cod}`);
+        if (cod === 'KIT1') {
+          return {
+            ident: { idProduto: 70 },
+            custoProducao: { vGGF: ggfKit, vMOD: 0 },
+            itens: [
+              { codProdMalha: 'MP00000008', idProdMalha: 20, quantProdMalha: 0.5, percPerdaProdMalha: 10, tipoProdMalha: '01' },
+              { codProdMalha: 'MO00000013', idProdMalha: 30, quantProdMalha: 1, tipoProdMalha: '09' },
+              { codProdMalha: 'MP00000045', idProdMalha: 50, quantProdMalha: 1, tipoProdMalha: '01' },
+            ],
+          };
+        }
+        return {
+          ident: { idProduto: 1, codProduto: cod },
+          custoProducao: { vMOD: 0, vGGF: 0 },
+          itens: [
+            { codProdMalha: 'PI10000014', idProdMalha: 10, quantProdMalha: 1, tipoProdMalha: '06' },
+            { codProdMalha: 'KIT1', idProdMalha: 70, quantProdMalha: 2, tipoProdMalha: '03', descrProdMalha: 'KIT TESTE' },
+          ],
+        };
+      },
+      async consultarDadosProducao() {
+        return { nValorMOD: 0, nValorGGF: 0 };
+      },
+    });
+  }
+
+  it('abre a estrutura dos kits (tipo 03) e encontra os itens de dentro deles', async () => {
+    const r = await diagnosticarCusto(clienteComKit(), 'PA00000001', '24/11/2026');
+    expect(r.componentes.map((c) => [c.codProdMalha, c.nivel, c.pai])).toEqual([
+      ['PI10000014', 1, 'PA00000001'],
+      ['KIT1', 1, 'PA00000001'],
+      ['MP00000008', 2, 'KIT1'],
+      ['MO00000013', 2, 'KIT1'],
+      ['MP00000045', 2, 'KIT1'],
+    ]);
+    expect(r.conferencia!.find((c) => c.rotulo === 'MP00000008')!.confere[0]!.campo).toBe('nCMC');
+  });
+
+  it('não abre item que não tem estrutura (matéria-prima, etiqueta etc.)', async () => {
+    const cliente = clienteComKit();
+    await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(cliente.chamadas.filter((c) => c.startsWith('estrutura:'))).toEqual(['estrutura:PA00000001', 'estrutura:KIT1']);
+  });
+
+  it('GGF dos kits é somado pela quantidade (com perda) e pode bater com o relatório', async () => {
+    // 2 kits × 29,88 = 59,76
+    const r = await diagnosticarCusto(clienteComKit(29.88), 'PA00000001', '24/11/2026');
+    const ggf = r.resumo.linhas[0]!;
+    expect(ggf.bate).toBe(true);
+    expect(ggf.valorSistema).toBeCloseTo(59.76, 6);
+    expect(ggf.origem).toBe('GGF somado das estruturas dos kits/subníveis');
+    expect(r.resumo.conclusao[0]).toEqual({ tipo: 'ok', texto: expect.stringContaining('O GGF bate com o relatório (R$ 59,76)') });
+  });
+
+  it('tabela: valor do relatório, valor do sistema em português e ✔/✘; sem custo aparece como tal', async () => {
+    const r = await diagnosticarCusto(clienteComKit(), 'PA00000001', '24/11/2026');
+    const porItem = Object.fromEntries(r.resumo.linhas.map((l) => [l.item, l]));
+    expect(porItem.PI10000014).toMatchObject({ valorRelatorio: '0,192111', valorSistema: 0.192111, origem: 'custo médio do estoque', bate: true });
+    expect(porItem.MP00000045).toMatchObject({ valorRelatorio: 'sem custo', valorSistema: null, bate: true });
+    expect(porItem.KIT1).toMatchObject({ valorRelatorio: '—', bate: null, nivel: 1 });
+    expect(porItem.MO00000037).toMatchObject({ valorSistema: null, bate: false, origem: expect.stringContaining('não aparece na estrutura') });
+  });
+
+  it('conclusão: GGF zerado, itens batem, itens sem custo, perda e veredito "ainda não dá"', async () => {
+    const r = await diagnosticarCusto(clienteComKit(), 'PA00000001', '24/11/2026');
+    const textos = r.resumo.conclusao.map((c) => `${c.tipo}: ${c.texto}`);
+    expect(textos[0]).toMatch(/^problema: O GGF não bate: o relatório mostra R\$ 59,76, mas o Omie devolve GGF zero/);
+    expect(textos).toContainEqual(expect.stringMatching(/^ok: Os custos dos itens conferidos batem com o relatório \(3 de 3\) e usam o custo médio do estoque do Omie\.$/));
+    expect(textos).toContainEqual(expect.stringMatching(/^problema: Sem custo: MP00000045\./));
+    expect(textos).toContainEqual(expect.stringMatching(/1 item\(ns\) têm % de perda cadastrado: MP00000008 \(10%\)/));
+    expect(textos.at(-1)).toMatch(/^problema: Ainda não dá para usar este custo para formar preço\. Falta resolver: o GGF, /);
+    expect(r.resumo.podeUsar).toBe(false);
+  });
+
+  it('quando tudo bate e nada está sem custo, diz que pode usar', async () => {
+    const cliente = clienteFalso({
+      async consultarEstrutura() {
+        return {
+          ident: { idProduto: 1 },
+          custoProducao: { vGGF: 59.76 },
+          itens: [
+            { codProdMalha: 'PI10000014', idProdMalha: 10, quantProdMalha: 1 },
+            { codProdMalha: 'MP00000008', idProdMalha: 20, quantProdMalha: 1 },
+            { codProdMalha: 'MO00000013', idProdMalha: 30, quantProdMalha: 1 },
+          ],
+        };
+      },
+    });
+    // Sem MO37/MP45 na estrutura eles contam como "não aparecem" — tira-os da referência só neste teste.
+    const { REFERENCIAS_RELATORIO } = await import('../../src/precificacao/diagnosticoCusto.js');
+    const original = REFERENCIAS_RELATORIO.PA00000001!;
+    REFERENCIAS_RELATORIO.PA00000001 = { ggf: '59,76', componentes: { PI10000014: '0,192111', MP00000008: '17,06279', MO00000013: '5,238053' } };
+    try {
+      const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+      expect(r.resumo.podeUsar).toBe(true);
+      expect(r.resumo.conclusao.at(-1)!.texto).toMatch(/^Pode usar/);
+      expect(r.resumo.conclusao[0]!.texto).toContain('vem do GGF da estrutura do produto');
+    } finally {
+      REFERENCIAS_RELATORIO.PA00000001 = original;
+    }
+  });
+
+  it('produto sem referência do relatório: conclusão informa que não dá para confirmar', async () => {
+    const r = await diagnosticarCusto(clienteFalso(), 'PA99999999', '24/11/2026');
+    expect(r.resumo.podeUsar).toBe(false);
+    expect(r.resumo.linhas.every((l) => l.bate === null)).toBe(true);
+    expect(r.resumo.conclusao.at(-1)).toMatchObject({ tipo: 'info', texto: expect.stringContaining('não há valores do relatório do Omie cadastrados para PA99999999') });
+  });
+
+  it('id em texto ("70") é aceito; ciclo de estrutura não entra em laço', async () => {
+    const cliente = clienteFalso({
+      async consultarEstrutura(cod) {
+        return { ident: { idProduto: '1' }, itens: [{ codProdMalha: cod === 'A' ? 'B' : 'A', idProdMalha: '70', tipoProdMalha: '03' }] };
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'A', '24/11/2026');
+    expect(r.componentes.map((c) => c.codProdMalha)).toEqual(['B', 'A']);
+    expect(r.componentes[0]!.idProdMalha).toBe(70);
   });
 });
