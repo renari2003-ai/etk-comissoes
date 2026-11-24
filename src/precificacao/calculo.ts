@@ -15,6 +15,7 @@
 
 import { arredondarDinheiro } from '../calculo/arredondamento.js';
 import { ErroValidacao } from '../validacao.js';
+import { ErroPrecificacao, type Aviso } from './avisos.js';
 
 // ─────────────────────────────── validação ───────────────────────────────
 
@@ -47,7 +48,7 @@ function exigirBooleano(valor: unknown, nome: string): boolean {
 }
 
 /** Busca numa tabela por UF só em chaves próprias (nunca em algo herdado do protótipo). */
-function porUf(tabela: Partial<Record<Uf, number>>, uf: Uf): number | undefined {
+function porUf(tabela: Partial<Record<Uf, number | null>>, uf: Uf): number | null | undefined {
   return Object.hasOwn(tabela, uf) ? tabela[uf] : undefined;
 }
 
@@ -69,13 +70,14 @@ const DIVISOR_MINIMO = 1e-9;
 
 // ─────────────────────────── impostos na compra ───────────────────────────
 
-export type TipoFornecedor = 'INDUSTRIA_NORMAL' | 'SIMPLES_OU_COMERCIO';
+export type TipoFornecedor = 'INDUSTRIA_NORMAL' | 'SIMPLES_NACIONAL' | 'COMERCIO';
+const TIPOS_FORNECEDOR: readonly TipoFornecedor[] = ['INDUSTRIA_NORMAL', 'SIMPLES_NACIONAL', 'COMERCIO'];
 
 export interface ParametrosIcmsCompra {
   /** Compra em MG sem diferimento do PTA (padrão 18%). */
   icmsInternoMgCompra: number;
-  /** Compra de fora de MG, por UF de origem (12% ou 7%). */
-  icmsInterestadualCompraPorUf: Partial<Record<Uf, number>>;
+  /** Compra de fora de MG, de qualquer UF (12%) — os 7% só existem na VENDA de MG para N/NE/CO/ES. */
+  icmsInterestadualCompra: number;
   /** Mercadoria importada comprada de fora de MG (4%). */
   icmsImportadoCompra: number;
 }
@@ -108,31 +110,34 @@ export function aliquotaIcmsCompra(origem: OrigemCompra, parametros: ParametrosI
   if (mercadoriaImportada) {
     return exigirFracao(parametros.icmsImportadoCompra, 'ICMS de mercadoria importada na compra');
   }
-  const aliquota = porUf(parametros.icmsInterestadualCompraPorUf, uf);
-  if (aliquota === undefined) {
-    throw new ErroValidacao(`ICMS interestadual de compra da UF ${uf} não está configurado na tabela fiscal.`);
-  }
-  return exigirFracao(aliquota, `ICMS interestadual de compra (${uf})`);
+  return exigirFracao(parametros.icmsInterestadualCompra, 'ICMS interestadual na compra');
 }
 
 /**
  * Alíquota de IPI da compra SEM nota de entrada (com nota, vale o IPI destacado na nota).
- * - Valor informado pelo operador (campo editável) prevalece.
- * - Simples Nacional / comércio: 0 (sem crédito).
- * - Indústria normal: alíquota do NCM no cadastro do componente; sem cadastro → `null` (item incompleto).
+ * Decisão de 2026-11-24:
+ * - Simples Nacional: sempre 0 (campo travado na tela); IPI informado diferente de 0 é recusado.
+ * - Comércio/distribuidor: começa em 0, editável ("só se a nota destacar IPI — ex.: distribuidor de
+ *   importado equiparado a indústria").
+ * - Indústria normal: IPI informado, senão a alíquota do NCM no cadastro do componente; sem
+ *   cadastro → `null` (item sem crédito, entra pelo valor bruto e marca o preço como incompleto).
  */
 export function aliquotaIpiCompraSemNota(entrada: {
   tipoFornecedor: TipoFornecedor;
   ipiCadastro: number | null;
   ipiInformado?: number | null;
 }): number | null {
-  if (entrada.tipoFornecedor !== 'INDUSTRIA_NORMAL' && entrada.tipoFornecedor !== 'SIMPLES_OU_COMERCIO') {
-    throw new ErroValidacao('Tipo de fornecedor inválido.');
+  if (!TIPOS_FORNECEDOR.includes(entrada.tipoFornecedor)) throw new ErroValidacao('Tipo de fornecedor inválido.');
+  const informado =
+    entrada.ipiInformado === undefined || entrada.ipiInformado === null ? null : exigirFracao(entrada.ipiInformado, 'IPI informado');
+  if (entrada.tipoFornecedor === 'SIMPLES_NACIONAL') {
+    if (informado !== null && informado !== 0) {
+      throw new ErroValidacao('Fornecedor do Simples Nacional não dá crédito de IPI: o IPI da compra é sempre 0.');
+    }
+    return 0;
   }
-  if (entrada.ipiInformado !== undefined && entrada.ipiInformado !== null) {
-    return exigirFracao(entrada.ipiInformado, 'IPI informado');
-  }
-  if (entrada.tipoFornecedor === 'SIMPLES_OU_COMERCIO') return 0;
+  if (informado !== null) return informado;
+  if (entrada.tipoFornecedor === 'COMERCIO') return 0;
   if (entrada.ipiCadastro === null) return null;
   return exigirFracao(entrada.ipiCadastro, 'IPI do cadastro do componente');
 }
@@ -192,7 +197,11 @@ export interface ItemCusto {
   quantidade: number;
   /** Custo unitário bruto (com impostos) — `null` = sem custo. */
   custoBrutoUnitario: number | null;
-  /** Custo unitário líquido (sem os créditos) — `null` = sem custo ou sem IPI definido (incompleto). */
+  /**
+   * Custo unitário líquido (sem os créditos). `null` com bruto preenchido = sem crédito possível
+   * (componente sem NCM/IPI no cadastro): o item entra pelo valor BRUTO, sem crédito nenhum, e o
+   * preço fica incompleto (decisão de 2026-11-24 — conservador: o preço sai alto, nunca baixo).
+   */
   custoLiquidoUnitario: number | null;
 }
 
@@ -200,40 +209,75 @@ export interface ResultadoCusto {
   custoBruto: number;
   creditos: number;
   custoLiquido: number;
-  /** Itens que entraram com custo zero por falta de custo ou de IPI. */
+  /** Itens sem custo: entraram com ZERO. */
   itensSemCusto: string[];
+  /** Itens com custo mas sem NCM/IPI: entraram pelo valor bruto, sem crédito. */
+  itensSemCredito: string[];
+  ggfAusente: boolean;
   completo: boolean;
+  /** Avisos AMARELOS (preço incompleto), um por item. */
+  avisos: Aviso[];
 }
 
 /**
  * Custo bruto = Σ quantidade × custo unitário + GGF; custo líquido = Σ quantidade × custo líquido + GGF.
- * O GGF não tem crédito. Item sem custo (ou sem IPI) entra com ZERO e deixa o resultado incompleto —
- * o preço sai mesmo assim, com o aviso "preço incompleto".
+ * O GGF não tem crédito. Item sem custo entra com ZERO; item sem NCM/IPI entra pelo bruto, sem crédito;
+ * GGF ausente entra com zero. Em todos esses casos o preço sai mesmo assim, com aviso amarelo.
  */
 export function calcularCusto(itens: ItemCusto[], ggf: number | null): ResultadoCusto {
   let custoBruto = 0;
   let custoLiquido = 0;
   const itensSemCusto: string[] = [];
+  const itensSemCredito: string[] = [];
+  const avisos: Aviso[] = [];
   for (const item of itens) {
     const quantidade = exigirFinitoNaoNegativo(item.quantidade, `Quantidade do item ${item.codigo}`);
-    if (item.custoBrutoUnitario === null || item.custoLiquidoUnitario === null) {
+    if (item.custoBrutoUnitario === null) {
       itensSemCusto.push(item.codigo);
+      avisos.push({
+        nivel: 'AMARELO',
+        codigo: 'ITEM_SEM_CUSTO',
+        item: item.codigo,
+        mensagem: `Item ${item.codigo} sem custo — entrou como zero. Digite o custo manual.`,
+      });
       continue;
     }
     const bruto = exigirFinitoNaoNegativo(item.custoBrutoUnitario, `Custo do item ${item.codigo}`);
-    const liquido = exigirFinitoNaoNegativo(item.custoLiquidoUnitario, `Custo líquido do item ${item.codigo}`);
-    if (liquido > bruto) throw new ErroValidacao(`Custo líquido do item ${item.codigo} maior que o custo bruto.`);
+    let liquido: number;
+    if (item.custoLiquidoUnitario === null) {
+      liquido = bruto;
+      itensSemCredito.push(item.codigo);
+      avisos.push({
+        nivel: 'AMARELO',
+        codigo: 'ITEM_SEM_NCM_IPI',
+        item: item.codigo,
+        mensagem: `Item ${item.codigo} sem NCM ou alíquota de IPI no cadastro — entrou pelo valor bruto, sem crédito. Corrija o cadastro do item ${item.codigo} no Omie.`,
+      });
+    } else {
+      liquido = exigirFinitoNaoNegativo(item.custoLiquidoUnitario, `Custo líquido do item ${item.codigo}`);
+      if (liquido > bruto) throw new ErroValidacao(`Custo líquido do item ${item.codigo} maior que o custo bruto.`);
+    }
     custoBruto += quantidade * bruto;
     custoLiquido += quantidade * liquido;
   }
+  const ggfAusente = ggf === null;
   if (ggf === null) {
-    itensSemCusto.push('GGF');
+    avisos.push({ nivel: 'AMARELO', codigo: 'GGF_AUSENTE', item: 'GGF', mensagem: 'GGF não encontrado — entrou como zero. Digite o GGF manual.' });
   } else {
     const valorGgf = exigirFinitoNaoNegativo(ggf, 'GGF');
     custoBruto += valorGgf;
     custoLiquido += valorGgf;
   }
-  return { custoBruto, creditos: custoBruto - custoLiquido, custoLiquido, itensSemCusto, completo: itensSemCusto.length === 0 };
+  return {
+    custoBruto,
+    creditos: custoBruto - custoLiquido,
+    custoLiquido,
+    itensSemCusto,
+    itensSemCredito,
+    ggfAusente,
+    completo: avisos.length === 0,
+    avisos,
+  };
 }
 
 // ─────────────────────────────── cenário de venda ───────────────────────────────
@@ -261,17 +305,19 @@ export interface ParametrosVenda {
    * não autorizado). Padrão 0 — pendente de confirmação do fiscal sobre a cobertura do PTA.
    */
   percentualRecolhimentoIcmsMgNaoContribuinte: number;
+  /** Alíquota interna geral de MG na venda (cenário B), padrão 18% — vale quando o NCM não tem exceção. */
+  icmsInternoMgVenda: number;
   /** ICMS interestadual de venda por UF de destino (12% ou 7%). */
   icmsInterestadualVendaPorUf: Partial<Record<Uf, number>>;
   /** ICMS de venda para conteúdo importado (4%). */
   icmsImportadoVenda: number;
-  /** Alíquota interna de cada UF (DIFAL). */
-  aliquotaInternaPorUf: Partial<Record<Uf, number>>;
+  /** Alíquota interna de cada UF (DIFAL) — `null`/ausente = não configurada (erro só no cenário D). */
+  aliquotaInternaPorUf: Partial<Record<Uf, number | null>>;
 }
 
 export interface ProdutoVenda {
-  /** Alíquota interna de MG do NCM (cenário B) — `null` se não configurada. */
-  icmsInternoMgNcm: number | null;
+  /** Exceção por NCM da alíquota interna de MG (cenário B) — `null` = sem exceção, vale a geral. */
+  icmsInternoMgExcecaoNcm: number | null;
   /** Origem do produto com conteúdo importado → ICMS 4% na venda interestadual. */
   conteudoImportado: boolean;
 }
@@ -283,12 +329,22 @@ export interface ResultadoCenario {
   icmsRecolhido: number;
   pisCofinsEfetivo: number;
   difal: number;
-  /** Avisos a mostrar junto do resultado (ex.: regra pendente de confirmação do fiscal). */
-  avisos: string[];
+  /** Avisos AZUIS do cenário (regra pendente de confirmação do fiscal). */
+  avisos: Aviso[];
 }
 
-export const AVISO_MG_CONSUMIDOR_FINAL = 'Confirmar com o fiscal se o ICMS é recolhido (venda a não contribuinte/consumidor final em MG).';
-export const AVISO_DIFAL_BASE_SIMPLES = 'DIFAL calculado na base simples — validar com o fiscal.';
+export const AVISO_MG_CONSUMIDOR_FINAL: Aviso = {
+  nivel: 'AZUL',
+  codigo: 'MG_CONSUMIDOR_FINAL_ICMS',
+  item: null,
+  mensagem: 'Venda a não contribuinte/consumidor final em MG: confirmar com o fiscal se o ICMS é recolhido.',
+};
+export const AVISO_DIFAL_BASE_SIMPLES: Aviso = {
+  nivel: 'AZUL',
+  codigo: 'DIFAL_BASE_SIMPLES',
+  item: null,
+  mensagem: 'DIFAL calculado na base simples — validar com o fiscal.',
+};
 
 function pct(fracao: number): string {
   return `${(fracao * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
@@ -315,10 +371,18 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
   const recolhimento = exigirFracaoAte100(parametros.percentualRecolhimentoIcms, 'Percentual de recolhimento do ICMS');
 
   if (autorizado && uf !== 'MG') {
-    throw new ErroValidacao('"Autorizado diferimento MG" só se aplica a cliente de MG.');
+    throw new ErroPrecificacao(
+      'CLIENTE_INCONSISTENTE',
+      uf,
+      `Cliente de ${uf} marcado como "autorizado diferimento MG", que só se aplica a cliente de MG. Corrija o cadastro do cliente.`,
+    );
   }
   if (autorizado && !contribuinte) {
-    throw new ErroValidacao('"Autorizado diferimento MG" exige cliente contribuinte (industrializador).');
+    throw new ErroPrecificacao(
+      'CLIENTE_INCONSISTENTE',
+      uf,
+      'Cliente marcado como "autorizado diferimento MG" sem ser contribuinte (a autorização é de industrializador). Corrija o cadastro do cliente.',
+    );
   }
 
   if (uf === 'MG') {
@@ -333,10 +397,10 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
         avisos: [],
       };
     }
-    if (produto.icmsInternoMgNcm === null) {
-      throw new ErroValidacao('Alíquota interna de MG do NCM não configurada — necessária para venda a cliente de MG não autorizado.');
-    }
-    const icms = exigirFracao(produto.icmsInternoMgNcm, 'ICMS interno de MG do NCM');
+    const icms =
+      produto.icmsInternoMgExcecaoNcm === null
+        ? exigirFracao(parametros.icmsInternoMgVenda, 'ICMS interno geral de MG na venda')
+        : exigirFracao(produto.icmsInternoMgExcecaoNcm, 'ICMS interno de MG do NCM (exceção)');
     // Consumidor final em MG (não contribuinte ou uso e consumo): recolhimento próprio, pendente do fiscal.
     const consumidorFinal = !contribuinte || usoConsumo;
     const recolhimentoB = consumidorFinal
@@ -359,7 +423,13 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
     icms = exigirFracao(parametros.icmsImportadoVenda, 'ICMS de venda de importado');
   } else {
     const aliquota = porUf(parametros.icmsInterestadualVendaPorUf, uf);
-    if (aliquota === undefined) throw new ErroValidacao(`ICMS interestadual de venda para ${uf} não está configurado na tabela fiscal.`);
+    if (aliquota === undefined || aliquota === null) {
+      throw new ErroPrecificacao(
+        'ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO',
+        uf,
+        `ICMS interestadual de venda para ${uf} não configurado. Peça ao administrador para preencher a UF ${uf} na tabela fiscal.`,
+      );
+    }
     icms = exigirFracao(aliquota, `ICMS interestadual de venda (${uf})`);
   }
   const origemIcms = conteudoImportado ? `ICMS ${pct(icms)} (importado)` : `ICMS ${pct(icms)}`;
@@ -378,7 +448,13 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
   }
 
   const interna = porUf(parametros.aliquotaInternaPorUf, uf);
-  if (interna === undefined) throw new ErroValidacao(`Alíquota interna de ${uf} (DIFAL) não está configurada na tabela fiscal.`);
+  if (interna === undefined || interna === null) {
+    throw new ErroPrecificacao(
+      'ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA',
+      uf,
+      `Alíquota interna de ${uf} (DIFAL) não configurada. Peça ao administrador para preencher a UF ${uf} na tabela fiscal.`,
+    );
+  }
   // DIFAL negativo não existe: alíquota interna menor que a interestadual dá DIFAL zero.
   const difal = Math.max(0, exigirFracao(interna, `Alíquota interna (${uf})`) - icms);
   const quem = contribuinte ? 'contribuinte, uso e consumo' : 'não contribuinte';
@@ -522,9 +598,11 @@ export interface ResultadoPrecos {
   /** `null` quando só o cheio é impossível (divisor ≤ 0) — o piso ainda existe. */
   cheio: PrecoFormado | null;
   piso: PrecoFormado;
+  avisos: Aviso[];
 }
 
-const MENSAGEM_SEM_PRECO = 'A soma de impostos, comissão, despesas e margem chega a 100% ou mais — não há preço possível.';
+const MENSAGEM_SEM_PRECO =
+  'A soma de impostos, comissão, despesas e margem chega a 100% ou mais — não há preço possível. Reduza a margem, a comissão ou as despesas.';
 
 /**
  * Passos 4 a 6.
@@ -537,11 +615,20 @@ const MENSAGEM_SEM_PRECO = 'A soma de impostos, comissão, despesas e margem che
 export function calcularPrecos(entrada: EntradaPreco): ResultadoPrecos {
   validarEntrada(entrada);
   const d = divisores(entrada);
-  if (!(d.piso > DIVISOR_MINIMO)) throw new ErroValidacao(MENSAGEM_SEM_PRECO);
-  return {
-    cheio: d.cheio > DIVISOR_MINIMO ? formarPreco(d.cheio, entrada) : null,
-    piso: formarPreco(d.piso, entrada),
-  };
+  if (!(d.piso > DIVISOR_MINIMO)) throw new ErroPrecificacao('SEM_PRECO_POSSIVEL', null, MENSAGEM_SEM_PRECO);
+  const cheio = d.cheio > DIVISOR_MINIMO ? formarPreco(d.cheio, entrada) : null;
+  const avisos: Aviso[] =
+    cheio === null
+      ? [
+          {
+            nivel: 'AZUL',
+            codigo: 'PRECO_CHEIO_INDISPONIVEL',
+            item: null,
+            mensagem: 'Preço cheio indisponível: com o ICMS destacado no divisor, a soma passa de 100%. Vale só o preço piso.',
+          },
+        ]
+      : [];
+  return { cheio, piso: formarPreco(d.piso, entrada), avisos };
 }
 
 export interface ResultadoReverso {
@@ -552,6 +639,12 @@ export interface ResultadoReverso {
   precoPiso: number | null;
   /** Comparação em centavos, como o operador vê na tela; sem piso possível, todo preço fica abaixo. */
   abaixoDoPiso: boolean;
+  /** Tarja do bloco do modo reverso (vermelha quando o alvo fica abaixo do piso). */
+  avisos: Aviso[];
+}
+
+function reais(valor: number): string {
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 /** Modo reverso: preço-alvo (sem IPI) → lucro e margens reais; avisa se ficar abaixo do piso. */
@@ -561,11 +654,19 @@ export function calcularReverso(precoAlvo: number, entrada: EntradaPreco): Resul
   const { piso } = divisores(entrada);
   const precoPiso = piso > DIVISOR_MINIMO ? entrada.custoLiquido / piso : null;
   const ipi = precoAlvo * entrada.aliquotaIpiVenda;
-  return {
-    lucro: lucroSemValidar(precoAlvo, entrada),
-    ipi,
-    precoComIpi: precoAlvo + ipi,
-    precoPiso,
-    abaixoDoPiso: precoPiso === null || arredondarDinheiro(precoAlvo) < arredondarDinheiro(precoPiso),
-  };
+  const abaixoDoPiso = precoPiso === null || arredondarDinheiro(precoAlvo) < arredondarDinheiro(precoPiso);
+  const avisos: Aviso[] = abaixoDoPiso
+    ? [
+        {
+          nivel: 'VERMELHO',
+          codigo: 'ALVO_ABAIXO_DO_PISO',
+          item: null,
+          mensagem:
+            precoPiso === null
+              ? `Preço-alvo ${reais(precoAlvo)}: não existe preço que entregue a margem pedida.`
+              : `Preço-alvo ${reais(precoAlvo)} abaixo do preço piso de ${reais(arredondarDinheiro(precoPiso))}.`,
+        },
+      ]
+    : [];
+  return { lucro: lucroSemValidar(precoAlvo, entrada), ipi, precoComIpi: precoAlvo + ipi, precoPiso, abaixoDoPiso, avisos };
 }

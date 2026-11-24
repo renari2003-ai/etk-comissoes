@@ -22,6 +22,21 @@ import {
   type ResultadoCenario,
 } from '../../src/precificacao/calculo.js';
 import { ErroValidacao } from '../../src/validacao.js';
+import { ErroPrecificacao, type CodigoAviso } from '../../src/precificacao/avisos.js';
+
+/** Executa e devolve o aviso vermelho do ErroPrecificacao lançado (falha se não lançar). */
+function avisoVermelho(fn: () => unknown): { codigo: CodigoAviso; item: string | null; mensagem: string } {
+  try {
+    fn();
+  } catch (erro) {
+    expect(erro).toBeInstanceOf(ErroPrecificacao);
+    expect(erro).toBeInstanceOf(ErroValidacao);
+    const { aviso } = erro as ErroPrecificacao;
+    expect(aviso.nivel).toBe('VERMELHO');
+    return aviso;
+  }
+  throw new Error('esperava ErroPrecificacao');
+}
 
 const r2 = arredondarDinheiro;
 /** Percentual com 1 casa, como na tabela da spec (24,0%). */
@@ -29,6 +44,7 @@ const p1 = (fracao: number | null): number => Math.round(((fracao ?? Number.NaN)
 
 const PARAMETROS_VENDA: ParametrosVenda = {
   pisCofins: 0.0925,
+  icmsInternoMgVenda: 0.18,
   ganhoIcmsNaBasePisCofins: false,
   percentualRecolhimentoIcms: 0,
   percentualRecolhimentoIcmsMgNaoContribuinte: 0,
@@ -37,7 +53,7 @@ const PARAMETROS_VENDA: ParametrosVenda = {
   aliquotaInternaPorUf: { SP: 0.18, BA: 0.205, RJ: 0.1 },
 };
 const IR_CS = 0.34;
-const PRODUTO: ProdutoVenda = { icmsInternoMgNcm: 0.18, conteudoImportado: false };
+const PRODUTO: ProdutoVenda = { icmsInternoMgExcecaoNcm: null, conteudoImportado: false };
 const CLIENTE_SP_CONTRIBUINTE: ClienteVenda = { uf: 'SP', contribuinte: true, usoConsumo: false, autorizadoDiferimentoMg: false };
 const CLIENTE_MG_AUTORIZADO: ClienteVenda = { uf: 'MG', contribuinte: true, usoConsumo: false, autorizadoDiferimentoMg: true };
 const CLIENTE_MG_NAO_AUTORIZADO: ClienteVenda = { uf: 'MG', contribuinte: true, usoConsumo: false, autorizadoDiferimentoMg: false };
@@ -151,13 +167,21 @@ describe('cenários de venda', () => {
     expect(c.avisos).toEqual([AVISO_MG_CONSUMIDOR_FINAL]);
   });
 
-  it('B: sem alíquota interna de MG para o NCM → erro explícito, nunca um valor assumido', () => {
-    expect(() => cenario(CLIENTE_MG_NAO_AUTORIZADO, {}, { icmsInternoMgNcm: null })).toThrow(ErroValidacao);
+  it('B: sem exceção para o NCM vale a alíquota geral de MG (18%); com exceção, vale a do NCM', () => {
+    expect(cenario(CLIENTE_MG_NAO_AUTORIZADO).icmsDestacado).toBe(0.18);
+    expect(cenario(CLIENTE_MG_NAO_AUTORIZADO, { icmsInternoMgVenda: 0.2 }).icmsDestacado).toBe(0.2);
+    const excecao = cenario(CLIENTE_MG_NAO_AUTORIZADO, {}, { icmsInternoMgExcecaoNcm: 0.12 });
+    expect(excecao.icmsDestacado).toBe(0.12);
+    expect(excecao.motivo).toBe('Cliente MG não autorizado → ICMS 12%');
   });
 
-  it('autorizado diferimento MG: recusado para cliente de fora de MG e para não contribuinte', () => {
-    expect(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, autorizadoDiferimentoMg: true })).toThrow(/só se aplica a cliente de MG/);
-    expect(() => cenario({ ...CLIENTE_MG_AUTORIZADO, contribuinte: false })).toThrow(/exige cliente contribuinte/);
+  it('tarja VERMELHA "cliente inconsistente": autorizado de fora de MG ou autorizado não contribuinte', () => {
+    const foraDeMg = avisoVermelho(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, autorizadoDiferimentoMg: true }));
+    expect(foraDeMg).toMatchObject({ codigo: 'CLIENTE_INCONSISTENTE', item: 'SP' });
+    expect(foraDeMg.mensagem).toMatch(/só se aplica a cliente de MG.*Corrija o cadastro do cliente/);
+    const naoContribuinte = avisoVermelho(() => cenario({ ...CLIENTE_MG_AUTORIZADO, contribuinte: false }));
+    expect(naoContribuinte.codigo).toBe('CLIENTE_INCONSISTENTE');
+    expect(naoContribuinte.mensagem).toContain('sem ser contribuinte');
   });
 
   it('C: motivo legível ("Cliente SP contribuinte → ICMS 12%")', () => {
@@ -225,9 +249,18 @@ describe('cenários de venda', () => {
     expect(c.motivo).toContain('uso e consumo');
   });
 
-  it('tabela fiscal incompleta (DIFAL ou interestadual da UF) → erro explícito', () => {
-    expect(() => cenario({ ...CLIENTE_SP_NAO_CONTRIBUINTE, uf: 'PR' })).toThrow(/não está configurad/);
-    expect(() => cenario(CLIENTE_SP_NAO_CONTRIBUINTE, { aliquotaInternaPorUf: {} })).toThrow(/DIFAL/);
+  it('tarja VERMELHA: alíquota interna da UF de destino não configurada (só no cenário D)', () => {
+    const aviso = avisoVermelho(() => cenario(CLIENTE_SP_NAO_CONTRIBUINTE, { aliquotaInternaPorUf: { SP: null } }));
+    expect(aviso).toMatchObject({ codigo: 'ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA', item: 'SP' });
+    expect(aviso.mensagem).toContain('Peça ao administrador para preencher a UF SP na tabela fiscal');
+    // A mesma UF sem alíquota interna não atrapalha o cenário C (contribuinte).
+    expect(cenario(CLIENTE_SP_CONTRIBUINTE, { aliquotaInternaPorUf: { SP: null } }).cenario).toBe('C');
+  });
+
+  it('tarja VERMELHA: ICMS interestadual de venda da UF não configurado', () => {
+    const aviso = avisoVermelho(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, uf: 'PR' }));
+    expect(aviso).toMatchObject({ codigo: 'ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO', item: 'PR' });
+    expect(aviso.mensagem).toContain('preencher a UF PR');
   });
 
   it('chave "ganho do ICMS na base de PIS/COFINS" ligada (recolhimento 0): PIS/COFINS cheio em B, C e D', () => {
@@ -282,7 +315,7 @@ describe('cenários de venda', () => {
   it('UF inválida e tabela por UF sem chave herdada do protótipo', () => {
     expect(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, uf: 'XX' as never })).toThrow(/UF do cliente/);
     const comProtoPoluido = Object.create({ PR: 0.12 }) as Partial<Record<'PR', number>>;
-    expect(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, uf: 'PR' }, { icmsInterestadualVendaPorUf: comProtoPoluido })).toThrow(/não está configurado/);
+    expect(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, uf: 'PR' }, { icmsInterestadualVendaPorUf: comProtoPoluido })).toThrow(/não configurado/);
   });
 });
 
@@ -309,16 +342,20 @@ describe('preço: IPI, margem líquida, limites e validação', () => {
     expect(() => margemAntesDoIrCs(0.7, IR_CS)).toThrow(/antes do IR\/CS/);
   });
 
-  it('só o cheio impossível: devolve cheio = null e o piso continua existindo', () => {
+  it('só o cheio impossível: devolve cheio = null, o piso continua existindo, com tarja AZUL', () => {
     const r = precos(c, { comercial: { comissao: 0.05, despesas: 0.3, margem: 0.5 } });
     expect(r.cheio).toBeNull();
+    expect(r.avisos.map((a) => [a.nivel, a.codigo])).toEqual([['AZUL', 'PRECO_CHEIO_INDISPONIVEL']]);
+    expect(precos(c).avisos).toEqual([]);
     expect(r.piso.divisor).toBeCloseTo(0.0686, 10);
     expect(r2(r.piso.preco)).toBe(1322.89);
   });
 
   it('piso impossível (soma ≥ 100%) → erro explícito; divisor de ruído (≈ 1e-16) também', () => {
-    // 8,14% + 5% + 45% + 45% > 100%.
-    expect(() => precos(c, { comercial: { comissao: 0.05, despesas: 0.45, margem: 0.45 } })).toThrow(/100%/);
+    // 8,14% + 5% + 45% + 45% > 100% → tarja VERMELHA (sem preço).
+    const aviso = avisoVermelho(() => precos(c, { comercial: { comissao: 0.05, despesas: 0.45, margem: 0.45 } }));
+    expect(aviso.codigo).toBe('SEM_PRECO_POSSIVEL');
+    expect(aviso.mensagem).toMatch(/100%.*Reduza a margem/);
     const cenarioA = cenario(CLIENTE_MG_AUTORIZADO);
     // 9,25% + 3% + 57% + 30,75% = 100%, mas em ponto flutuante o divisor sai 1,1e-16 (positivo): tem de ser recusado.
     expect(() => precos(cenarioA, { comercial: { comissao: 0.03, despesas: 0.57, margem: 0.3075 } })).toThrow(/100%/);
@@ -370,10 +407,14 @@ describe('modo reverso', () => {
     expect(r.abaixoDoPiso).toBe(false);
   });
 
-  it('preço-alvo R$ 130,00 (C): abaixo do piso de R$ 135,73 → aviso', () => {
+  it('preço-alvo R$ 130,00 (C): abaixo do piso de R$ 135,73 → tarja VERMELHA no bloco do reverso', () => {
     const r = calcularReverso(130, entrada(c));
     expect(r2(r.lucro.lucroAntesIrCs)).toBe(11.77);
     expect(r.abaixoDoPiso).toBe(true);
+    expect(r.avisos).toHaveLength(1);
+    expect(r.avisos[0]).toMatchObject({ nivel: 'VERMELHO', codigo: 'ALVO_ABAIXO_DO_PISO', item: null });
+    expect(r.avisos[0]!.mensagem).toMatch(/130,00 abaixo do preço piso de R\$\s135,73/);
+    expect(calcularReverso(150, entrada(c)).avisos).toEqual([]);
   });
 
   it('comparação em centavos: o piso exibido (135,73) não acusa "abaixo"; um centavo a menos acusa', () => {
@@ -395,39 +436,52 @@ describe('modo reverso', () => {
     const semPiso = calcularReverso(2000, entrada(c, { comercial: { comissao: 0.05, despesas: 0.45, margem: 0.45 } }));
     expect(semPiso.precoPiso).toBeNull();
     expect(semPiso.abaixoDoPiso).toBe(true);
+    expect(semPiso.avisos[0]!.mensagem).toContain('não existe preço que entregue a margem pedida');
   });
 });
 
 describe('impostos na compra (créditos do custo)', () => {
   const PARAMETROS_COMPRA: ParametrosIcmsCompra = {
     icmsInternoMgCompra: 0.18,
-    icmsInterestadualCompraPorUf: { SP: 0.12, BA: 0.07 },
+    icmsInterestadualCompra: 0.12,
     icmsImportadoCompra: 0.04,
   };
   const custo = (valorNota: number, ipi: number, icms: number) => creditosDaCompra(decomporValorNota(valorNota, ipi, icms), 0.0925);
 
-  it('alíquota de ICMS da compra: MG com PTA 0%, MG sem PTA 18%, SP 12%, BA 7%, importado 4%', () => {
+  it('alíquota de ICMS da compra: MG com PTA 0%, MG sem PTA 18%, qualquer outra UF 12% (inclusive N/NE/CO/ES), importado 4%', () => {
     expect(aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: true, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toBe(0);
     expect(aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: false, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toBe(0.18);
     expect(aliquotaIcmsCompra({ ufFornecedor: 'SP', diferimentoPta: false, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toBe(0.12);
-    expect(aliquotaIcmsCompra({ ufFornecedor: 'BA', diferimentoPta: false, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toBe(0.07);
+    // Correção de 2026-11-24: entradas em MG vindas de qualquer UF são 12%; os 7% só existem na VENDA.
+    for (const uf of ['BA', 'ES', 'GO', 'AM', 'RS'] as const) {
+      expect(aliquotaIcmsCompra({ ufFornecedor: uf, diferimentoPta: false, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toBe(0.12);
+    }
     expect(aliquotaIcmsCompra({ ufFornecedor: 'SP', diferimentoPta: false, mercadoriaImportada: true }, PARAMETROS_COMPRA)).toBe(0.04);
   });
 
   it('combinações impossíveis e flags que não são boolean são rejeitadas', () => {
     expect(() => aliquotaIcmsCompra({ ufFornecedor: 'SP', diferimentoPta: true, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/só se aplica a compras de MG/);
     expect(() => aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: false, mercadoriaImportada: true }, PARAMETROS_COMPRA)).toThrow(/fora de MG/);
-    expect(() => aliquotaIcmsCompra({ ufFornecedor: 'RJ', diferimentoPta: false, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/não está configurado/);
     expect(() => aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: 'false' as unknown as boolean, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/diferimento PTA/);
     expect(() => aliquotaIcmsCompra({ ufFornecedor: 'SP' } as never, PARAMETROS_COMPRA)).toThrow(ErroValidacao);
   });
 
-  it('IPI sem nota: indústria usa o cadastro; Simples/comércio é 0; sem cadastro → null (incompleto); informado prevalece', () => {
+  it('IPI sem nota — indústria normal: informado, senão o cadastro; sem cadastro → null (sem crédito, incompleto)', () => {
     expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'INDUSTRIA_NORMAL', ipiCadastro: 0.12 })).toBe(0.12);
-    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'SIMPLES_OU_COMERCIO', ipiCadastro: 0.12 })).toBe(0);
     expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'INDUSTRIA_NORMAL', ipiCadastro: null })).toBeNull();
     expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'INDUSTRIA_NORMAL', ipiCadastro: null, ipiInformado: 0.05 })).toBe(0.05);
-    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'SIMPLES_OU_COMERCIO', ipiCadastro: null })).toBe(0);
+    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'INDUSTRIA_NORMAL', ipiCadastro: 0.12, ipiInformado: 0.05 })).toBe(0.05);
+  });
+
+  it('IPI sem nota — Simples Nacional: sempre 0 (travado); IPI informado diferente de 0 é recusado', () => {
+    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'SIMPLES_NACIONAL', ipiCadastro: 0.12 })).toBe(0);
+    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'SIMPLES_NACIONAL', ipiCadastro: null, ipiInformado: 0 })).toBe(0);
+    expect(() => aliquotaIpiCompraSemNota({ tipoFornecedor: 'SIMPLES_NACIONAL', ipiCadastro: null, ipiInformado: 0.05 })).toThrow(/Simples Nacional/);
+  });
+
+  it('IPI sem nota — comércio: começa em 0 (ignora o cadastro), mas aceita o IPI destacado na nota', () => {
+    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'COMERCIO', ipiCadastro: 0.12 })).toBe(0);
+    expect(aliquotaIpiCompraSemNota({ tipoFornecedor: 'COMERCIO', ipiCadastro: null, ipiInformado: 0.1 })).toBe(0.1);
   });
 
   it('tipo de fornecedor inválido é recusado mesmo com IPI informado; IPI informado ≥ 100% também', () => {
@@ -504,26 +558,49 @@ describe('custo do produto (estrutura + GGF)', () => {
     expect(r.creditos).toBeCloseTo(2 * 21.25 + 0.5 * 1, 10);
     expect(r.completo).toBe(true);
     expect(r.itensSemCusto).toEqual([]);
+    expect(r.avisos).toEqual([]);
   });
 
-  it('item sem custo (ou sem IPI definido) entra com zero e deixa o custo incompleto', () => {
+  it('tarja AMARELA "item sem custo": entra com zero, com o código do item e "digite o custo manual"', () => {
     const r = calcularCusto(
       [
         { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
-        { codigo: 'MO37', quantidade: 1, custoBrutoUnitario: null, custoLiquidoUnitario: null },
-        { codigo: 'MP45', quantidade: 3, custoBrutoUnitario: 50, custoLiquidoUnitario: null },
+        { codigo: 'MO00000037', quantidade: 2, custoBrutoUnitario: null, custoLiquidoUnitario: null },
       ],
       10,
     );
     expect(r.custoLiquido).toBeCloseTo(100, 10);
-    expect(r.itensSemCusto).toEqual(['MO37', 'MP45']);
+    expect(r.itensSemCusto).toEqual(['MO00000037']);
     expect(r.completo).toBe(false);
+    expect(r.avisos).toEqual([
+      { nivel: 'AMARELO', codigo: 'ITEM_SEM_CUSTO', item: 'MO00000037', mensagem: 'Item MO00000037 sem custo — entrou como zero. Digite o custo manual.' },
+    ]);
   });
 
-  it('GGF ausente também deixa o custo incompleto', () => {
-    const r = calcularCusto([{ codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 }], null);
-    expect(r.itensSemCusto).toEqual(['GGF']);
+  it('tarja AMARELA "sem NCM/IPI": item com custo entra pelo valor BRUTO, sem crédito (nunca zero)', () => {
+    const r = calcularCusto(
+      [
+        { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
+        { codigo: 'MP00000045', quantidade: 3, custoBrutoUnitario: 50, custoLiquidoUnitario: null },
+      ],
+      10,
+    );
+    expect(r.custoBruto).toBeCloseTo(100 + 150 + 10, 10);
+    expect(r.custoLiquido).toBeCloseTo(90 + 150 + 10, 10);
+    expect(r.itensSemCredito).toEqual(['MP00000045']);
+    expect(r.itensSemCusto).toEqual([]);
     expect(r.completo).toBe(false);
+    expect(r.avisos).toHaveLength(1);
+    expect(r.avisos[0]).toMatchObject({ nivel: 'AMARELO', codigo: 'ITEM_SEM_NCM_IPI', item: 'MP00000045' });
+    expect(r.avisos[0]!.mensagem).toContain('Corrija o cadastro do item MP00000045 no Omie');
+  });
+
+  it('tarja AMARELA "GGF ausente": entra com zero', () => {
+    const r = calcularCusto([{ codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 }], null);
+    expect(r.ggfAusente).toBe(true);
+    expect(r.itensSemCusto).toEqual([]);
+    expect(r.completo).toBe(false);
+    expect(r.avisos).toEqual([{ nivel: 'AMARELO', codigo: 'GGF_AUSENTE', item: 'GGF', mensagem: 'GGF não encontrado — entrou como zero. Digite o GGF manual.' }]);
   });
 
   it('custo líquido maior que o bruto ou quantidade negativa → erro explícito', () => {

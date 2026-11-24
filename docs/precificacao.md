@@ -30,7 +30,7 @@ Todas as regras abaixo foram confirmadas pelo Ricardo e pelo fiscal da ETK; cada
 | Regime | Lucro Real |
 | PIS/COFINS | Não cumulativo, 1,65% + 7,6% = 9,25%. Crédito na compra de insumos, débito na venda. ICMS excluído da base do débito (Tema 69 do STF) e da base do crédito (lei de 2023). |
 | IPI | Recuperável na compra (ETK é indústria). Na venda, calculado sobre o preço e somado por fora, pela alíquota do NCM no cadastro. |
-| ICMS na compra | **Sempre é custo, nunca crédito.** MG para industrialização com diferimento do PTA: 0%. MG sem diferimento: alíquota interna (padrão 18%, editável). Fora de MG: 12%, 7% ou 4% conforme a origem. O percentual só serve para tirar o ICMS da base do crédito de PIS/COFINS (ver "Impostos na compra"). |
+| ICMS na compra | **Sempre é custo, nunca crédito.** MG para industrialização com diferimento do PTA: 0%. MG sem diferimento: alíquota interna (padrão 18%, editável). Fora de MG: 12% de qualquer UF (4% se a mercadoria for importada). O percentual só serve para tirar o ICMS da base do crédito de PIS/COFINS (ver "Impostos na compra"). |
 | IPI na compra | Recuperável. Sai da nota de entrada do Omie quando existe; sem nota, depende do tipo de fornecedor (ver "Impostos na compra"). |
 | ICMS na venda | Pelo regime especial, a ETK **não recolhe** o ICMS destacado: ele vira resultado. Vale para venda interestadual e para venda dentro de MG a cliente não autorizado. |
 | Cliente de MG autorizado | Cliente industrializador autorizado pela Delegacia Fiscal de MG: nota sai sem ICMS, e a ETK pode repassar como desconto. |
@@ -53,7 +53,7 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 
 **Regra de fallback:** componente sem nota de entrada no Omie aparece marcado na tela como "estimado", e os créditos saem das regras de "Impostos na compra" (tipo de fornecedor, UF e cadastro do componente), nunca de um percentual médio.
 
-**Cadastro do componente (`geral/produtos` – ConsultarProduto):** NCM e alíquota de IPI de cada componente, usados no IPI da compra sem nota. Componente sem NCM ou sem alíquota de IPI deixa o item **incompleto** (ver "Relatório de conferência do cadastro").
+**Cadastro do componente (`geral/produtos` – ConsultarProduto):** NCM e alíquota de IPI de cada componente, usados no IPI da compra sem nota. Componente sem NCM ou sem alíquota de IPI (com fornecedor indústria normal) entra **pelo valor bruto, sem crédito**, e deixa o preço **incompleto** (ver "Relatório de conferência do cadastro").
 
 **Validação da fonte de custo (24/11/2026):** relatório do PA00000001 (CEO SOFS 12/24 FO 4D): Valor GGF R$ 59,76; PI10000014 0,192111; MP00000008 17,06279; MO00000013 5,238053; MO00000037 e MP00000045 sem custo unitário. A rota temporária `GET /api/precificacao/diagnostico/:codigo` (só administrador, só leitura, **removida antes de produção**) mostra de qual campo da API sai cada número. Se o custo dos itens for o `nCMC`, a decisão de usá-lo volta ao usuário antes de seguir, porque o código atual o considera pouco confiável (ver `src/calculo/custoEstimado.ts`).
 
@@ -75,9 +75,9 @@ O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo
 | Valor da nota (unitário, com impostos) | Obrigatório, maior que zero |
 | UF do fornecedor | Obrigatório; define o ICMS da compra |
 | Compra com diferimento PTA? | **Só aparece se a UF for MG**. Sim → ICMS 0%; Não → alíquota interna de MG da tabela fiscal (padrão 18%) |
-| Mercadoria importada? | **Só aparece se a UF não for MG**. Sim → ICMS 4%; Não → alíquota interestadual da UF de origem (12% ou 7%) |
-| Tipo de fornecedor | Indústria normal (Lucro Real/Presumido) **ou** Simples Nacional / comércio-distribuidor |
-| IPI % | Já preenchido com a alíquota do NCM no cadastro do componente no Omie (indústria normal) ou 0 (Simples/comércio); **editável**. Se o cadastro não tiver NCM/IPI e o fornecedor for indústria normal, o campo vem vazio e o item fica incompleto até ser preenchido |
+| Mercadoria importada? | **Só aparece se a UF não for MG**. Sim → ICMS 4%; Não → 12% (entrada em MG vinda de qualquer UF) |
+| Tipo de fornecedor | Indústria normal (Lucro Real/Presumido), Simples Nacional ou comércio/distribuidor |
+| IPI % | **Indústria normal:** já preenchido com a alíquota do NCM no cadastro do componente no Omie, editável; sem NCM/IPI no cadastro, vem vazio e, se ficar vazio, o item entra pelo valor bruto, sem crédito (preço incompleto). **Simples Nacional:** travado em 0, campo desabilitado. **Comércio/distribuidor:** começa em 0, editável, com a dica "só se a nota destacar IPI (ex.: distribuidor de importado equiparado a indústria)" |
 
 Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para item estimado.
 
@@ -99,7 +99,7 @@ Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para it
 | --- | --- |
 | MG, para industrialização, com diferimento do PTA | 0% |
 | MG sem diferimento | alíquota interna de MG (padrão 18%, editável na tabela fiscal) |
-| Fora de MG | 12%, 7% ou 4% conforme a origem (tabela por UF de origem; 4% para mercadoria importada) |
+| Fora de MG | 12% de qualquer UF; 4% para mercadoria importada. (Os 7% só existem na **venda** de MG para Norte, Nordeste, Centro-Oeste e ES.) |
 
 Com nota de entrada no Omie, vale o ICMS destacado na nota.
 
@@ -108,8 +108,9 @@ Com nota de entrada no Omie, vale o ICMS destacado na nota.
 1. **Com nota de entrada no Omie:** o IPI da nota.
 2. **Sem nota** (custo manual ou item estimado): o operador informa o tipo de fornecedor.
    - **Indústria normal (Lucro Real/Presumido):** alíquota de IPI do NCM no cadastro do componente no Omie.
-   - **Simples Nacional ou comércio/distribuidor:** IPI = 0 (sem crédito).
-   - **Componente sem NCM/IPI no cadastro** (e fornecedor indústria normal): o item fica **incompleto**.
+   - **Simples Nacional:** IPI = 0, sempre (campo travado).
+   - **Comércio/distribuidor:** IPI = 0, salvo se a nota destacar IPI (campo editável).
+   - **Componente sem NCM/IPI no cadastro** (e fornecedor indústria normal, sem IPI informado): o item entra **pelo valor bruto, sem crédito nenhum**, e o preço fica **incompleto** (decisão de 24/11/2026: conservador, o preço sai alto, nunca baixo).
 
 **Conta por item** (valor da nota V com impostos, alíquotas de IPI e ICMS da compra):
 
@@ -150,7 +151,7 @@ O preço sai em sete passos: custo líquido, cenário, divisor, preço cheio e p
 | Cenário | ICMS destacado | ICMS recolhido | PIS/COFINS efetivo | DIFAL |
 | --- | --- | --- | --- | --- |
 | A. MG, cliente autorizado | 0% | 0% | 9,25% | não |
-| B. MG, cliente não autorizado | alíquota interna do NCM | 0% | 9,25% × (1 − ICMS) | não |
+| B. MG, cliente não autorizado | alíquota interna de MG (geral 18%, ou exceção do NCM) | 0% | 9,25% × (1 − ICMS) | não |
 | C. Outra UF, contribuinte | 12%, 7% ou 4% | 0% | 9,25% × (1 − ICMS) | não |
 | D. Outra UF, não contribuinte ou uso e consumo | 12%, 7% ou 4% | 0% | 9,25% × (1 − ICMS) | sim, alíquota interna do destino − interestadual |
 
@@ -159,7 +160,8 @@ Detalhes dos cenários (aprovados em 24/11/2026):
 - **ICMS recolhido** = ICMS destacado × "percentual de recolhimento do ICMS" da tabela fiscal (0% hoje; até 100% na transição da Reforma).
 - **Cliente de MG consumidor final** (não contribuinte, ou contribuinte comprando para uso e consumo, mesmo se autorizado): cenário B, com o recolhimento dado pelo parâmetro próprio "% de recolhimento do ICMS em MG para não contribuinte" (padrão 0%) e o aviso **"Confirmar com o fiscal se o ICMS é recolhido"**, até o fiscal confirmar se o PTA cobre esse caso.
 - **"Autorizado diferimento MG"** só vale para cliente de MG contribuinte (industrializador); marcado para cliente de fora de MG ou não contribuinte é recusado como dado inconsistente.
-- **Conteúdo importado** (4%) só vale para venda interestadual; dentro de MG vale a alíquota interna do NCM.
+- **Alíquota interna de MG na venda (cenário B):** a geral (padrão 18%) da tabela fiscal; se o NCM do produto tiver exceção cadastrada, vale a exceção.
+- **Conteúdo importado** (4%) só vale para venda interestadual; dentro de MG vale a alíquota interna de MG.
 - **DIFAL** nunca é negativo: alíquota interna menor que a interestadual dá DIFAL zero. O cenário D sempre mostra o aviso "DIFAL na base simples — validar com o fiscal".
 - **Chave "ganho do ICMS na base de PIS/COFINS"**: desligada, PIS/COFINS efetivo = 9,25% × (1 − ICMS destacado); ligada, só o ICMS recolhido sai da base: 9,25% × (1 − ICMS destacado × recolhimento). Com recolhimento 0%, ligada dá 9,25% cheio.
 
@@ -197,12 +199,13 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 | Ganho do ICMS na base de PIS/COFINS | Desligado | Decisão favorável de 2025 |
 | ICMS interestadual por UF de destino | 12% ou 7% | Tabela com as 26 UFs fora de MG |
 | ICMS para conteúdo importado | 4% | Usa a origem do produto |
-| ICMS interno de MG por NCM | do cadastro | Cenário B |
-| Alíquota interna de cada UF (para DIFAL) | por UF | Cenário D |
+| ICMS interno de MG na venda (geral) | 18% | Cenário B, quando o NCM não tem exceção |
+| Exceções de ICMS interno de MG por NCM | nenhuma | Cenário B; só os NCMs com alíquota diferente da geral |
+| Alíquota interna de cada UF (para DIFAL) | vazia (preenchida pelo administrador) | Cenário D; UF vazia dá tarja vermelha só no cenário D |
 | Percentual de recolhimento do ICMS na venda | 0% | Para a transição da Reforma Tributária (2029 a 2033) |
 | % de recolhimento do ICMS em MG para não contribuinte | 0% | Venda a consumidor final em MG (cenário B); pendente de confirmação do fiscal sobre a cobertura do PTA |
 | ICMS interno de MG na compra sem diferimento | 18% | Compra em MG sem PTA; só tira o ICMS da base do PIS/COFINS |
-| ICMS interestadual na compra por UF de origem | 12% ou 7% | Tabela com as 26 UFs fora de MG (compra de fora) |
+| ICMS interestadual na compra | 12% | Entrada em MG vinda de qualquer UF (sem tabela por UF) |
 | ICMS na compra de mercadoria importada | 4% | Compra de fora com conteúdo importado |
 | Despesas fixas padrão | último valor usado | Preenchido na hora de gerar |
 | Comissão | 1% a 4% | Escolhida na tela |
@@ -210,6 +213,44 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 **Campo novo no cadastro de cliente:** "Autorizado diferimento MG (S/N)". Pode ser um campo adicional no Omie ou uma tabela própria do app, indexada pelo código do cliente.
 
 **Histórico:** toda alteração na tabela fiscal guarda data, usuário e valor anterior.
+
+## Avisos (tarjas)
+
+Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**, dizendo o que está errado, em qual item e como resolver. As tarjas vêm do cálculo, como uma lista de avisos com **nível, código, item e mensagem**; a tela só as exibe, nunca as monta. A simulação salva e o PDF levam as mesmas tarjas.
+
+**Vermelha: bloqueia, o preço não é exibido.**
+
+| Código | Quando | Mensagem / como resolver |
+| --- | --- | --- |
+| `PRODUTO_SEM_ESTRUTURA` | Produto sem estrutura no Omie | Cadastrar a estrutura no Omie |
+| `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA` | Cenário D com a alíquota interna da UF vazia | "Peça ao administrador para preencher a UF X na tabela fiscal" |
+| `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO` | Venda interestadual com a UF sem ICMS interestadual | "Peça ao administrador para preencher a UF X na tabela fiscal" |
+| `CLIENTE_INCONSISTENTE` | Ex.: autorizado diferimento MG de fora de MG ou não contribuinte | Corrigir o cadastro do cliente |
+| `OMIE_INDISPONIVEL` | Erro ou demora da Omie | "Não foi possível consultar o Omie. Tente de novo em alguns minutos" |
+| `SEM_PRECO_POSSIVEL` | Impostos + comissão + despesas + margem ≥ 100% | Reduzir a margem, a comissão ou as despesas |
+
+**Amarela: preço exibido, marcado "INCOMPLETO – não usar em cotação".**
+
+| Código | Quando | Mensagem / como resolver |
+| --- | --- | --- |
+| `ITEM_SEM_CUSTO` | Item sem custo (entra como zero) | Lista os códigos, com botão para digitar o custo manual |
+| `ITEM_SEM_NCM_IPI` | Componente sem NCM ou sem IPI no cadastro (entra pelo bruto, sem crédito) | "Corrija o cadastro do item X no Omie" |
+| `GGF_AUSENTE` | GGF não encontrado (entra como zero) | Digitar o GGF manual |
+| `COMPONENTES_NAO_CONSULTADOS` | Estrutura com mais de 60 componentes | Lista os itens que ficaram de fora da consulta |
+
+**Azul: informativa.**
+
+| Código | Quando |
+| --- | --- |
+| `CUSTO_ESTIMADO` | Itens com custo "estimado" (sem nota de entrada) |
+| `CUSTO_MANUAL_DIFERENTE_OMIE` | Custo manual diferente do custo do Omie (mostra os dois) |
+| `DIFAL_BASE_SIMPLES` | Cenário D: "validar com o fiscal" |
+| `MG_CONSUMIDOR_FINAL_ICMS` | Cliente de MG não contribuinte ou uso e consumo: "confirmar com o fiscal se o ICMS é recolhido" |
+| `PRECO_CHEIO_INDISPONIVEL` | Só o preço cheio passa de 100% no divisor; vale o piso |
+
+**Modo reverso:** preço-alvo abaixo do piso dá tarja **vermelha no bloco do resultado do modo reverso** (`ALVO_ABAIXO_DO_PISO`), sem bloquear o preço principal.
+
+**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `GGF_AUSENTE`, `DIFAL_BASE_SIMPLES`, `MG_CONSUMIDOR_FINAL_ICMS`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Os que dependem do Omie ou do custo manual (`PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`, `CUSTO_MANUAL_DIFERENTE_OMIE`) entram nas etapas 3 e 4.
 
 ## Tela
 
