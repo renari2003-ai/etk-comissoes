@@ -27,6 +27,7 @@
         <button type="button" id="modo-relatorios-botao" class="aba-modo" role="tab" aria-selected="false">Relatórios</button>
         <button type="button" id="modo-usuarios-botao" class="aba-modo" role="tab" aria-selected="false" hidden>Usuários</button>
         <button type="button" id="modo-fretes-botao" class="aba-modo" role="tab" aria-selected="false" hidden>🚚 Fretes</button>
+        <button type="button" id="modo-precificacao-botao" class="aba-modo" role="tab" aria-selected="false" hidden>💲 Precificação</button>
       </nav>
       <div class="usuario-logado" id="usuario-logado" hidden>
         <span class="usuario-logado-nome" id="usuario-logado-nome"></span>
@@ -108,6 +109,7 @@
           <label><input type="checkbox" name="fretesComercial" /> Fretes — Central do Vendedor</label>
           <label><input type="checkbox" name="fretesSubstituicao" /> Fretes — Aprovar em substituição</label>
           <label><input type="checkbox" name="fretesGerencia" /> Fretes — Visão ampliada (gerência)</label>
+          <label><input type="checkbox" name="precificacao" /> Precificação — formação de preço</label>
         </fieldset>
         <p id="novo-usuario-dica-vendedor" class="filtro-data-legenda" hidden>
           Vendedor: o login é comparado com os nomes de vendedores da Omie (nome exato, sem diferenciar maiúsculas/minúsculas).
@@ -1079,6 +1081,80 @@ OBSERVACOES: Entrega em horário comercial.</pre>
           <div id="fretes-historico-detalhe-conteudo"></div>
           <button type="button" id="fretes-historico-detalhe-fechar" class="botao-secundario">Fechar</button>
         </section>
+      </div>
+    </section>
+  </main>
+
+  <main class="conteudo" id="modo-precificacao" hidden>
+    <section class="painel-usuarios">
+      <h2 class="titulo-secao">Tabela fiscal da formação de preço</h2>
+      <p class="filtro-data-legenda">
+        Percentuais em pontos (9,25 = 9,25%), com até 4 casas. Só o administrador edita; toda alteração fica no histórico.
+      </p>
+      <p id="precificacao-parametros-atualizado" class="filtro-data-legenda"></p>
+      <form id="precificacao-form-parametros" autocomplete="off" novalidate>
+        <fieldset>
+          <legend>Parâmetros gerais</legend>
+          <div id="precificacao-campos-gerais" class="filtros-relatorio"></div>
+        </fieldset>
+        <fieldset>
+          <legend>ICMS por UF de destino</legend>
+          <p class="filtro-data-legenda">
+            ICMS interestadual na venda de MG para a UF (12% Sul/Sudeste exceto ES; 7% Norte, Nordeste, Centro-Oeste e ES) e alíquota interna da UF, usada no DIFAL.
+            UF sem alíquota interna só bloqueia a venda a não contribuinte daquela UF.
+          </p>
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">UF</th>
+                  <th scope="col">ICMS interestadual de venda (%)</th>
+                  <th scope="col">Alíquota interna (%) — DIFAL</th>
+                </tr>
+              </thead>
+              <tbody id="precificacao-tbody-ufs"></tbody>
+            </table>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Exceções de ICMS interno de MG por NCM</legend>
+          <p class="filtro-data-legenda">Só os NCMs com alíquota diferente da geral de MG. Sem exceção, vale a geral.</p>
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">NCM</th>
+                  <th scope="col">Alíquota interna de MG (%)</th>
+                  <th scope="col" aria-label="Ações"></th>
+                </tr>
+              </thead>
+              <tbody id="precificacao-tbody-ncm"></tbody>
+            </table>
+          </div>
+          <button type="button" id="precificacao-adicionar-ncm" class="botao-secundario" hidden>Adicionar NCM</button>
+        </fieldset>
+        <button type="submit" id="precificacao-salvar" class="botao-secundario" hidden>Salvar tabela fiscal</button>
+        <p id="precificacao-parametros-erro" class="painel-login-erro" role="alert" hidden></p>
+        <button type="button" id="precificacao-recarregar" class="botao-secundario" hidden>Recarregar a tabela fiscal</button>
+        <p id="precificacao-parametros-ok" class="filtro-data-legenda" role="status" hidden></p>
+      </form>
+    </section>
+    <section id="precificacao-secao-historico" class="painel-usuarios" hidden>
+      <h2 class="titulo-secao">Histórico de alterações da tabela fiscal</h2>
+      <p id="precificacao-historico-erro" class="painel-login-erro" role="alert" hidden></p>
+      <div class="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Quando</th>
+              <th scope="col">Quem</th>
+              <th scope="col">Campo</th>
+              <th scope="col">Antes</th>
+              <th scope="col">Depois</th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-tbody-historico"></tbody>
+        </table>
       </div>
     </section>
   </main>

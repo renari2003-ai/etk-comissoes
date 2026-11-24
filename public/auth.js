@@ -40,6 +40,7 @@ const usuarioLogadoNome = el('usuario-logado-nome');
 const botaoSair = el('botao-sair');
 const modoUsuariosBotao = el('modo-usuarios-botao');
 const modoFretesBotao = el('modo-fretes-botao');
+const modoPrecificacaoBotao = el('modo-precificacao-botao');
 const modoConsultaBotao = el('modo-consulta-botao');
 const modoRelatoriosBotao = el('modo-relatorios-botao');
 const semAcesso = el('sem-acesso');
@@ -89,11 +90,13 @@ function aplicarPermissoes(usuarioLogado) {
     if (usuarioLogado.papel === 'administrador') {
         modoUsuariosBotao.hidden = false;
         modoFretesBotao.hidden = false;
+        modoPrecificacaoBotao.hidden = false;
         return; // acesso total — nada pra esconder
     }
     modoUsuariosBotao.hidden = true; // administração de usuários é exclusiva do administrador
     const p = usuarioLogado.permissoes;
     modoFretesBotao.hidden = !p.fretes;
+    modoPrecificacaoBotao.hidden = !p.precificacao;
     const secoesPorId = [
         ['aba-pedidos', p.consultaPedidos],
         ['aba-orcamentos', p.consultaOrcamentos],

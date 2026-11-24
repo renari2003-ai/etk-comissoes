@@ -34,6 +34,8 @@ export interface Permissoes {
   fretesSubstituicao: boolean;
   /** Fase 4A.6 — visão ampliada: vê propostas de todos os vendedores na Central do Vendedor. */
   fretesGerencia: boolean;
+  /** Formação de preço de venda (2026-11-24). */
+  precificacao: boolean;
 }
 
 export interface UsuarioLogado {
@@ -83,6 +85,7 @@ const usuarioLogadoNome = el<HTMLElement>('usuario-logado-nome');
 const botaoSair = el<HTMLButtonElement>('botao-sair');
 const modoUsuariosBotao = el<HTMLButtonElement>('modo-usuarios-botao');
 const modoFretesBotao = el<HTMLButtonElement>('modo-fretes-botao');
+const modoPrecificacaoBotao = el<HTMLButtonElement>('modo-precificacao-botao');
 const modoConsultaBotao = el<HTMLButtonElement>('modo-consulta-botao');
 const modoRelatoriosBotao = el<HTMLButtonElement>('modo-relatorios-botao');
 const semAcesso = el<HTMLElement>('sem-acesso');
@@ -137,12 +140,14 @@ function aplicarPermissoes(usuarioLogado: UsuarioLogado): void {
   if (usuarioLogado.papel === 'administrador') {
     modoUsuariosBotao.hidden = false;
     modoFretesBotao.hidden = false;
+    modoPrecificacaoBotao.hidden = false;
     return; // acesso total — nada pra esconder
   }
 
   modoUsuariosBotao.hidden = true; // administração de usuários é exclusiva do administrador
   const p = usuarioLogado.permissoes;
   modoFretesBotao.hidden = !p.fretes;
+  modoPrecificacaoBotao.hidden = !p.precificacao;
   const secoesPorId: Array<[string, boolean]> = [
     ['aba-pedidos', p.consultaPedidos],
     ['aba-orcamentos', p.consultaOrcamentos],

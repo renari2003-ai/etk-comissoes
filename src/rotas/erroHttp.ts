@@ -3,7 +3,7 @@ import { ErroNaoAutenticado, ErroSemPermissao } from '../auth/erros.js';
 import { ErroConfiguracaoEtapasComissionamento } from '../comissionamento/elegibilidadeComissionamento.js';
 import { OmieError } from '../omie/erros.js';
 import { ErroTipoDocumentoIncompativel } from '../relatorio/montarRelatorio.js';
-import { ErroValidacao } from '../validacao.js';
+import { ErroConflito, ErroValidacao } from '../validacao.js';
 
 /** Encaminha erros assíncronos de rota para o middleware de tratamento de erros do Express. */
 export function assincrono(
@@ -32,6 +32,11 @@ export function tratadorDeErros(erro: unknown, req: Request, res: Response, _nex
 
   if (erro instanceof ErroSemPermissao) {
     res.status(403).json({ erro: erro.message });
+    return;
+  }
+
+  if (erro instanceof ErroConflito) {
+    res.status(409).json({ erro: erro.message });
     return;
   }
 

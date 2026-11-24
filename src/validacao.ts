@@ -1,5 +1,13 @@
 import type { IdentificadorPedido } from './relatorio/montarRelatorio.js';
 
+/** Conflito de versão (409): o recurso mudou depois que o cliente o leu — recarregar e refazer. */
+export class ErroConflito extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ErroConflito';
+  }
+}
+
 export class ErroValidacao extends Error {
   constructor(message: string) {
     super(message);

@@ -30,6 +30,8 @@ export interface Permissoes {
   fretesSubstituicao: boolean;
   /** Fase 4A.6 — "GERENCIA": visão ampliada na Central do Vendedor (vê propostas de todos os vendedores, não só as próprias). */
   fretesGerencia: boolean;
+  /** Formação de preço de venda (2026-11-24) — ver a tela e ler a tabela fiscal. Editar a tabela fiscal é só do administrador. Chave aditiva: usuários existentes começam com `false`. */
+  precificacao: boolean;
 }
 
 export const PERMISSOES_VAZIAS: Permissoes = {
@@ -44,6 +46,7 @@ export const PERMISSOES_VAZIAS: Permissoes = {
   fretesComercial: false,
   fretesSubstituicao: false,
   fretesGerencia: false,
+  precificacao: false,
 };
 
 export interface Usuario {

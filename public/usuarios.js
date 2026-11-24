@@ -12,6 +12,7 @@ const CHAVES_PERMISSAO = [
     { chave: 'fretesComercial', rotulo: 'Fretes — Central do Vendedor' },
     { chave: 'fretesSubstituicao', rotulo: 'Fretes — Aprovar em substituição' },
     { chave: 'fretesGerencia', rotulo: 'Fretes — Visão ampliada (gerência)' },
+    { chave: 'precificacao', rotulo: 'Precificação — formação de preço' },
 ];
 function el(id) {
     const elemento = document.getElementById(id);
@@ -88,6 +89,7 @@ export function inicializarUsuarios() {
             fretesComercial: false,
             fretesSubstituicao: false,
             fretesGerencia: false,
+            precificacao: false,
         };
     }
     function atualizarVisibilidadePermissoes() {

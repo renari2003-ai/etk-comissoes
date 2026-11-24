@@ -12,6 +12,7 @@ import { criarRotaCache } from './rotas/cache.js';
 import { criarRotaFretes } from './rotas/fretes.js';
 import { criarRotaSaude } from './rotas/saude.js';
 import { criarRotaPrecificacaoDiagnostico } from './rotas/precificacaoDiagnostico.js';
+import { criarRotasPrecificacao } from './rotas/precificacaoRotas.js';
 import { tratadorDeErros } from './rotas/erroHttp.js';
 import { capturarCorpoBruto } from './rotas/corpoBruto.js';
 
@@ -61,6 +62,8 @@ app.use(criarRotaComissionamento(cliente));
 app.use(criarRotaFretes(cliente));
 // TEMPORÁRIA (2026-11-24): diagnóstico da fonte de custo da precificação — só admin, só leitura. REMOVER antes de produção.
 app.use(criarRotaPrecificacaoDiagnostico(cliente));
+// Formação de preço (2026-11-24) — tabela fiscal; tabelas próprias `precificacao_*`, nunca toca as existentes.
+app.use(criarRotasPrecificacao());
 
 // Rota raiz: no Vercel express.static e ignorado, entao GET / nao serve index.html.
 // Este redirect resolve — a CDN do Vercel serve /index.html como arquivo estatico.

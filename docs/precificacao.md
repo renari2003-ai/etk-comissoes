@@ -212,7 +212,9 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 
 **Campo novo no cadastro de cliente:** "Autorizado diferimento MG (S/N)". Pode ser um campo adicional no Omie ou uma tabela própria do app, indexada pelo código do cliente.
 
-**Histórico:** toda alteração na tabela fiscal guarda data, usuário e valor anterior.
+**Histórico:** toda alteração na tabela fiscal guarda data, usuário (id e nome), campo, valor anterior e valor novo (tabela `precificacao_parametros_historico`, visível só para o administrador).
+
+**Onde fica (etapa 2):** `precificacao_parametros_fiscais` (uma linha, parâmetros gerais), `precificacao_icms_uf` (26 UFs fora de MG: ICMS interestadual de venda e alíquota interna), `precificacao_icms_mg_ncm` (exceções por NCM) e o histórico. Percentuais em pontos (9,25 = 9,25%), até 4 casas. Valores iniciais entram só na primeira vez, nunca por cima de uma edição. Tela: modo "💲 Precificação" → "Tabela fiscal da formação de preço" (quem tem a permissão `precificacao` vê; só o administrador edita).
 
 ## Avisos (tarjas)
 
@@ -295,8 +297,9 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 | Método e rota | Faz |
 | --- | --- |
 | `GET /api/preco/:codigo?cliente=&uf=&tipo=&despesas=&comissao=&margem=&alvo=` | Devolve custo, cascata, preços e margens |
-| `GET /api/parametros-fiscais` | Lê a tabela fiscal |
-| `PUT /api/parametros-fiscais` | Altera a tabela (só administrador), grava histórico |
+| `GET /api/precificacao/parametros-fiscais` | Lê a tabela fiscal (permissão `precificacao`) |
+| `PUT /api/precificacao/parametros-fiscais` | Altera a tabela inteira (só administrador), com a `versao` lida: se outro administrador salvou antes, responde 409 e a tela oferece recarregar. Validação estrita (400), grava histórico |
+| `GET /api/precificacao/parametros-fiscais/historico?limite=` | Histórico de alterações (só administrador) |
 | `POST /api/simulacoes` | Salva uma simulação |
 | `GET /api/precificacao/custos-manuais` / `PUT /api/precificacao/custos-manuais/:codigo` | Lê e grava custo manual salvo (com histórico) |
 
@@ -334,8 +337,8 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 
 - [x] Ler o repositório e mapear o cliente do Omie e o banco já usados.
 - [ ] Validar a fonte do custo e do GGF com o PA00000001 (rota temporária de diagnóstico no Preview).
-- [ ] Criar o módulo `precificacao` com os testes do exemplo numérico.
-- [ ] Criar a tabela fiscal e a tela de administração.
+- [x] Criar o módulo `precificacao` com os testes do exemplo numérico (etapa 1).
+- [x] Criar a tabela fiscal e a tela de administração (etapa 2).
 - [ ] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI).
 - [ ] Integrar estrutura, notas de entrada, cadastro (NCM/IPI) e cliente do Omie.
 - [ ] Relatório de conferência do cadastro (componentes sem NCM/IPI), só leitura.

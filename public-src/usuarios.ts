@@ -26,6 +26,7 @@ const CHAVES_PERMISSAO: Array<{ chave: keyof Permissoes; rotulo: string }> = [
   { chave: 'fretesComercial', rotulo: 'Fretes — Central do Vendedor' },
   { chave: 'fretesSubstituicao', rotulo: 'Fretes — Aprovar em substituição' },
   { chave: 'fretesGerencia', rotulo: 'Fretes — Visão ampliada (gerência)' },
+  { chave: 'precificacao', rotulo: 'Precificação — formação de preço' },
 ];
 
 function el<T extends HTMLElement>(id: string): T {
@@ -106,6 +107,7 @@ export function inicializarUsuarios(): { ativar: () => void } {
       fretesComercial: false,
       fretesSubstituicao: false,
       fretesGerencia: false,
+      precificacao: false,
     };
   }
 
