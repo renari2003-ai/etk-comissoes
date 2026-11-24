@@ -18,11 +18,23 @@ Os dois preços aparecem sem e com IPI, por unidade e no total, com a margem ant
    - **Omie:** custo cadastrado no Omie.
    - **Manual:** custo digitado por alguém da ETK.
    - **Sem custo:** nem o Omie nem o cadastro manual têm valor. A linha aparece destacada.
-3. Do custo de cada item o sistema retira os impostos que a ETK recupera na compra (PIS/COFINS e IPI). O ICMS de compras de fora de MG continua no custo.
+3. Do custo de cada item o sistema retira os impostos que a ETK recupera na compra: PIS/COFINS e IPI.
+   - **ICMS da compra:** é sempre custo, nunca crédito. Fica no custo do jeito que veio: 0% em compra de MG com diferimento do PTA, 18% (alíquota interna) em compra de MG sem diferimento, e 12%, 7% ou 4% em compra de fora de MG.
+   - **IPI da compra:** se o Omie tem a nota de entrada do item, vale o IPI da nota. Se não tem, vale o tipo de fornecedor. Indústria normal (Lucro Real/Presumido) usa a alíquota do NCM no cadastro do componente. Simples Nacional ou comércio/distribuidor não dá crédito de IPI.
 
 ## Quando um item vem sem custo ou com custo errado
 
-Clique no campo de custo do item (ou do GGF) e digite o valor **como aparece na nota de compra, com impostos**. Marque também se o fornecedor é **de dentro ou de fora de MG**. O sistema retira os créditos sozinho, pelos percentuais da tabela fiscal.
+Clique no campo de custo do item (ou do GGF) e preencha:
+
+- **Valor da nota:** o valor unitário como aparece na nota de compra, **com impostos**.
+- **UF do fornecedor.**
+- **Compra com diferimento PTA?** Só aparece quando a UF é MG.
+- **Tipo de fornecedor:** indústria normal, ou Simples Nacional / comércio-distribuidor.
+- **IPI %:** vem preenchido pelo cadastro do componente no Omie (ou 0 para Simples/comércio). Você pode corrigir.
+
+O sistema retira os créditos sozinho. Exemplo: nota de R$ 112,00 com IPI de 12%, de fornecedor de MG com diferimento PTA. O IPI é R$ 12,00 e o PIS/COFINS é R$ 9,25, então o custo líquido fica R$ 90,75.
+
+Se o componente não tem NCM ou alíquota de IPI no cadastro do Omie e o fornecedor é indústria normal, o item fica **incompleto** até alguém informar o IPI. O jeito certo de resolver é corrigir o cadastro no Omie. O **relatório de conferência do cadastro** lista esses componentes.
 
 Depois escolha:
 
@@ -33,7 +45,7 @@ Se um item tem custo manual salvo e o Omie passar a ter custo para ele, a tela m
 
 ## "Preço incompleto"
 
-Se ainda sobrar item sem custo, a tela calcula o preço assim mesmo, contando esse item como custo zero, e mostra em destaque **"Preço incompleto: X itens sem custo"**. Esse preço está **abaixo do real**. Não use em cotação sem preencher os custos que faltam.
+Se ainda sobrar item sem custo (ou sem IPI definido), a tela calcula o preço assim mesmo, contando esse item como custo zero, e mostra em destaque **"Preço incompleto: X itens sem custo"**. Esse preço está **abaixo do real**. Não use em cotação sem preencher os custos que faltam.
 
 ## Salvar e exportar
 

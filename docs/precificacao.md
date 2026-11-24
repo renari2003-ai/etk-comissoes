@@ -30,8 +30,8 @@ Todas as regras abaixo foram confirmadas pelo Ricardo e pelo fiscal da ETK; cada
 | Regime | Lucro Real |
 | PIS/COFINS | Não cumulativo, 1,65% + 7,6% = 9,25%. Crédito na compra de insumos, débito na venda. ICMS excluído da base do débito (Tema 69 do STF) e da base do crédito (lei de 2023). |
 | IPI | Recuperável na compra (ETK é indústria). Na venda, calculado sobre o preço e somado por fora, pela alíquota do NCM no cadastro. |
-| ICMS na compra dentro de MG | Sai zero na nota (diferimento). Nada a ajustar no custo. |
-| ICMS na compra fora de MG | Destacado na nota e **fica no custo**, sem crédito. |
+| ICMS na compra | **Sempre é custo, nunca crédito.** MG para industrialização com diferimento do PTA: 0%. MG sem diferimento: alíquota interna (padrão 18%, editável). Fora de MG: 12%, 7% ou 4% conforme a origem. O percentual só serve para tirar o ICMS da base do crédito de PIS/COFINS (ver "Impostos na compra"). |
+| IPI na compra | Recuperável. Sai da nota de entrada do Omie quando existe; sem nota, depende do tipo de fornecedor (ver "Impostos na compra"). |
 | ICMS na venda | Pelo regime especial, a ETK **não recolhe** o ICMS destacado: ele vira resultado. Vale para venda interestadual e para venda dentro de MG a cliente não autorizado. |
 | Cliente de MG autorizado | Cliente industrializador autorizado pela Delegacia Fiscal de MG: nota sai sem ICMS, e a ETK pode repassar como desconto. |
 | DIFAL | Venda para não contribuinte (ou uso e consumo) em outra UF: o DIFAL é pago ao estado de destino e **continua sendo custo**. |
@@ -51,7 +51,9 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 | Última nota de entrada de cada componente: UF do fornecedor, ICMS, IPI, PIS, COFINS | Saber se veio de dentro ou de fora de MG e quanto retirar de crédito | `produtos/recebimentonfe` – ListarRecebimentos |
 | Cliente: UF, inscrição estadual, contribuinte, campo "autorizado diferimento MG" | Escolher o cenário de venda | `geral/clientes` – ConsultarCliente |
 
-**Regra de fallback:** componente sem nota de entrada no Omie usa os percentuais médios da tabela fiscal e aparece marcado na tela como "estimado".
+**Regra de fallback:** componente sem nota de entrada no Omie aparece marcado na tela como "estimado", e os créditos saem das regras de "Impostos na compra" (tipo de fornecedor, UF e cadastro do componente), nunca de um percentual médio.
+
+**Cadastro do componente (`geral/produtos` – ConsultarProduto):** NCM e alíquota de IPI de cada componente, usados no IPI da compra sem nota. Componente sem NCM ou sem alíquota de IPI deixa o item **incompleto** (ver "Relatório de conferência do cadastro").
 
 **Validação da fonte de custo (24/11/2026):** relatório do PA00000001 (CEO SOFS 12/24 FO 4D): Valor GGF R$ 59,76; PI10000014 0,192111; MP00000008 17,06279; MO00000013 5,238053; MO00000037 e MP00000045 sem custo unitário. A rota temporária `GET /api/precificacao/diagnostico/:codigo` (só administrador, só leitura, **removida antes de produção**) mostra de qual campo da API sai cada número. Se o custo dos itens for o `nCMC`, a decisão de usá-lo volta ao usuário antes de seguir, porque o código atual o considera pouco confiável (ver `src/calculo/custoEstimado.ts`).
 
@@ -66,29 +68,80 @@ O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo
 - **Só nesta simulação:** vale para o cálculo atual (e fica gravado na simulação, se for salva), sem afetar os próximos cálculos.
 - **Salvar para próximos cálculos:** grava na tabela de custos manuais e passa a ter **prioridade sobre o Omie**.
 
-**Como o custo manual é digitado.** Como aparece na nota de compra, **com impostos**, junto com a marcação **dentro de MG** ou **fora de MG**. O sistema retira os créditos com os percentuais da tabela fiscal, pela mesma regra das notas de entrada:
+**Formulário do custo manual.** O custo é digitado como aparece na nota de compra, **com impostos**. Campos:
 
-- Dentro de MG: ICMS zero (diferimento); retira o IPI e o PIS/COFINS.
-- Fora de MG: o ICMS fica no custo; retira o IPI e o PIS/COFINS (calculado sem o ICMS na base).
-- Os percentuais médios usados nessa conta (IPI na compra e ICMS na compra fora de MG) ficam na tabela fiscal — **valores iniciais a definir com o fiscal**.
+| Campo | Regra |
+| --- | --- |
+| Valor da nota (unitário, com impostos) | Obrigatório, maior que zero |
+| UF do fornecedor | Obrigatório; define o ICMS da compra |
+| Compra com diferimento PTA? | **Só aparece se a UF for MG**. Sim → ICMS 0%; Não → alíquota interna de MG da tabela fiscal (padrão 18%) |
+| Tipo de fornecedor | Indústria normal (Lucro Real/Presumido) **ou** Simples Nacional / comércio-distribuidor |
+| IPI % | Já preenchido com a alíquota do NCM no cadastro do componente no Omie (indústria normal) ou 0 (Simples/comércio); **editável**. Se o cadastro não tiver NCM/IPI e o fornecedor for indústria normal, o campo vem vazio e o item fica incompleto até ser preenchido |
+
+Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para item estimado.
 
 **Conflito com o Omie.** Se um item com custo manual salvo passar a ter custo no Omie, a tela mostra os dois valores e o operador escolhe qual usar. Até ele escolher, vale o manual (regra de prioridade).
 
 **Preço incompleto.** Se algum item continuar sem custo, o preço é calculado mesmo assim (o item entra com custo zero) e a tela mostra em destaque **"Preço incompleto: X itens sem custo"**. A simulação salva registra essa condição.
 
-**Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a marcação dentro/fora de MG e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
+**Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, o diferimento PTA, o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
 
-**Tabela de custos manuais.** Código do componente (ou do produto acabado, para o GGF), custo com impostos, dentro/fora de MG, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
+**Tabela de custos manuais.** Código do componente (ou do produto acabado, para o GGF), valor da nota com impostos, UF do fornecedor, diferimento PTA (S/N, só MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
+
+## Impostos na compra (créditos do custo)
+
+**ICMS na compra — sempre custo, nunca crédito.** O percentual só é usado para tirar o ICMS da base do crédito de PIS/COFINS.
+
+| Compra | ICMS |
+| --- | --- |
+| MG, para industrialização, com diferimento do PTA | 0% |
+| MG sem diferimento | alíquota interna de MG (padrão 18%, editável na tabela fiscal) |
+| Fora de MG | 12%, 7% ou 4% conforme a origem (tabela por UF de origem; 4% para mercadoria importada) |
+
+Com nota de entrada no Omie, vale o ICMS destacado na nota.
+
+**IPI na compra — nesta ordem:**
+
+1. **Com nota de entrada no Omie:** o IPI da nota.
+2. **Sem nota** (custo manual ou item estimado): o operador informa o tipo de fornecedor.
+   - **Indústria normal (Lucro Real/Presumido):** alíquota de IPI do NCM no cadastro do componente no Omie.
+   - **Simples Nacional ou comércio/distribuidor:** IPI = 0 (sem crédito).
+   - **Componente sem NCM/IPI no cadastro** (e fornecedor indústria normal): o item fica **incompleto**.
+
+**Conta por item** (valor da nota V com impostos, alíquotas de IPI e ICMS da compra):
+
+- Valor dos produtos: `vProd = V ÷ (1 + IPI)`
+- IPI (crédito): `V − vProd`
+- ICMS (fica no custo): `vProd × ICMS`
+- PIS/COFINS (crédito): `9,25% × (vProd − ICMS)`
+- **Custo líquido** = `V − IPI − PIS/COFINS` = `vProd − PIS/COFINS`
+
+Exemplos com V = R$ 112,00 e IPI 12% (vProd = R$ 100,00, IPI = R$ 12,00):
+
+| Compra | ICMS | PIS/COFINS | Custo líquido |
+| --- | --- | --- | --- |
+| MG com diferimento PTA | R$ 0,00 | 9,25% × 100,00 = R$ 9,25 | R$ 90,75 |
+| MG sem diferimento (18%) | R$ 18,00 | 9,25% × 82,00 = R$ 7,585 | R$ 92,415 (sem arredondar no meio da conta) |
+| SP, 12% | R$ 12,00 | 9,25% × 88,00 = R$ 8,14 | R$ 91,86 |
+| Fornecedor Simples, MG com PTA (IPI 0, V = R$ 100,00) | R$ 0,00 | R$ 9,25 | R$ 90,75 |
+
+A última linha mostra que, sem IPI na nota, o valor digitado já é o vProd.
+
+A regra é a mesma para nota de entrada (com os valores destacados na nota), custo manual e item estimado. **Validar com o fiscal:** o IPI fora da base do PIS/COFINS e do ICMS (compra para industrialização).
+
+## Relatório de conferência do cadastro
+
+Somente leitura. Para um produto (ou para todos os produtos que têm estrutura no Omie), lista os componentes **sem NCM** ou **sem alíquota de IPI** no cadastro do Omie, para a correção ser feita lá. Colunas: produto acabado, código e descrição do componente, NCM, alíquota de IPI, problema ("sem NCM", "sem IPI"). Usa `ListarEstruturas`/`ConsultarEstrutura` e `ConsultarProduto`, com cache e pelo limitador de chamadas. A varredura de todos os produtos roda em lotes, porque cada componente custa uma chamada ao Omie. Rota prevista: `GET /api/precificacao/conferencia-cadastro?produto=` (sem `produto` = todos), só para administrador.
 
 ## Regras de cálculo
 
 O preço sai em sete passos: custo líquido, cenário, divisor, preço cheio e piso, IPI por fora, lucro antes e depois do IR/CS e, se pedido, o modo reverso.
 
 1. **Custo bruto** = soma de (quantidade × custo unitário) de cada componente + GGF.
-2. **Custo líquido**: para cada componente, retira os créditos da última nota de entrada.
-   - PIS/COFINS: 9,25% sobre o valor do item sem o ICMS destacado.
-   - IPI: o valor destacado na nota.
-   - ICMS: nada a retirar (zero dentro de MG; custo quando vem de fora).
+2. **Custo líquido**: para cada componente, retira os créditos pelas regras de "Impostos na compra" (nota de entrada do Omie, ou tipo de fornecedor e cadastro quando não há nota).
+   - PIS/COFINS: 9,25% sobre o valor dos produtos sem o ICMS.
+   - IPI: o da nota; sem nota, pelo tipo de fornecedor e NCM.
+   - ICMS: nada a retirar; é sempre custo.
 3. **Cenário de venda** define os percentuais sobre o preço:
 
 | Cenário | ICMS destacado | ICMS recolhido | PIS/COFINS efetivo | DIFAL |
@@ -133,8 +186,9 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 | ICMS interno de MG por NCM | do cadastro | Cenário B |
 | Alíquota interna de cada UF (para DIFAL) | por UF | Cenário D |
 | Percentual de recolhimento do ICMS na venda | 0% | Para a transição da Reforma Tributária (2029 a 2033) |
-| IPI médio na compra | a definir com o fiscal | Crédito de IPI do custo manual e de componente sem nota de entrada |
-| ICMS médio na compra fora de MG | a definir com o fiscal | Base do crédito de PIS/COFINS do custo manual fora de MG |
+| ICMS interno de MG na compra sem diferimento | 18% | Compra em MG sem PTA; só tira o ICMS da base do PIS/COFINS |
+| ICMS interestadual na compra por UF de origem | 12% ou 7% | Tabela com as 26 UFs fora de MG (compra de fora) |
+| ICMS na compra de mercadoria importada | 4% | Compra de fora com conteúdo importado |
 | Despesas fixas padrão | último valor usado | Preenchido na hora de gerar |
 | Comissão | 1% a 4% | Escolhida na tela |
 
@@ -216,6 +270,8 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 
 - Alíquotas internas de MG por NCM (cenário B) e a regra de DIFAL por UF (base simples ou dupla).
 - Se os custos unitários da ficha técnica já incluem o IPI da compra.
+- O IPI fora da base do PIS/COFINS e do ICMS na compra para industrialização.
+- Como o operador indica compra de mercadoria importada (ICMS 4%) no custo manual: o formulário atual não tem esse campo.
 
 **Próximos passos (no VS Code, sobre o repositório do ETK Comissão)**
 
@@ -223,7 +279,8 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 - [ ] Validar a fonte do custo e do GGF com o PA00000001 (rota temporária de diagnóstico no Preview).
 - [ ] Criar o módulo `precificacao` com os testes do exemplo numérico.
 - [ ] Criar a tabela fiscal e a tela de administração.
-- [ ] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto).
-- [ ] Integrar estrutura, notas de entrada e cliente do Omie.
+- [ ] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI).
+- [ ] Integrar estrutura, notas de entrada, cadastro (NCM/IPI) e cliente do Omie.
+- [ ] Relatório de conferência do cadastro (componentes sem NCM/IPI), só leitura.
 - [ ] Montar a tela e validar com 3 produtos reais junto com o fiscal.
 - [ ] Publicar em preview no Vercel antes de ir para produção.
