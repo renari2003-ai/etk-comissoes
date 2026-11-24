@@ -11,6 +11,13 @@ Você informa o produto, o cliente (ou só a UF e o tipo de cliente), as despesa
 
 Os dois preços aparecem sem e com IPI, por unidade e no total, com a margem antes e depois do IR/CS.
 
+Junto do resultado podem aparecer avisos para confirmar com o fiscal:
+
+- **"Confirmar com o fiscal se o ICMS é recolhido":** aparece na venda a não contribuinte ou consumidor final em MG.
+- **"DIFAL na base simples":** aparece na venda a não contribuinte de outra UF.
+
+Enquanto houver um desses avisos, trate o preço como provisório.
+
 ## De onde vem o custo
 
 1. A tela busca no Omie a **estrutura do produto** (componentes e quantidades) e o **GGF**.
@@ -29,6 +36,7 @@ Clique no campo de custo do item (ou do GGF) e preencha:
 - **Valor da nota:** o valor unitário como aparece na nota de compra, **com impostos**.
 - **UF do fornecedor.**
 - **Compra com diferimento PTA?** Só aparece quando a UF é MG.
+- **Mercadoria importada?** Só aparece quando a UF não é MG. Se for importada, o ICMS da compra é 4%.
 - **Tipo de fornecedor:** indústria normal, ou Simples Nacional / comércio-distribuidor.
 - **IPI %:** vem preenchido pelo cadastro do componente no Omie (ou 0 para Simples/comércio). Você pode corrigir.
 

@@ -75,10 +75,13 @@ O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo
 | Valor da nota (unitário, com impostos) | Obrigatório, maior que zero |
 | UF do fornecedor | Obrigatório; define o ICMS da compra |
 | Compra com diferimento PTA? | **Só aparece se a UF for MG**. Sim → ICMS 0%; Não → alíquota interna de MG da tabela fiscal (padrão 18%) |
+| Mercadoria importada? | **Só aparece se a UF não for MG**. Sim → ICMS 4%; Não → alíquota interestadual da UF de origem (12% ou 7%) |
 | Tipo de fornecedor | Indústria normal (Lucro Real/Presumido) **ou** Simples Nacional / comércio-distribuidor |
 | IPI % | Já preenchido com a alíquota do NCM no cadastro do componente no Omie (indústria normal) ou 0 (Simples/comércio); **editável**. Se o cadastro não tiver NCM/IPI e o fornecedor for indústria normal, o campo vem vazio e o item fica incompleto até ser preenchido |
 
 Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para item estimado.
+
+**Item estimado** (tem custo no Omie, mas não tem nota de entrada): o operador informa a UF do fornecedor, o diferimento PTA ou a mercadoria importada, e o tipo de fornecedor. Esses dados ficam salvos na tabela de custos manuais, **sem trocar o custo do Omie**, para não ser preciso informar de novo a cada cálculo.
 
 **Conflito com o Omie.** Se um item com custo manual salvo passar a ter custo no Omie, a tela mostra os dois valores e o operador escolhe qual usar. Até ele escolher, vale o manual (regra de prioridade).
 
@@ -86,7 +89,7 @@ Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para it
 
 **Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, o diferimento PTA, o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
 
-**Tabela de custos manuais.** Código do componente (ou do produto acabado, para o GGF), valor da nota com impostos, UF do fornecedor, diferimento PTA (S/N, só MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
+**Tabela de custos manuais.** Código do componente (ou do produto acabado, para o GGF), valor da nota com impostos (vazio quando o registro só guarda os dados fiscais de um item estimado), UF do fornecedor, diferimento PTA (S/N, só MG), mercadoria importada (S/N, só fora de MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
 
 ## Impostos na compra (créditos do custo)
 
@@ -151,26 +154,37 @@ O preço sai em sete passos: custo líquido, cenário, divisor, preço cheio e p
 | C. Outra UF, contribuinte | 12%, 7% ou 4% | 0% | 9,25% × (1 − ICMS) | não |
 | D. Outra UF, não contribuinte ou uso e consumo | 12%, 7% ou 4% | 0% | 9,25% × (1 − ICMS) | sim, alíquota interna do destino − interestadual |
 
+Detalhes dos cenários (aprovados em 24/11/2026):
+
+- **ICMS recolhido** = ICMS destacado × "percentual de recolhimento do ICMS" da tabela fiscal (0% hoje; até 100% na transição da Reforma).
+- **Cliente de MG consumidor final** (não contribuinte, ou contribuinte comprando para uso e consumo, mesmo se autorizado): cenário B, com o recolhimento dado pelo parâmetro próprio "% de recolhimento do ICMS em MG para não contribuinte" (padrão 0%) e o aviso **"Confirmar com o fiscal se o ICMS é recolhido"**, até o fiscal confirmar se o PTA cobre esse caso.
+- **"Autorizado diferimento MG"** só vale para cliente de MG contribuinte (industrializador); marcado para cliente de fora de MG ou não contribuinte é recusado como dado inconsistente.
+- **Conteúdo importado** (4%) só vale para venda interestadual; dentro de MG vale a alíquota interna do NCM.
+- **DIFAL** nunca é negativo: alíquota interna menor que a interestadual dá DIFAL zero. O cenário D sempre mostra o aviso "DIFAL na base simples — validar com o fiscal".
+- **Chave "ganho do ICMS na base de PIS/COFINS"**: desligada, PIS/COFINS efetivo = 9,25% × (1 − ICMS destacado); ligada, só o ICMS recolhido sai da base: 9,25% × (1 − ICMS destacado × recolhimento). Com recolhimento 0%, ligada dá 9,25% cheio.
+
 4. **Preço cheio** (o ICMS destacado entra no divisor como se fosse pago; vira margem extra):
 
 ```latex
 P_{cheio} = \frac{C_{liq}}{1 - (ICMS + PC_{ef} + DIFAL + Com + Desp + M)}
 ```
 
-5. **Preço piso** (o ICMS não é custo, porque não é recolhido):
+5. **Preço piso** (só o ICMS efetivamente recolhido é custo; com recolhimento 0% o termo some e vale a fórmula original):
 
 ```latex
-P_{piso} = \frac{C_{liq}}{1 - (PC_{ef} + DIFAL + Com + Desp + M)}
+P_{piso} = \frac{C_{liq}}{1 - (ICMS_{recolhido} + PC_{ef} + DIFAL + Com + Desp + M)}
 ```
 
+   Se a soma do divisor chegar a 100% ou mais, não há preço possível e o cálculo dá erro explícito. Se só o divisor do preço cheio passar de 100%, o piso continua valendo e o cheio aparece como indisponível.
+
 6. **IPI** = preço × alíquota do NCM, somado por fora. A tela mostra o preço sem e com IPI.
-7. **Lucro** para qualquer preço P:
-   - Antes do IR/CS = P − C\_liq − PIS/COFINS − DIFAL − comissão − despesas (o ICMS destacado fica todo no lucro).
-   - Depois do IR/CS = lucro antes × (1 − 34%).
+7. **Lucro** para qualquer preço P (sem IPI):
+   - Antes do IR/CS = P − C\_liq − PIS/COFINS − DIFAL − comissão − despesas − ICMS recolhido (o ICMS destacado e não recolhido fica todo no lucro).
+   - Depois do IR/CS = lucro antes × (1 − 34%). **Prejuízo não gera IR/CS:** com lucro antes ≤ 0, lucro depois = lucro antes (aprovado em 24/11/2026).
 
-**Margem informada como líquida:** o sistema converte para margem antes do IR/CS dividindo por 0,66 (10% líquido vira cerca de 15,2%).
+**Margem informada como líquida:** o sistema converte para margem antes do IR/CS dividindo por (1 − IR/CS), ou seja 0,66 hoje (10% líquido vira cerca de 15,2%). Se a conversão passar de 100%, o cálculo dá erro explicando a conversão.
 
-**Modo reverso:** o usuário digita o preço-alvo e o passo 7 devolve o lucro e as margens antes e depois do IR/CS. Se o preço-alvo ficar abaixo do piso, a tela avisa em vermelho.
+**Modo reverso:** o usuário digita o preço-alvo **sem IPI** e o passo 7 devolve o lucro e as margens antes e depois do IR/CS. Se o preço-alvo ficar abaixo do piso, a tela avisa em vermelho. A comparação é feita em centavos, como aparece na tela: digitar o próprio piso exibido não gera aviso.
 
 ## Tabela fiscal editável e campos novos
 
@@ -186,6 +200,7 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 | ICMS interno de MG por NCM | do cadastro | Cenário B |
 | Alíquota interna de cada UF (para DIFAL) | por UF | Cenário D |
 | Percentual de recolhimento do ICMS na venda | 0% | Para a transição da Reforma Tributária (2029 a 2033) |
+| % de recolhimento do ICMS em MG para não contribuinte | 0% | Venda a consumidor final em MG (cenário B); pendente de confirmação do fiscal sobre a cobertura do PTA |
 | ICMS interno de MG na compra sem diferimento | 18% | Compra em MG sem PTA; só tira o ICMS da base do PIS/COFINS |
 | ICMS interestadual na compra por UF de origem | 12% ou 7% | Tabela com as 26 UFs fora de MG (compra de fora) |
 | ICMS na compra de mercadoria importada | 4% | Compra de fora com conteúdo importado |
@@ -271,7 +286,8 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 - Alíquotas internas de MG por NCM (cenário B) e a regra de DIFAL por UF (base simples ou dupla).
 - Se os custos unitários da ficha técnica já incluem o IPI da compra.
 - O IPI fora da base do PIS/COFINS e do ICMS na compra para industrialização.
-- Como o operador indica compra de mercadoria importada (ICMS 4%) no custo manual: o formulário atual não tem esse campo.
+- Se o PTA cobre venda a não contribuinte/consumidor final em MG (hoje: parâmetro de recolhimento próprio, padrão 0%, com aviso na tela).
+- DIFAL de contribuinte de outra UF comprando para uso e consumo: pela LC 190/2022, quem recolhe é o destinatário; hoje o cálculo trata como custo da ETK (cenário D).
 
 **Próximos passos (no VS Code, sobre o repositório do ETK Comissão)**
 
