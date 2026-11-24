@@ -773,11 +773,26 @@ export class ClienteOmie {
   }
 
   /**
+   * Estrutura do produto (`geral/malha` → `ConsultarEstrutura`), SOMENTE LEITURA. Devolve a
+   * resposta bruta: o formato ainda está sendo confirmado contra a API real pela rota temporária
+   * de diagnóstico da precificação (`rotas/precificacaoDiagnostico.ts`). Sem cache próprio de
+   * propósito — o diagnóstico precisa ver o dado atual.
+   */
+  async consultarEstrutura(codProduto: string): Promise<Record<string, unknown>> {
+    return this.chamar<Record<string, unknown>>('/geral/malha/', 'ConsultarEstrutura', { codProduto });
+  }
+
+  /** Dados de produção do produto (`geral/malha` → `ConsultarDadosProducao`: `nValorMOD`/`nValorGGF` por unidade), SOMENTE LEITURA, resposta bruta. */
+  async consultarDadosProducao(idProduto: number): Promise<Record<string, unknown>> {
+    return this.chamar<Record<string, unknown>>('/geral/malha/', 'ConsultarDadosProducao', { idProduto });
+  }
+
+  /**
    * A Omie não expõe consulta de estoque por produto individual — apenas a
    * listagem paginada `ListarPosEstoque`, com todos os produtos da posição
    * de estoque na data informada. Por isso a posição inteira é buscada (com
-   * paginação) e cacheada em memória por data de referência; a busca por
-   * produto é feita localmente sobre esse resultado cacheado.
+   * paginação) e cacheada por data de referência; a busca por produto é
+   * feita localmente sobre esse resultado cacheado.
    *
    * `cExibeTodos: 'S'` (nunca 'N') — confirmado contra a API real em
    * 2026-09-09: com 'N' a Omie OMITE produtos com saldo em estoque zerado da
@@ -786,10 +801,16 @@ export class ClienteOmie {
    * Isso fazia o sistema relatar "sem custo encontrado" para produtos cujo
    * custo estava, na verdade, disponível — só invisível por causa deste
    * filtro.
+   *
+   * Correção de 2026-11-24: o cache guarda a LISTA de registros (serializável em JSON), nunca o
+   * `Map` — `CachePostgres` grava com `JSON.stringify`, e um `Map` virava `{}`, quebrando
+   * toda leitura vinda do cache (`posicao.get is not a function`). A chave passou a
+   * `posicao-v2:` para nunca ler as linhas antigas gravadas como `{}`. A paginação tem teto
+   * (`MAX_PAGINAS_POSICAO_ESTOQUE`) e valida `nTotPaginas`, como as demais listagens.
    */
   private async obterPosicaoEstoque(dataReferencia: string): Promise<Map<number, Record<string, unknown>>> {
-    return this.cacheEstoque.obterOuBuscar(`posicao:${dataReferencia}`, async () => {
-      const porProduto = new Map<number, Record<string, unknown>>();
+    const registros = await this.cacheEstoque.obterOuBuscar(`posicao-v2:${dataReferencia}`, async () => {
+      const todos: Record<string, unknown>[] = [];
       const registrosPorPagina = 500;
       let pagina = 1;
       let totalDePaginas = 1;
@@ -807,17 +828,14 @@ export class ClienteOmie {
           codigo_local_estoque: 0,
         });
 
-        for (const registro of resposta.produtos ?? []) {
-          const codigo = Number(registro.nCodProd);
-          if (Number.isFinite(codigo)) porProduto.set(codigo, registro);
-        }
-
-        totalDePaginas = resposta.nTotPaginas;
+        todos.push(...(resposta.produtos ?? []));
+        totalDePaginas = validarTotalPaginasPosicaoEstoque(resposta.nTotPaginas);
         pagina += 1;
       } while (pagina <= totalDePaginas);
 
-      return porProduto;
+      return todos;
     });
+    return indexarPosicaoEstoque(registros);
   }
 
   async obterEstoqueProduto(codigoProduto: number, dataReferencia: string): Promise<EstoqueOmie> {
@@ -825,4 +843,28 @@ export class ClienteOmie {
     const registro = posicao.get(codigoProduto);
     return { listaEstoque: registro !== undefined ? [registro] : [] };
   }
+}
+
+/** Teto de páginas de `ListarPosEstoque` (500 registros cada → até 30.000 produtos). */
+export const MAX_PAGINAS_POSICAO_ESTOQUE = 60;
+
+export function validarTotalPaginasPosicaoEstoque(nTotPaginas: unknown): number {
+  if (typeof nTotPaginas !== 'number' || !Number.isSafeInteger(nTotPaginas) || nTotPaginas < 0) {
+    throw new OmieError('ListarPosEstoque devolveu nTotPaginas inválido.');
+  }
+  if (nTotPaginas > MAX_PAGINAS_POSICAO_ESTOQUE) {
+    throw new OmieError(`ListarPosEstoque tem ${nTotPaginas} páginas — acima do teto de ${MAX_PAGINAS_POSICAO_ESTOQUE}.`);
+  }
+  return nTotPaginas;
+}
+
+/** Lista (como vem do cache em JSON) → índice por `nCodProd`. Ignora registros sem código numérico. */
+export function indexarPosicaoEstoque(registros: unknown): Map<number, Record<string, unknown>> {
+  const porProduto = new Map<number, Record<string, unknown>>();
+  if (!Array.isArray(registros)) return porProduto;
+  for (const registro of registros as Record<string, unknown>[]) {
+    const codigo = Number(registro?.nCodProd);
+    if (Number.isFinite(codigo)) porProduto.set(codigo, registro);
+  }
+  return porProduto;
 }

@@ -11,6 +11,7 @@ import { criarRotaVendedores } from './rotas/vendedores.js';
 import { criarRotaCache } from './rotas/cache.js';
 import { criarRotaFretes } from './rotas/fretes.js';
 import { criarRotaSaude } from './rotas/saude.js';
+import { criarRotaPrecificacaoDiagnostico } from './rotas/precificacaoDiagnostico.js';
 import { tratadorDeErros } from './rotas/erroHttp.js';
 import { capturarCorpoBruto } from './rotas/corpoBruto.js';
 
@@ -58,6 +59,8 @@ app.use(criarRotaComissionamento(cliente));
 // passou a receber o mesmo `ClienteOmie` já usado pelas demais rotas (reaproveita
 // cache/limitador/tratamento de erro — nunca cria uma segunda infraestrutura Omie).
 app.use(criarRotaFretes(cliente));
+// TEMPORÁRIA (2026-11-24): diagnóstico da fonte de custo da precificação — só admin, só leitura. REMOVER antes de produção.
+app.use(criarRotaPrecificacaoDiagnostico(cliente));
 
 // Rota raiz: no Vercel express.static e ignorado, entao GET / nao serve index.html.
 // Este redirect resolve — a CDN do Vercel serve /index.html como arquivo estatico.
