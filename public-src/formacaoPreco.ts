@@ -5,6 +5,8 @@
  * Percentuais em pontos (9,25 = 9,25%), como na API.
  */
 import { obterUsuarioLogado } from './auth.js';
+// TEMPORÁRIO: diagnóstico do custo — remover junto com a rota antes de produção.
+import { inicializarDiagnosticoCusto } from './diagnosticoCustoTela.js';
 
 interface ParametrosGerais {
   pisCofins: number;
@@ -105,6 +107,8 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
   const tbodyHistorico = el<HTMLTableSectionElement>('precificacao-tbody-historico');
   const textoErroHistorico = el<HTMLElement>('precificacao-historico-erro');
   const botaoRecarregar = el<HTMLButtonElement>('precificacao-recarregar');
+
+  const diagnostico = inicializarDiagnosticoCusto();
 
   let ehAdmin = false;
   /** Versão lida do servidor — volta no PUT (concorrência otimista: 409 se outro admin salvou antes). */
@@ -367,6 +371,7 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
 
   return {
     ativar: () => {
+      diagnostico.ativar(obterUsuarioLogado()?.papel === 'administrador');
       // Edição não salva: não recarrega por cima (o admin pode ter só trocado de aba).
       if (sujo) return;
       void carregar();

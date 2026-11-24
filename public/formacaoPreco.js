@@ -5,6 +5,8 @@
  * Percentuais em pontos (9,25 = 9,25%), como na API.
  */
 import { obterUsuarioLogado } from './auth.js';
+// TEMPORÁRIO: diagnóstico do custo — remover junto com a rota antes de produção.
+import { inicializarDiagnosticoCusto } from './diagnosticoCustoTela.js';
 const CAMPOS_GERAIS = [
     { chave: 'pisCofins', rotulo: 'PIS/COFINS não cumulativo (%)', dica: 'Crédito na compra e débito na venda' },
     { chave: 'irCs', rotulo: 'IRPJ + CSLL sobre o lucro (%)' },
@@ -65,6 +67,7 @@ export function inicializarFormacaoPreco() {
     const tbodyHistorico = el('precificacao-tbody-historico');
     const textoErroHistorico = el('precificacao-historico-erro');
     const botaoRecarregar = el('precificacao-recarregar');
+    const diagnostico = inicializarDiagnosticoCusto();
     let ehAdmin = false;
     /** Versão lida do servidor — volta no PUT (concorrência otimista: 409 se outro admin salvou antes). */
     let versaoLida = null;
@@ -323,6 +326,7 @@ export function inicializarFormacaoPreco() {
     });
     return {
         ativar: () => {
+            diagnostico.ativar(obterUsuarioLogado()?.papel === 'administrador');
             // Edição não salva: não recarrega por cima (o admin pode ter só trocado de aba).
             if (sujo)
                 return;

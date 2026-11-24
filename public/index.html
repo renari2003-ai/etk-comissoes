@@ -1086,6 +1086,37 @@ OBSERVACOES: Entrega em horário comercial.</pre>
   </main>
 
   <main class="conteudo" id="modo-precificacao" hidden>
+    <!-- TEMPORÁRIO (2026-11-24): diagnóstico do custo — só administrador. REMOVER antes de produção, junto com a rota de diagnóstico. -->
+    <section id="precificacao-secao-diagnostico" class="painel-usuarios" hidden>
+      <h2 class="titulo-secao">Diagnóstico do custo (temporário)</h2>
+      <p class="filtro-data-legenda">
+        Compara o relatório "Imprimir Estrutura" do Omie com o que a API devolve, para descobrir de qual campo sai cada custo. Só leitura.
+      </p>
+      <form id="precificacao-form-diagnostico" class="filtros-relatorio" autocomplete="off">
+        <div class="campo-filtro">
+          <label for="precificacao-diagnostico-codigo">Código do produto</label>
+          <input id="precificacao-diagnostico-codigo" name="codigo" type="text" value="PA00000001" maxlength="60" required />
+        </div>
+        <button type="submit" id="precificacao-diagnostico-executar" class="botao-secundario">Diagnóstico do custo</button>
+        <button type="button" id="precificacao-diagnostico-copiar" class="botao-secundario" hidden>Copiar resultado</button>
+      </form>
+      <p id="precificacao-diagnostico-status" class="filtro-data-legenda" role="status"></p>
+      <p id="precificacao-diagnostico-erro" class="painel-login-erro" role="alert" hidden></p>
+      <div id="precificacao-diagnostico-resultado" class="tabela-rolagem" hidden>
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Número do relatório</th>
+              <th scope="col">Valor no relatório</th>
+              <th scope="col">Valor que veio da API</th>
+              <th scope="col">Campo de onde saiu</th>
+              <th scope="col">Bate?</th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-tbody-diagnostico"></tbody>
+        </table>
+      </div>
+    </section>
     <section class="painel-usuarios">
       <h2 class="titulo-secao">Tabela fiscal da formação de preço</h2>
       <p class="filtro-data-legenda">
