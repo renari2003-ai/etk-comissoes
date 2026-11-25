@@ -31,12 +31,20 @@ export interface ClienteOmieDiagnosticoCusto {
   consultarDadosProducao(idProduto: number): Promise<Record<string, unknown>>;
   consultarProduto(codigoProduto: number): Promise<ProdutoOmie>;
   obterEstoqueProduto(codigoProduto: number, dataReferencia: string): Promise<EstoqueOmie>;
+  /** `estoque/resumo` → `ObterEstoqueProduto` (nCMC por local e preço da última compra). Opcional. */
+  obterResumoEstoqueProduto?(idProduto: number, dia: string): Promise<Record<string, unknown>>;
 }
 
 /** Valor esperado escrito como no relatório (vírgula decimal); `null` = relatório não mostra custo unitário. */
 interface ReferenciaRelatorio {
   ggf: string;
   componentes: Record<string, string | null>;
+  /**
+   * Itens que hoje não têm custo médio, mas que no relatório antigo tinham valor TOTAL da linha (sem
+   * unitário). O unitário implícito (total ÷ quantidade) é comparado com todos os campos numéricos
+   * do Omie para descobrir de onde o relatório tirou esse custo (investigação de 2026-11-25).
+   */
+  totaisSemUnitario?: Record<string, { total: string; quantidade: string }>;
 }
 
 /** Valores lidos do relatório da Omie pelo usuário (2026-11-24). */
@@ -49,6 +57,13 @@ export const REFERENCIAS_RELATORIO: Record<string, ReferenciaRelatorio> = {
       MO00000013: '5,238053',
       MO00000037: null,
       MP00000045: null,
+    },
+    totaisSemUnitario: {
+      MO00000037: { total: '2,46', quantidade: '1' },
+      MO00000067: { total: '1,28', quantidade: '8' },
+      MP00000045: { total: '0,6908', quantidade: '0,044' },
+      MP00000042: { total: '0,41241', quantidade: '0,059' },
+      MO00000038: { total: '0,2353664', quantidade: '0,04597' },
     },
   },
 };
@@ -109,7 +124,36 @@ export interface ComponenteDiagnostico {
   percPerda: unknown;
   camposNumericosEstoque: Record<string, number> | null;
   camposNumericosProduto: Record<string, number> | null;
+  /**
+   * Só para itens SEM custo médio: todos os números do cadastro, inclusive os de objetos aninhados
+   * (caminho "a.b[0].c"), e os dados de produção do próprio item — é entre eles que se procura de
+   * onde o relatório tirou o custo.
+   */
+  camposNumericosProdutoCompletos?: Record<string, number> | null;
+  camposNumericosDadosProducaoItem?: Record<string, number> | null;
+  /** `ObterEstoqueProduto` do item (todos os locais): nCMC por local, nPrecoUltComp etc. */
+  camposNumericosResumoEstoqueItem?: Record<string, number> | null;
   erros: string[];
+}
+
+/** Um campo do Omie candidato a ser a fonte do custo de um item sem custo médio. */
+export interface CampoCandidato extends CampoQueConfere {
+  /** Diferença para o unitário implícito, em % (positiva = campo maior). */
+  diferencaPercentual: number;
+}
+
+/** Busca da origem do custo de um item que no relatório tinha valor, mas hoje não tem custo médio. */
+export interface BuscaOrigemCusto {
+  codigo: string;
+  totalRelatorio: string;
+  quantidadeRelatorio: string;
+  /** total ÷ quantidade (e, se o item tem perda, também total ÷ (quantidade × (1 + perda))). */
+  unitariosImplicitos: number[];
+  encontradoNaEstrutura: boolean;
+  /** Campos que batem com algum unitário implícito (tolerância: arredondamento do relatório ou 0,5%). */
+  confere: CampoCandidato[];
+  /** Os 3 campos positivos mais próximos (para quando nada bate exatamente). */
+  maisProximos: CampoCandidato[];
 }
 
 /** GGF por unidade de cada estrutura aberta (o produto e seus subníveis). */
@@ -142,6 +186,8 @@ export interface ResultadoDiagnosticoCusto {
   /** Teste da hipótese de 2026-11-25: o "Valor GGF" do relatório é o custo total do produto. */
   custoTotal: CustoTotalDiagnostico;
   conferencia: ConferenciaValor[] | null;
+  /** Investigação de 2026-11-25: de onde o relatório tirou o custo dos itens sem custo médio. */
+  origemCustoSemCustoMedio: BuscaOrigemCusto[];
   resumo: ResumoDiagnostico;
 }
 
@@ -197,6 +243,26 @@ export function camposNumericos(registro: Record<string, unknown> | undefined | 
   for (const [chave, valor] of Object.entries(registro)) {
     const n = paraNumero(valor);
     if (n !== null) saida[chave] = n;
+  }
+  return saida;
+}
+
+/**
+ * Todos os números de um registro, inclusive dentro de objetos e listas aninhados, com o caminho
+ * ("dadosIbpt.aliqFederal", "imagens[0].x"). Limites de profundidade e de itens por lista, para a
+ * resposta não crescer sem controle.
+ */
+export function camposNumericosAninhados(registro: unknown, prefixo = '', profundidade = 0): Record<string, number> {
+  const saida: Record<string, number> = {};
+  if (registro === null || typeof registro !== 'object' || profundidade > 4) return saida;
+  const entradas: [string, unknown][] = Array.isArray(registro)
+    ? registro.slice(0, 20).map((v, i): [string, unknown] => [`[${i}]`, v])
+    : Object.entries(registro as Record<string, unknown>).map(([k, v]): [string, unknown] => [prefixo === '' ? k : `.${k}`, v]);
+  for (const [sufixo, valor] of entradas) {
+    const caminho = `${prefixo}${sufixo}`;
+    const n = paraNumero(valor);
+    if (n !== null) saida[caminho] = n;
+    else if (valor !== null && typeof valor === 'object') Object.assign(saida, camposNumericosAninhados(valor, caminho, profundidade + 1));
   }
   return saida;
 }
@@ -311,11 +377,31 @@ export async function diagnosticarCusto(
       } catch (erro) {
         componente.erros.push(`estoque: ${mensagemDeErro(erro, 'estoque do componente')}`);
       }
+      const semCustoMedio = custoDoSistema(componente) === null;
       try {
         const produto = await cliente.consultarProduto(idProdMalha);
         componente.camposNumericosProduto = camposNumericos(produto as unknown as Record<string, unknown>);
+        if (semCustoMedio) componente.camposNumericosProdutoCompletos = camposNumericosAninhados(produto);
       } catch (erro) {
         componente.erros.push(`produto: ${mensagemDeErro(erro, 'ConsultarProduto')}`);
+      }
+      // Item sem custo médio que o relatório antigo mostrava com valor: olha também os dados de produção dele.
+      const codItem = componente.codProdMalha?.toUpperCase();
+      if (semCustoMedio && codItem !== undefined && Object.hasOwn(totaisSemUnitario(codigo), codItem)) {
+        try {
+          componente.camposNumericosDadosProducaoItem = camposNumericos(await cliente.consultarDadosProducao(idProdMalha));
+        } catch (erro) {
+          componente.camposNumericosDadosProducaoItem = null;
+          componente.erros.push(`dados de produção do item: ${mensagemDeErro(erro, 'ConsultarDadosProducao (item)')}`);
+        }
+        if (cliente.obterResumoEstoqueProduto !== undefined) {
+          try {
+            componente.camposNumericosResumoEstoqueItem = camposNumericosAninhados(await cliente.obterResumoEstoqueProduto(idProdMalha, dataReferenciaEstoque));
+          } catch (erro) {
+            componente.camposNumericosResumoEstoqueItem = null;
+            componente.erros.push(`resumo do estoque do item: ${mensagemDeErro(erro, 'ObterEstoqueProduto (item)')}`);
+          }
+        }
       }
 
       // Subnível: só itens que têm estrutura própria, dentro do limite de níveis, e nunca o mesmo código duas vezes (evita ciclo).
@@ -347,6 +433,7 @@ export async function diagnosticarCusto(
 
   const custoTotal = calcularCustoTotalDiagnostico(codigo, componentes, subestruturas, componentesNaoConsultados);
   const conferencia = conferir(codigo, subestruturas, componentes, custoTotal);
+  const origemCustoSemCustoMedio = buscarOrigemCustoSemCustoMedio(codigo, componentes);
   return {
     aviso: 'Rota TEMPORÁRIA de diagnóstico (somente leitura) — remover antes de produção.',
     codigo,
@@ -359,8 +446,74 @@ export async function diagnosticarCusto(
     subestruturas,
     custoTotal,
     conferencia,
-    resumo: resumirDiagnostico(codigo, componentes, componentesNaoConsultados, conferencia, custoTotal),
+    origemCustoSemCustoMedio,
+    resumo: resumirDiagnostico(codigo, componentes, componentesNaoConsultados, conferencia, custoTotal, origemCustoSemCustoMedio),
   };
+}
+
+function totaisSemUnitario(codigo: string): Record<string, { total: string; quantidade: string }> {
+  return referenciaDoRelatorio(codigo)?.totaisSemUnitario ?? {};
+}
+
+/** Tolerância relativa mínima ao procurar o campo de origem (o relatório arredonda o total). */
+const TOLERANCIA_RELATIVA_ORIGEM = 0.005;
+
+/** Códigos e ids (nCodProd, codigo_produto, idProduto, nIdProduto, codigo_local_estoque…) nunca são custo. */
+const CAMPO_IDENTIFICADOR = /^(n?cod|codigo|n?id[A-Z_]|id$)|_id$|Id$/i;
+
+/**
+ * Para cada item com valor total no relatório antigo e sem custo médio hoje: calcula o unitário
+ * implícito e procura, entre todos os números que o Omie devolve para o item (posição de estoque,
+ * cadastro completo e dados de produção), os que batem e os mais próximos.
+ */
+export function buscarOrigemCustoSemCustoMedio(codigo: string, componentes: ComponenteDiagnostico[]): BuscaOrigemCusto[] {
+  const saida: BuscaOrigemCusto[] = [];
+  for (const [cod, ref] of Object.entries(totaisSemUnitario(codigo))) {
+    const total = interpretarValorRelatorio(ref.total);
+    const qtd = interpretarValorRelatorio(ref.quantidade).valor;
+    const componente = componentes.find((c) => c.codProdMalha?.toUpperCase() === cod.toUpperCase());
+    const busca: BuscaOrigemCusto = {
+      codigo: cod,
+      totalRelatorio: ref.total,
+      quantidadeRelatorio: ref.quantidade,
+      unitariosImplicitos: [],
+      encontradoNaEstrutura: componente !== undefined,
+      confere: [],
+      maisProximos: [],
+    };
+    saida.push(busca);
+    if (!(qtd > 0) || !(total.valor > 0)) continue;
+    busca.unitariosImplicitos.push(total.valor / qtd);
+    const perda = componente === undefined ? 0 : (paraNumero(componente.percPerda) ?? 0);
+    if (perda > 0) busca.unitariosImplicitos.push(total.valor / (qtd * (1 + perda / 100)));
+    if (componente === undefined) continue;
+
+    const fontes: { origem: string; campos: Record<string, number> | null | undefined }[] = [
+      { origem: 'ListarPosEstoque', campos: componente.camposNumericosEstoque },
+      { origem: 'ConsultarProduto', campos: componente.camposNumericosProdutoCompletos ?? componente.camposNumericosProduto },
+      { origem: 'ConsultarDadosProducao (do item)', campos: componente.camposNumericosDadosProducaoItem },
+      { origem: 'ObterEstoqueProduto', campos: componente.camposNumericosResumoEstoqueItem },
+    ];
+    const candidatos: CampoCandidato[] = [];
+    for (const fonte of fontes) {
+      for (const [campo, valor] of Object.entries(fonte.campos ?? {})) {
+        if (!(valor > 0) || CAMPO_IDENTIFICADOR.test(campo.split(/[.[\]]/).filter(Boolean).at(-1) ?? '')) continue;
+        // Diferença para o unitário implícito mais próximo.
+        let melhor = Infinity;
+        for (const u of busca.unitariosImplicitos) {
+          const d = ((valor - u) / u) * 100;
+          if (Math.abs(d) < Math.abs(melhor)) melhor = d;
+        }
+        candidatos.push({ origem: fonte.origem, campo, valor, diferencaPercentual: melhor });
+      }
+    }
+    // Tolerância: o arredondamento do total no relatório ou 0,5%, o que for maior.
+    const toleranciaPercentual = Math.max(TOLERANCIA_RELATIVA_ORIGEM * 100, (total.tolerancia / total.valor) * 100);
+    candidatos.sort((a, b) => Math.abs(a.diferencaPercentual) - Math.abs(b.diferencaPercentual));
+    busca.confere = candidatos.filter((c) => Math.abs(c.diferencaPercentual) <= toleranciaPercentual);
+    busca.maisProximos = candidatos.slice(0, 3);
+  }
+  return saida;
 }
 
 /** Quantidade do item com o % de perda da estrutura: quantidade × (1 + perda/100). Valor ilegível conta como 1 / 0%. */
@@ -636,6 +789,7 @@ export function resumirDiagnostico(
   componentesNaoConsultados: number,
   conferencia: ConferenciaValor[] | null,
   custoTotal: CustoTotalDiagnostico,
+  origemCustoSemCustoMedio: BuscaOrigemCusto[] = [],
 ): ResumoDiagnostico {
   const referencia = referenciaDoRelatorio(codigo);
   const linhas: LinhaResumo[] = [];
@@ -766,6 +920,31 @@ export function resumirDiagnostico(
     pendencias.push(semCusto.length === 1 ? 'o custo manual do item sem custo' : `o custo manual dos ${semCusto.length} itens sem custo`);
   }
   if (componentesNaoConsultados > 0) pendencias.push('os itens que ficaram de fora do diagnóstico');
+
+  // ── de onde o relatório tirou o custo dos itens sem custo médio (só informa) ──
+  const descreverCampo = (c: CampoCandidato): string =>
+    `${c.origem}.${c.campo} = ${numeroBr(c.valor)} (${c.diferencaPercentual >= 0 ? '+' : ''}${c.diferencaPercentual.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%)`;
+  for (const b of origemCustoSemCustoMedio) {
+    const unit = b.unitariosImplicitos[0];
+    const cabeca = `${b.codigo}: o relatório antigo tinha R$ ${b.totalRelatorio} para a quantidade ${b.quantidadeRelatorio} (≈ R$ ${unit === undefined ? '?' : numeroBr(unit)} por unidade)`;
+    let texto: string;
+    if (!b.encontradoNaEstrutura) texto = `${cabeca}; o item não está na estrutura que o Omie devolve hoje.`;
+    else if (b.confere.length > 0) texto = `${cabeca}; bate com ${b.confere.map(descreverCampo).join(', ')}.`;
+    else if (b.maisProximos.length > 0) texto = `${cabeca}; nenhum campo do Omie bate. Mais próximos: ${b.maisProximos.map(descreverCampo).join(', ')}.`;
+    else texto = `${cabeca}; o Omie não devolve nenhum número positivo para este item.`;
+    conclusao.push({ tipo: 'info', texto: `Origem do custo — ${texto}` });
+  }
+  const encontrados = origemCustoSemCustoMedio.filter((b) => b.encontradoNaEstrutura);
+  if (encontrados.length > 0) {
+    const comuns = encontrados
+      .map((b) => new Set(b.confere.map((c) => `${c.origem}.${c.campo}`)))
+      .reduce((acc, s) => new Set([...acc].filter((x) => s.has(x))));
+    conclusao.push(
+      comuns.size > 0
+        ? { tipo: 'info', texto: `Origem do custo — ${encontrados.length === 1 ? 'o item bate' : `os ${encontrados.length} itens batem`} com o mesmo campo: ${listaBr([...comuns])}. Candidato a 2ª fonte de custo (depois do custo médio), a confirmar.` }
+        : { tipo: 'info', texto: 'Origem do custo — nenhum campo do Omie bate com todos os itens ao mesmo tempo.' },
+    );
+  }
 
   // ── perda ──
   const comPerda = componentes.filter((c) => (paraNumero(c.percPerda) ?? 0) > 0);

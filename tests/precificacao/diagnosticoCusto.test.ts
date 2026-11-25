@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { OmieError } from '../../src/omie/erros.js';
 import {
   diagnosticarCusto,
+  camposNumericosAninhados,
   interpretarValorRelatorio,
   MAX_COMPONENTES_DIAGNOSTICO,
   validarCodigoProduto,
@@ -445,5 +446,61 @@ describe('diagnóstico de custo — subníveis (kits) e resumo em linguagem simp
     // Ciclo é erro explícito na soma — nunca o custo do kit entrando como folha em silêncio.
     expect(r.custoTotal.comCustoMedioAtual).toBeNull();
     expect(r.custoTotal.erro).toMatch(/Estrutura em ciclo: o item A aparece dentro dele mesmo/);
+  });
+});
+
+describe('diagnóstico de custo — de onde o relatório tirou o custo dos itens sem custo médio (2026-11-25)', () => {
+  function clienteBusca(): ClienteOmieDiagnosticoCusto & { chamadas: string[] } {
+    const base = clienteFalso();
+    return clienteFalso({
+      chamadas: base.chamadas,
+      async consultarProduto(id) {
+        base.chamadas.push(`produto:${id}`);
+        if (id === 40) return { codigo_produto: 40, valor_unitario: 2.46, dadosIbpt: { aliqFederal: 2.4 } } as never;
+        return { codigo_produto: id, valor_unitario: 99 };
+      },
+      async obterResumoEstoqueProduto(id) {
+        base.chamadas.push(`resumoEstoque:${id}`);
+        if (id === 50) return { listaEstoque: [{ nCMC: 0, nPrecoUltComp: 15.7 }] };
+        return { listaEstoque: [{ nCMC: 0, nPrecoUltComp: 0 }] };
+      },
+    });
+  }
+
+  it('procura o unitário implícito (total ÷ quantidade) em todos os números do Omie, inclusive aninhados', async () => {
+    const r = await diagnosticarCusto(clienteBusca(), 'PA00000001', '24/11/2026');
+    const porCodigo = Object.fromEntries(r.origemCustoSemCustoMedio.map((b) => [b.codigo, b]));
+    expect(porCodigo.MO00000037!.unitariosImplicitos[0]).toBeCloseTo(2.46, 9);
+    expect(porCodigo.MO00000037!.confere.map((c) => `${c.origem}.${c.campo}`)).toEqual(['ConsultarProduto.valor_unitario']);
+    // 0,6908 ÷ 0,044 = 15,7 → bate com o preço da última compra do resumo do estoque.
+    expect(porCodigo.MP00000045!.confere.map((c) => `${c.origem}.${c.campo}`)).toEqual(['ObterEstoqueProduto.listaEstoque[0].nPrecoUltComp']);
+    // O cadastro completo (aninhado) foi lido para o item sem custo médio.
+    expect(r.componentes.find((c) => c.codProdMalha === 'MO00000037')!.camposNumericosProdutoCompletos).toMatchObject({ 'dadosIbpt.aliqFederal': 2.4 });
+    // Itens que não estão nesta estrutura de teste aparecem como não encontrados.
+    expect(porCodigo.MO00000067!.encontradoNaEstrutura).toBe(false);
+  });
+
+  it('nada bate: mostra os 3 campos mais próximos, com a diferença em %', async () => {
+    const r = await diagnosticarCusto(clienteFalso(), 'PA00000001', '24/11/2026');
+    const mo37 = r.origemCustoSemCustoMedio.find((b) => b.codigo === 'MO00000037')!;
+    expect(mo37.confere).toEqual([]);
+    // Códigos/ids (nCodProd 40, codigo_produto 40) nunca entram como candidatos.
+    expect(mo37.maisProximos.map((c) => `${c.origem}.${c.campo}`)).toEqual(['ConsultarDadosProducao (do item).nValorGGF', 'ConsultarProduto.valor_unitario']);
+    expect(r.resumo.conclusao.map((c) => c.texto)).toContainEqual(expect.stringContaining('MO00000037: o relatório antigo tinha R$ 2,46 para a quantidade 1'));
+    expect(r.resumo.conclusao.map((c) => c.texto)).toContainEqual(expect.stringContaining('nenhum campo do Omie bate. Mais próximos: ConsultarDadosProducao (do item).nValorGGF = 59,76'));
+  });
+
+  it('as consultas extras só acontecem para itens sem custo médio da lista, e são só leitura', async () => {
+    const cliente = clienteBusca();
+    await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(cliente.chamadas.filter((c) => c.startsWith('resumoEstoque:')).sort()).toEqual(['resumoEstoque:40', 'resumoEstoque:50']);
+    expect(cliente.chamadas.filter((c) => c === 'dadosProducao:20')).toEqual([]);
+    expect(cliente.chamadas.every((c) => /^(estrutura|dadosProducao|produto|estoque|resumoEstoque):/.test(c))).toBe(true);
+  });
+
+  it('achata números aninhados com caminho e limite de itens por lista', () => {
+    const r = camposNumericosAninhados({ a: 1, b: { c: '2.5', d: 'x' }, e: Array.from({ length: 30 }, (_, i) => ({ v: i })) });
+    expect(r).toMatchObject({ a: 1, 'b.c': 2.5, 'e[0].v': 0, 'e[19].v': 19 });
+    expect(r['e[20].v']).toBeUndefined();
   });
 });

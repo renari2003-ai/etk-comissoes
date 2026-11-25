@@ -59,10 +59,26 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 ### Decisões de 25/11/2026 (após o diagnóstico do PA00000001)
 
 1. **Custo base = custo médio do estoque (`nCMC`), sempre o ATUAL.** PI10000014 e MO00000013 batem com o relatório. MP00000008 (17,06 → 12,86) e MP00000002 mudaram porque o relatório é antigo, e isso não é erro.
-2. **"Valor GGF" do relatório = custo total do produto (hipótese em teste).** A hipótese é que os R$ 59,76 do relatório "Imprimir Estrutura" sejam a soma de quantidade × custo de todas as folhas, abrindo todos os kits, e não um GGF. O diagnóstico soma das duas formas (com o custo médio atual e com os valores do relatório onde estão anotados) e compara com os R$ 59,76. O resultado é registrado aqui quando conferido. Enquanto isso, o diagnóstico já chama a linha de "Custo total do produto (o relatório chama de 'Valor GGF')".
+2. **"Valor GGF" do relatório = custo total do produto (CONFIRMADO em 25/11/2026).** Os R$ 59,76 do relatório "Imprimir Estrutura" são a soma de quantidade × custo de todas as folhas, abrindo todos os kits. Não são um GGF. A soma atual dá R$ 50,72 com o custo médio de hoje e R$ 53,77 com os 5 valores unitários anotados do relatório. Os ~R$ 6,00 que faltam têm duas causas:
+   - **Itens hoje sem custo médio, que no relatório antigo tinham valor total** (≈ R$ 5,08). Os valores do relatório são da linha inteira:
+     - MO00000037: 2,46 (qtd 1, ≈ 2,46/un);
+     - MO00000067: 1,28 (qtd 8, ≈ 0,16/un);
+     - MP00000045: 0,6908 (qtd 0,044, ≈ 15,70/un);
+     - MP00000042: 0,41241 (qtd 0,059, ≈ 6,99/un);
+     - MO00000038: 0,2353664 (qtd 0,04597, ≈ 5,12/un).
+   - **Mudança de preço:** o MP00000002 caiu de 21,97 para 15,52 (≈ R$ 0,86 no produto).
+
+   Conclusão: o custo total do produto confere com o relatório do Omie. A diferença é explicada pela mudança de preço e pelos itens sem custo médio. O diagnóstico chama a linha de "Custo total do produto (o relatório chama de 'Valor GGF')".
+
+   **Origem do custo desses 5 itens (em investigação):** a documentação pública do Omie só diz que o relatório usa "o custo da data atual" (CMC) para as matérias-primas, e não cita outro campo. O `ConsultarProduto` não tem campo de custo, só `valor_unitario`, que é o preço de venda. O `estoque/resumo` → `ObterEstoqueProduto` traz `nCMC` por local e `nPrecoUltComp` (preço da última compra). Pela documentação, os dois vêm 0 quando o usuário da API não tem permissão de custo médio contábil. O diagnóstico compara o unitário implícito de cada item com todos esses números. Se um campo bater, ele pode virar a 2ª fonte de custo (depois do custo médio e antes do custo manual), com a origem mostrada na tela, **só com aprovação**. Se nenhum campo bater, os valores do relatório ficam apenas como sugestão no formulário do custo manual.
 3. **Regra de custo:** abrir os kits até as folhas e somar quantidade × (1 + perda) × custo médio de cada folha, igual ao relatório do Omie. A quantidade acumulada é o produto de quantidade × (1 + perda) de cada nível do caminho. **Nunca** se soma o custo do kit e o dos itens de dentro dele ao mesmo tempo. Kit sem estrutura entra com o custo médio do próprio kit. Estrutura em ciclo ou com mais de 10 níveis é erro explícito. Implementado em `src/precificacao/estrutura.ts`, com testes de não duplicidade.
 4. **Itens sem custo** no PA00000001 (PI00000048, MO00000038, MP00000045, MO00000067, MP00000042, MO00000037) vão para o **custo manual** (etapa 3).
 5. **Sem GGF separado.** O custo de fabricação fica dentro das "despesas fixas %" informadas na tela. O GGF saiu do cálculo do custo: não há mais aviso "GGF ausente" nem custo manual de GGF. A estrutura fica pronta para um futuro **"% de custo de fabricação"** (`calcularCusto(itens, { percentualCustoFabricacao })`), **desligado por padrão (0)**: fração sobre o custo bruto dos materiais, somada ao bruto e ao líquido, sem crédito. Quando for ligado, a base precisa ser confirmada, e o parâmetro vai para uma tabela nova (a tabela fiscal existente não recebe `ALTER`).
+
+### Decisões para a etapa 4 (25/11/2026)
+
+6. **Custo médio 0 no Omie = "sem custo" em todos os pontos** (cálculo, soma da estrutura, diagnóstico e avisos). O 0 nunca é usado como custo válido. O item vai para o custo manual, com tarja amarela.
+7. **"Manual" escolhido sem custo manual salvo = "sem custo".** Aparece a tarja amarela com o código do item e o campo para digitar. O custo nunca vira 0, e o sistema nunca volta sozinho para o custo do Omie sem avisar.
 
 ## Custo manual
 
