@@ -74,7 +74,7 @@ export type TipoFornecedor = 'INDUSTRIA_NORMAL' | 'SIMPLES_NACIONAL' | 'COMERCIO
 const TIPOS_FORNECEDOR: readonly TipoFornecedor[] = ['INDUSTRIA_NORMAL', 'SIMPLES_NACIONAL', 'COMERCIO'];
 
 export interface ParametrosIcmsCompra {
-  /** Compra em MG sem diferimento do PTA (padrão 18%). */
+  /** Compra de fornecedor de MG SEM PTA (padrão 18%). */
   icmsInternoMgCompra: number;
   /** Compra de fora de MG, de qualquer UF (12%) — os 7% só existem na VENDA de MG para N/NE/CO/ES. */
   icmsInterestadualCompra: number;
@@ -84,7 +84,11 @@ export interface ParametrosIcmsCompra {
 
 export interface OrigemCompra {
   ufFornecedor: Uf;
-  /** Só faz sentido em MG: compra para industrialização com diferimento do PTA. */
+  /**
+   * "Fornecedor de MG com PTA?" (fiscal, 25/11/2026): o ICMS da compra só é 0% (diferimento) quando
+   * o fornecedor é de MG E tem PTA. Fora disso, o ICMS é destacado e é custo. O nome do campo
+   * (`diferimentoPta`) ficou o mesmo da API e do banco.
+   */
   diferimentoPta: boolean;
   /** Só faz sentido fora de MG: mercadoria importada (ICMS 4%). */
   mercadoriaImportada: boolean;
@@ -96,7 +100,7 @@ export interface OrigemCompra {
  */
 export function aliquotaIcmsCompra(origem: OrigemCompra, parametros: ParametrosIcmsCompra): number {
   const uf = validarUf(origem.ufFornecedor, 'UF do fornecedor');
-  const diferimentoPta = exigirBooleano(origem.diferimentoPta, 'Compra com diferimento PTA');
+  const diferimentoPta = exigirBooleano(origem.diferimentoPta, 'Fornecedor de MG com PTA');
   const mercadoriaImportada = exigirBooleano(origem.mercadoriaImportada, 'Mercadoria importada');
   if (uf === 'MG') {
     if (mercadoriaImportada) {
@@ -105,7 +109,7 @@ export function aliquotaIcmsCompra(origem: OrigemCompra, parametros: ParametrosI
     return diferimentoPta ? 0 : exigirFracao(parametros.icmsInternoMgCompra, 'ICMS interno de MG na compra');
   }
   if (diferimentoPta) {
-    throw new ErroValidacao('"Diferimento PTA" só se aplica a compras de MG.');
+    throw new ErroValidacao('"Fornecedor de MG com PTA" só se aplica a fornecedor de MG.');
   }
   if (mercadoriaImportada) {
     return exigirFracao(parametros.icmsImportadoCompra, 'ICMS de mercadoria importada na compra');
@@ -246,7 +250,8 @@ export function calcularCusto(itens: ItemCusto[], opcoes: OpcoesCusto = {}): Res
   const avisos: Aviso[] = [];
   for (const item of itens) {
     const quantidade = exigirFinitoNaoNegativo(item.quantidade, `Quantidade do item ${item.codigo}`);
-    if (item.custoBrutoUnitario === null) {
+    // Custo 0 também é "sem custo" (decisão de 25/11/2026): nunca entra como custo válido em silêncio.
+    if (item.custoBrutoUnitario === null || item.custoBrutoUnitario === 0) {
       // O mesmo código em vários ramos da estrutura: um aviso só ("X itens sem custo" sem contar a mais).
       if (itensSemCusto.includes(item.codigo)) continue;
       itensSemCusto.push(item.codigo);
@@ -302,23 +307,28 @@ const CENARIOS: readonly Cenario[] = ['A', 'B', 'C', 'D'];
 export interface ClienteVenda {
   uf: Uf;
   contribuinte: boolean;
-  /** Venda para uso e consumo (mesmo de contribuinte) — gera DIFAL fora de MG. */
+  /** Venda para uso e consumo (mesmo de contribuinte) = consumidor final — gera DIFAL fora de MG. */
   usoConsumo: boolean;
-  /** Industrializador autorizado pela Delegacia Fiscal de MG (só vale para cliente de MG contribuinte). */
-  autorizadoDiferimentoMg: boolean;
+  /**
+   * "Cliente com PTA (compra para industrialização)": industrializador de MG com PTA, autorizado a
+   * comprar com diferimento. Só vale para cliente de MG contribuinte.
+   */
+  clienteComPta: boolean;
+  /** Esta venda é para industrialização? Cenário A (sem ICMS) só com venda para industrialização E cliente com PTA. */
+  vendaParaIndustrializacao: boolean;
 }
 
 export interface ParametrosVenda {
   pisCofins: number;
   /** Ligado: o ganho do ICMS (parte destacada e não recolhida) entra na base do PIS/COFINS. */
   ganhoIcmsNaBasePisCofins: boolean;
-  /** Fração do ICMS destacado que é efetivamente recolhida (0 hoje; transição da Reforma). */
+  /** Fração do ICMS destacado que é recolhida na venda a CONTRIBUINTE (PTA da ETK: 0 hoje; transição da Reforma). */
   percentualRecolhimentoIcms: number;
   /**
-   * Fração recolhida na venda a consumidor final em MG (não contribuinte ou uso e consumo, cliente
-   * não autorizado). Padrão 0 — pendente de confirmação do fiscal sobre a cobertura do PTA.
+   * Fração recolhida na venda a NÃO CONTRIBUINTE ou CONSUMIDOR FINAL (uso e consumo), em MG
+   * (cenário B) e fora de MG (cenário D). O PTA não se aplica: padrão 100% (fiscal, 25/11/2026).
    */
-  percentualRecolhimentoIcmsMgNaoContribuinte: number;
+  percentualRecolhimentoIcmsConsumidorFinal: number;
   /** Alíquota interna geral de MG na venda (cenário B), padrão 18% — vale quando o NCM não tem exceção. */
   icmsInternoMgVenda: number;
   /** ICMS interestadual de venda por UF de destino (12% ou 7%). */
@@ -347,12 +357,6 @@ export interface ResultadoCenario {
   avisos: Aviso[];
 }
 
-export const AVISO_MG_CONSUMIDOR_FINAL: Aviso = {
-  nivel: 'AZUL',
-  codigo: 'MG_CONSUMIDOR_FINAL_ICMS',
-  item: null,
-  mensagem: 'Venda a não contribuinte/consumidor final em MG: confirmar com o fiscal se o ICMS é recolhido.',
-};
 export const AVISO_DIFAL_BASE_SIMPLES: Aviso = {
   nivel: 'AZUL',
   codigo: 'DIFAL_BASE_SIMPLES',
@@ -378,32 +382,46 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
   const uf = validarUf(cliente.uf, 'UF do cliente');
   const contribuinte = exigirBooleano(cliente.contribuinte, 'Cliente contribuinte');
   const usoConsumo = exigirBooleano(cliente.usoConsumo, 'Venda para uso e consumo');
-  const autorizado = exigirBooleano(cliente.autorizadoDiferimentoMg, 'Cliente autorizado diferimento MG');
+  const autorizado = exigirBooleano(cliente.clienteComPta, 'Cliente com PTA (compra para industrialização)');
+  const industrializacao = exigirBooleano(cliente.vendaParaIndustrializacao, 'Venda para industrialização');
   const conteudoImportado = exigirBooleano(produto.conteudoImportado, 'Produto com conteúdo importado');
   const ganhoNaBase = exigirBooleano(parametros.ganhoIcmsNaBasePisCofins, 'Ganho do ICMS na base de PIS/COFINS');
   const pisCofins = exigirFracao(parametros.pisCofins, 'PIS/COFINS');
   const recolhimento = exigirFracaoAte100(parametros.percentualRecolhimentoIcms, 'Percentual de recolhimento do ICMS');
+  // Não contribuinte ou uso e consumo = consumidor final: o PTA não se aplica, o ICMS é recolhido.
+  const consumidorFinal = !contribuinte || usoConsumo;
+  const recolhimentoConsumidorFinal = exigirFracaoAte100(
+    parametros.percentualRecolhimentoIcmsConsumidorFinal,
+    '% de recolhimento do ICMS na venda a não contribuinte/consumidor final',
+  );
+  const recolhimentoDaVenda = consumidorFinal ? recolhimentoConsumidorFinal : recolhimento;
 
   if (autorizado && uf !== 'MG') {
     throw new ErroPrecificacao(
       'CLIENTE_INCONSISTENTE',
       uf,
-      `Cliente de ${uf} marcado como "autorizado diferimento MG", que só se aplica a cliente de MG. Corrija o cadastro do cliente.`,
+      `Cliente de ${uf} marcado como "cliente com PTA (compra para industrialização)", que só se aplica a cliente de MG. Corrija o cadastro do cliente.`,
     );
   }
   if (autorizado && !contribuinte) {
     throw new ErroPrecificacao(
       'CLIENTE_INCONSISTENTE',
       uf,
-      'Cliente marcado como "autorizado diferimento MG" sem ser contribuinte (a autorização é de industrializador). Corrija o cadastro do cliente.',
+      'Cliente marcado como "cliente com PTA (compra para industrialização)" sem ser contribuinte (o PTA é de industrializador). Corrija o cadastro do cliente.',
     );
+  }
+  if (industrializacao && usoConsumo) {
+    throw new ErroPrecificacao('CLIENTE_INCONSISTENTE', uf, 'A venda não pode ser ao mesmo tempo "para industrialização" e "para uso e consumo". Escolha uma.');
+  }
+  if (industrializacao && !contribuinte) {
+    throw new ErroPrecificacao('CLIENTE_INCONSISTENTE', uf, 'Venda "para industrialização" exige cliente contribuinte. Corrija a venda ou o cadastro do cliente.');
   }
 
   if (uf === 'MG') {
-    if (autorizado && !usoConsumo) {
+    if (autorizado && industrializacao) {
       return {
         cenario: 'A',
-        motivo: 'Cliente MG autorizado (diferimento) → nota sem ICMS',
+        motivo: 'Cliente MG com PTA, venda para industrialização → nota sem ICMS',
         icmsDestacado: 0,
         icmsRecolhido: 0,
         pisCofinsEfetivo: pisCofins,
@@ -415,20 +433,22 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
       produto.icmsInternoMgExcecaoNcm === null
         ? exigirFracao(parametros.icmsInternoMgVenda, 'ICMS interno geral de MG na venda')
         : exigirFracao(produto.icmsInternoMgExcecaoNcm, 'ICMS interno de MG do NCM (exceção)');
-    // Consumidor final em MG (não contribuinte ou uso e consumo): recolhimento próprio, pendente do fiscal.
-    const consumidorFinal = !contribuinte || usoConsumo;
-    const recolhimentoB = consumidorFinal
-      ? exigirFracaoAte100(parametros.percentualRecolhimentoIcmsMgNaoContribuinte, '% de recolhimento do ICMS em MG para não contribuinte')
-      : recolhimento;
-    const quem = !contribuinte ? 'não contribuinte' : usoConsumo ? 'uso e consumo' : 'não autorizado';
+    const quem = !contribuinte
+      ? 'não contribuinte'
+      : usoConsumo
+        ? 'uso e consumo'
+        : autorizado
+          ? 'com PTA, venda que não é para industrialização'
+          : 'contribuinte sem PTA';
+    const recolhe = consumidorFinal ? ` (consumidor final: ${pct(recolhimentoDaVenda)} recolhido)` : '';
     return {
       cenario: 'B',
-      motivo: `Cliente MG ${quem} → ICMS ${pct(icms)}`,
+      motivo: `Cliente MG ${quem} → ICMS ${pct(icms)}${recolhe}`,
       icmsDestacado: icms,
-      icmsRecolhido: icms * recolhimentoB,
-      pisCofinsEfetivo: pisCofinsEfetivo(pisCofins, icms, recolhimentoB, ganhoNaBase),
+      icmsRecolhido: icms * recolhimentoDaVenda,
+      pisCofinsEfetivo: pisCofinsEfetivo(pisCofins, icms, recolhimentoDaVenda, ganhoNaBase),
       difal: 0,
-      avisos: consumidorFinal ? [AVISO_MG_CONSUMIDOR_FINAL] : [],
+      avisos: [],
     };
   }
 
@@ -447,7 +467,6 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
     icms = exigirFracao(aliquota, `ICMS interestadual de venda (${uf})`);
   }
   const origemIcms = conteudoImportado ? `ICMS ${pct(icms)} (importado)` : `ICMS ${pct(icms)}`;
-  const efetivo = pisCofinsEfetivo(pisCofins, icms, recolhimento, ganhoNaBase);
 
   if (contribuinte && !usoConsumo) {
     return {
@@ -455,7 +474,7 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
       motivo: `Cliente ${uf} contribuinte → ${origemIcms}`,
       icmsDestacado: icms,
       icmsRecolhido: icms * recolhimento,
-      pisCofinsEfetivo: efetivo,
+      pisCofinsEfetivo: pisCofinsEfetivo(pisCofins, icms, recolhimento, ganhoNaBase),
       difal: 0,
       avisos: [],
     };
@@ -474,10 +493,10 @@ export function determinarCenario(cliente: ClienteVenda, produto: ProdutoVenda, 
   const quem = contribuinte ? 'contribuinte, uso e consumo' : 'não contribuinte';
   return {
     cenario: 'D',
-    motivo: `Cliente ${uf} ${quem} → ${origemIcms} + DIFAL ${pct(difal)}`,
+    motivo: `Cliente ${uf} ${quem} → ${origemIcms} (consumidor final: ${pct(recolhimentoDaVenda)} recolhido) + DIFAL ${pct(difal)}`,
     icmsDestacado: icms,
-    icmsRecolhido: icms * recolhimento,
-    pisCofinsEfetivo: efetivo,
+    icmsRecolhido: icms * recolhimentoDaVenda,
+    pisCofinsEfetivo: pisCofinsEfetivo(pisCofins, icms, recolhimentoDaVenda, ganhoNaBase),
     difal,
     avisos: [AVISO_DIFAL_BASE_SIMPLES],
   };

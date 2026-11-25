@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { arredondarDinheiro } from '../../src/calculo/arredondamento.js';
 import {
   AVISO_DIFAL_BASE_SIMPLES,
-  AVISO_MG_CONSUMIDOR_FINAL,
   aliquotaIcmsCompra,
   aliquotaIpiCompraSemNota,
   calcularCusto,
@@ -47,18 +46,21 @@ const PARAMETROS_VENDA: ParametrosVenda = {
   icmsInternoMgVenda: 0.18,
   ganhoIcmsNaBasePisCofins: false,
   percentualRecolhimentoIcms: 0,
-  percentualRecolhimentoIcmsMgNaoContribuinte: 0,
+  // 0 aqui só para isolar as fórmulas de B/D; o padrão real é 100% (ver "respostas do fiscal" abaixo).
+  percentualRecolhimentoIcmsConsumidorFinal: 0,
   icmsInterestadualVendaPorUf: { SP: 0.12, RJ: 0.12, BA: 0.07 },
   icmsImportadoVenda: 0.04,
   aliquotaInternaPorUf: { SP: 0.18, BA: 0.205, RJ: 0.1 },
 };
 const IR_CS = 0.34;
 const PRODUTO: ProdutoVenda = { icmsInternoMgExcecaoNcm: null, conteudoImportado: false };
-const CLIENTE_SP_CONTRIBUINTE: ClienteVenda = { uf: 'SP', contribuinte: true, usoConsumo: false, autorizadoDiferimentoMg: false };
-const CLIENTE_MG_AUTORIZADO: ClienteVenda = { uf: 'MG', contribuinte: true, usoConsumo: false, autorizadoDiferimentoMg: true };
-const CLIENTE_MG_NAO_AUTORIZADO: ClienteVenda = { uf: 'MG', contribuinte: true, usoConsumo: false, autorizadoDiferimentoMg: false };
-const CLIENTE_MG_NAO_CONTRIBUINTE: ClienteVenda = { uf: 'MG', contribuinte: false, usoConsumo: false, autorizadoDiferimentoMg: false };
-const CLIENTE_SP_NAO_CONTRIBUINTE: ClienteVenda = { uf: 'SP', contribuinte: false, usoConsumo: false, autorizadoDiferimentoMg: false };
+const SEM_PTA = { clienteComPta: false, vendaParaIndustrializacao: false };
+const CLIENTE_SP_CONTRIBUINTE: ClienteVenda = { uf: 'SP', contribuinte: true, usoConsumo: false, ...SEM_PTA };
+/** Cenário A: cliente de MG com PTA e venda para industrialização. */
+const CLIENTE_MG_AUTORIZADO: ClienteVenda = { uf: 'MG', contribuinte: true, usoConsumo: false, clienteComPta: true, vendaParaIndustrializacao: true };
+const CLIENTE_MG_NAO_AUTORIZADO: ClienteVenda = { uf: 'MG', contribuinte: true, usoConsumo: false, ...SEM_PTA };
+const CLIENTE_MG_NAO_CONTRIBUINTE: ClienteVenda = { uf: 'MG', contribuinte: false, usoConsumo: false, ...SEM_PTA };
+const CLIENTE_SP_NAO_CONTRIBUINTE: ClienteVenda = { uf: 'SP', contribuinte: false, usoConsumo: false, ...SEM_PTA };
 
 /** Exemplo numérico de validação da spec: C_liq 90,75; comissão 3%; despesas 10%; margem 12% antes do IR/CS. */
 const CUSTO_LIQUIDO = 90.75;
@@ -116,8 +118,16 @@ describe('Exemplo numérico de validação (tabela da spec, exatamente)', () => 
 });
 
 describe('cenários de venda', () => {
-  it('A: cliente MG autorizado — sem ICMS, PIS/COFINS cheio, sem DIFAL, sem avisos', () => {
+  it('A: cliente MG com PTA e venda para industrialização — sem ICMS, PIS/COFINS cheio, sem DIFAL, sem avisos', () => {
     expect(cenario(CLIENTE_MG_AUTORIZADO)).toMatchObject({ cenario: 'A', icmsDestacado: 0, icmsRecolhido: 0, pisCofinsEfetivo: 0.0925, difal: 0, avisos: [] });
+  });
+
+  it('A só com as DUAS condições: cliente com PTA mas venda que não é para industrialização → B (contribuinte, recolhimento geral)', () => {
+    const c = cenario({ ...CLIENTE_MG_AUTORIZADO, vendaParaIndustrializacao: false });
+    expect(c).toMatchObject({ cenario: 'B', icmsDestacado: 0.18, icmsRecolhido: 0 });
+    expect(c.motivo).toBe('Cliente MG com PTA, venda que não é para industrialização → ICMS 18%');
+    // Venda para industrialização a cliente SEM PTA também não é A.
+    expect(cenario({ ...CLIENTE_MG_NAO_AUTORIZADO, vendaParaIndustrializacao: true }).cenario).toBe('B');
   });
 
   it('B: cliente MG não autorizado — ICMS interno do NCM (18%), PIS/COFINS × (1 − ICMS)', () => {
@@ -135,17 +145,17 @@ describe('cenários de venda', () => {
     expect(r2(piso.lucro.lucroDepoisIrCs)).toBe(10.66);
   });
 
-  it('B: cliente MG não contribuinte — cenário B com aviso "confirmar com o fiscal"; padrão 0% = mesmo preço do B', () => {
+  it('B: cliente MG não contribuinte — cenário B, sem aviso (o fiscal respondeu); com recolhimento 0 = mesmo preço do B', () => {
     const c = cenario(CLIENTE_MG_NAO_CONTRIBUINTE);
     expect(c.cenario).toBe('B');
-    expect(c.motivo).toBe('Cliente MG não contribuinte → ICMS 18%');
-    expect(c.avisos).toEqual([AVISO_MG_CONSUMIDOR_FINAL]);
+    expect(c.motivo).toBe('Cliente MG não contribuinte → ICMS 18% (consumidor final: 0% recolhido)');
+    expect(c.avisos).toEqual([]);
     expect(c.icmsRecolhido).toBe(0);
     expect(r2(precos(c).piso.preco)).toBe(134.61);
   });
 
-  it('B: "% de recolhimento do ICMS em MG para não contribuinte" a 100% — o ICMS vira custo (piso = cheio)', () => {
-    const c = cenario(CLIENTE_MG_NAO_CONTRIBUINTE, { percentualRecolhimentoIcmsMgNaoContribuinte: 1 });
+  it('B: recolhimento a consumidor final a 100% (padrão do fiscal) — o ICMS vira custo (piso = cheio)', () => {
+    const c = cenario(CLIENTE_MG_NAO_CONTRIBUINTE, { percentualRecolhimentoIcmsConsumidorFinal: 1 });
     expect(c.icmsRecolhido).toBe(0.18);
     const { cheio, piso } = precos(c);
     expect(r2(piso.preco)).toBe(183.65);
@@ -156,15 +166,16 @@ describe('cenários de venda', () => {
     expect(piso.lucro.margemAntesIrCs).toBeCloseTo(0.12, 10);
   });
 
-  it('B: o parâmetro de não contribuinte não afeta contribuinte não autorizado (usa o recolhimento geral)', () => {
-    expect(cenario(CLIENTE_MG_NAO_AUTORIZADO, { percentualRecolhimentoIcmsMgNaoContribuinte: 1 }).icmsRecolhido).toBe(0);
+  it('B: o recolhimento a consumidor final não afeta contribuinte sem PTA (usa o recolhimento geral, o PTA da ETK)', () => {
+    expect(cenario(CLIENTE_MG_NAO_AUTORIZADO, { percentualRecolhimentoIcmsConsumidorFinal: 1 }).icmsRecolhido).toBe(0);
   });
 
-  it('B: contribuinte de MG comprando para uso e consumo é consumidor final (mesmo autorizado): B com aviso', () => {
-    const c = cenario({ ...CLIENTE_MG_AUTORIZADO, usoConsumo: true });
+  it('B: contribuinte de MG comprando para uso e consumo é consumidor final (mesmo com PTA): B, recolhimento de consumidor final', () => {
+    const c = cenario({ ...CLIENTE_MG_AUTORIZADO, vendaParaIndustrializacao: false, usoConsumo: true }, { percentualRecolhimentoIcmsConsumidorFinal: 1 });
     expect(c.cenario).toBe('B');
     expect(c.motivo).toContain('uso e consumo');
-    expect(c.avisos).toEqual([AVISO_MG_CONSUMIDOR_FINAL]);
+    expect(c.icmsRecolhido).toBe(0.18);
+    expect(c.avisos).toEqual([]);
   });
 
   it('B: sem exceção para o NCM vale a alíquota geral de MG (18%); com exceção, vale a do NCM', () => {
@@ -172,11 +183,16 @@ describe('cenários de venda', () => {
     expect(cenario(CLIENTE_MG_NAO_AUTORIZADO, { icmsInternoMgVenda: 0.2 }).icmsDestacado).toBe(0.2);
     const excecao = cenario(CLIENTE_MG_NAO_AUTORIZADO, {}, { icmsInternoMgExcecaoNcm: 0.12 });
     expect(excecao.icmsDestacado).toBe(0.12);
-    expect(excecao.motivo).toBe('Cliente MG não autorizado → ICMS 12%');
+    expect(excecao.motivo).toBe('Cliente MG contribuinte sem PTA → ICMS 12%');
   });
 
-  it('tarja VERMELHA "cliente inconsistente": autorizado de fora de MG ou autorizado não contribuinte', () => {
-    const foraDeMg = avisoVermelho(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, autorizadoDiferimentoMg: true }));
+  it('tarja VERMELHA "cliente inconsistente": PTA de fora de MG, PTA sem ser contribuinte, industrialização + uso e consumo', () => {
+    const conflito = avisoVermelho(() => cenario({ ...CLIENTE_MG_AUTORIZADO, usoConsumo: true }));
+    expect(conflito.codigo).toBe('CLIENTE_INCONSISTENTE');
+    expect(conflito.mensagem).toContain('ao mesmo tempo');
+    const industrializacaoSemContribuinte = avisoVermelho(() => cenario({ ...CLIENTE_SP_NAO_CONTRIBUINTE, vendaParaIndustrializacao: true }));
+    expect(industrializacaoSemContribuinte.mensagem).toContain('exige cliente contribuinte');
+    const foraDeMg = avisoVermelho(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, clienteComPta: true }));
     expect(foraDeMg).toMatchObject({ codigo: 'CLIENTE_INCONSISTENTE', item: 'SP' });
     expect(foraDeMg.mensagem).toMatch(/só se aplica a cliente de MG.*Corrija o cadastro do cliente/);
     const naoContribuinte = avisoVermelho(() => cenario({ ...CLIENTE_MG_AUTORIZADO, contribuinte: false }));
@@ -237,6 +253,21 @@ describe('cenários de venda', () => {
     expect(r2(cheio!.lucro.lucroAntesIrCs)).toBe(37.57);
     expect(r2(piso.preco)).toBe(171.56);
     expect(r2(piso.lucro.lucroAntesIrCs)).toBe(20.59);
+  });
+
+  it('D (respostas do fiscal): não contribuinte de SP com recolhimento 100% — ICMS 12% recolhido + DIFAL 6%: piso = cheio', () => {
+    const c = cenario(CLIENTE_SP_NAO_CONTRIBUINTE, { percentualRecolhimentoIcmsConsumidorFinal: 1 });
+    expect(c.icmsRecolhido).toBe(0.12);
+    expect(c.motivo).toBe('Cliente SP não contribuinte → ICMS 12% (consumidor final: 100% recolhido) + DIFAL 6%');
+    const { cheio, piso } = precos(c);
+    expect(piso.preco).toBeCloseTo(cheio!.preco, 10);
+    expect(r2(piso.preco)).toBe(185.73);
+    expect(r2(piso.lucro.icmsRecolhido)).toBe(22.29);
+    expect(piso.lucro.icmsNoLucro).toBeCloseTo(0, 10);
+    // Contribuinte (cenário C) continua com o recolhimento geral (0%): o PTA da ETK vale.
+    expect(cenario(CLIENTE_SP_CONTRIBUINTE, { percentualRecolhimentoIcmsConsumidorFinal: 1 }).icmsRecolhido).toBe(0);
+    // Contribuinte comprando para uso e consumo é consumidor final: recolhe também.
+    expect(cenario({ ...CLIENTE_SP_CONTRIBUINTE, usoConsumo: true }, { percentualRecolhimentoIcmsConsumidorFinal: 1 }).icmsRecolhido).toBe(0.12);
   });
 
   it('D: alíquota interna menor que a interestadual não gera DIFAL negativo', () => {
@@ -305,7 +336,8 @@ describe('cenários de venda', () => {
 
   it('booleanos têm de ser boolean: a string "false" é recusada, nunca lida como verdadeira', () => {
     const texto = 'false' as unknown as boolean;
-    expect(() => cenario({ ...CLIENTE_MG_NAO_AUTORIZADO, autorizadoDiferimentoMg: texto })).toThrow(/autorizado/);
+    expect(() => cenario({ ...CLIENTE_MG_NAO_AUTORIZADO, clienteComPta: texto })).toThrow(/Cliente com PTA/);
+    expect(() => cenario({ ...CLIENTE_MG_NAO_AUTORIZADO, vendaParaIndustrializacao: texto })).toThrow(/industrialização/);
     expect(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, contribuinte: texto })).toThrow(/contribuinte/);
     expect(() => cenario({ ...CLIENTE_SP_CONTRIBUINTE, usoConsumo: undefined as unknown as boolean })).toThrow(/uso e consumo/);
     expect(() => cenario(CLIENTE_SP_CONTRIBUINTE, { ganhoIcmsNaBasePisCofins: texto })).toThrow(/Ganho do ICMS/);
@@ -460,9 +492,9 @@ describe('impostos na compra (créditos do custo)', () => {
   });
 
   it('combinações impossíveis e flags que não são boolean são rejeitadas', () => {
-    expect(() => aliquotaIcmsCompra({ ufFornecedor: 'SP', diferimentoPta: true, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/só se aplica a compras de MG/);
+    expect(() => aliquotaIcmsCompra({ ufFornecedor: 'SP', diferimentoPta: true, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/só se aplica a fornecedor de MG/);
     expect(() => aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: false, mercadoriaImportada: true }, PARAMETROS_COMPRA)).toThrow(/fora de MG/);
-    expect(() => aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: 'false' as unknown as boolean, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/diferimento PTA/);
+    expect(() => aliquotaIcmsCompra({ ufFornecedor: 'MG', diferimentoPta: 'false' as unknown as boolean, mercadoriaImportada: false }, PARAMETROS_COMPRA)).toThrow(/Fornecedor de MG com PTA/);
     expect(() => aliquotaIcmsCompra({ ufFornecedor: 'SP' } as never, PARAMETROS_COMPRA)).toThrow(ErroValidacao);
   });
 
@@ -557,6 +589,16 @@ describe('custo do produto (folhas da estrutura, sem GGF separado)', () => {
     expect(r.completo).toBe(true);
     expect(r.itensSemCusto).toEqual([]);
     expect(r.avisos).toEqual([]);
+  });
+
+  it('custo 0 = sem custo: tarja amarela ITEM_SEM_CUSTO e preço incompleto (nunca 0 como custo válido)', () => {
+    const r = calcularCusto([
+      { codigo: 'MP45', quantidade: 1, custoBrutoUnitario: 0, custoLiquidoUnitario: 0 },
+      { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
+    ]);
+    expect(r.itensSemCusto).toEqual(['MP45']);
+    expect(r.completo).toBe(false);
+    expect(r.avisos).toEqual([expect.objectContaining({ nivel: 'AMARELO', codigo: 'ITEM_SEM_CUSTO', item: 'MP45' })]);
   });
 
   it('nenhum aviso de GGF: produto completo sem GGF não fica incompleto', () => {

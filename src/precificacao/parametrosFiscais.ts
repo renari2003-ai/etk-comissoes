@@ -8,17 +8,25 @@
  */
 
 import { ErroValidacao } from '../validacao.js';
+import type { Aviso } from './avisos.js';
 import { UFS, type ParametrosIcmsCompra, type ParametrosVenda, type Uf } from './calculo.js';
 
 export interface ParametrosGerais {
   pisCofins: number;
   irCs: number;
   ganhoIcmsNaBasePisCofins: boolean;
+  /** Recolhimento do ICMS destacado na venda a CONTRIBUINTE (o PTA da ETK: 0 hoje). */
   percentualRecolhimentoIcms: number;
-  percentualRecolhimentoIcmsMgNaoContribuinte: number;
+  /**
+   * Recolhimento do ICMS destacado na venda a NÃO CONTRIBUINTE ou CONSUMIDOR FINAL (uso e consumo),
+   * em MG (cenário B) e fora de MG (cenário D). O PTA não se aplica: padrão 100% (fiscal, 25/11/2026).
+   * Guardado na tabela `precificacao_parametros_fiscais_extra` (a coluna antiga
+   * `recolhimento_icms_mg_nao_contribuinte` deixou de ser usada; nada de ALTER).
+   */
+  percentualRecolhimentoIcmsConsumidorFinal: number;
   /** Alíquota interna geral de MG na venda (cenário B), quando o NCM não tem exceção. */
   icmsInternoMgVenda: number;
-  /** Compra em MG sem diferimento do PTA. */
+  /** Compra de fornecedor de MG SEM PTA (com PTA, o ICMS da compra é 0%). */
   icmsInternoMgCompra: number;
   /** Entrada em MG vinda de qualquer outra UF. */
   icmsInterestadualCompra: number;
@@ -46,7 +54,14 @@ export interface TabelaFiscal {
   excecoesNcm: ExcecaoNcm[];
 }
 
+/** Status da tabela fiscal: enquanto "PROVISORIO", todo cálculo mostra a tarja azul. Só administrador muda. */
+export type StatusTabelaFiscal = 'PROVISORIO' | 'VALIDADO';
+export const STATUS_TABELA_FISCAL: readonly StatusTabelaFiscal[] = ['PROVISORIO', 'VALIDADO'];
+
 export interface TabelaFiscalComMetadados extends TabelaFiscal {
+  status: StatusTabelaFiscal;
+  statusAlteradoEm: string | null;
+  statusAlteradoPor: string | null;
   /** Controle de concorrência otimista: o PUT tem de mandar a versão que leu. */
   versao: number;
   atualizadoEm: string | null;
@@ -63,7 +78,7 @@ export const PARAMETROS_GERAIS_INICIAIS: ParametrosGerais = {
   irCs: 34,
   ganhoIcmsNaBasePisCofins: false,
   percentualRecolhimentoIcms: 0,
-  percentualRecolhimentoIcmsMgNaoContribuinte: 0,
+  percentualRecolhimentoIcmsConsumidorFinal: 100,
   icmsInternoMgVenda: 18,
   icmsInternoMgCompra: 18,
   icmsInterestadualCompra: 12,
@@ -71,11 +86,21 @@ export const PARAMETROS_GERAIS_INICIAIS: ParametrosGerais = {
   icmsImportadoCompra: 4,
 };
 
-/** Alíquotas internas das UFs começam VAZIAS (nunca um valor inventado): o administrador preenche. */
+/**
+ * Alíquotas internas iniciais de cada UF (DIFAL), em pontos — fonte: Buscador NCM, nov/2026, SEM FCP
+ * (o FCP depende do produto). Valores "a confirmar pelo fiscal": todos editáveis, e a tabela nasce
+ * com o status "Provisório". MG (18%) não entra nesta tabela: a venda interna usa `icmsInternoMgVenda`.
+ */
+export const ALIQUOTAS_INTERNAS_INICIAIS: Readonly<Record<Exclude<Uf, 'MG'>, number>> = {
+  AC: 19, AL: 20.5, AM: 20, AP: 18, BA: 20.5, CE: 20, DF: 20, ES: 17, GO: 19, MA: 23, MS: 17, MT: 17, PA: 19,
+  PB: 20, PE: 20.5, PI: 22.5, PR: 19.5, RJ: 20, RN: 20, RO: 19.5, RR: 20, RS: 17, SC: 17, SE: 19, SP: 18, TO: 20,
+};
+export const FONTE_ALIQUOTAS_INTERNAS = 'Valor inicial: Buscador NCM, nov/2026 (a confirmar pelo fiscal)';
+
 export const UFS_INICIAIS: IcmsUf[] = UFS_FORA_DE_MG.map((uf) => ({
   uf,
   icmsInterestadualVenda: UFS_VENDA_12.has(uf) ? 12 : 7,
-  aliquotaInterna: null,
+  aliquotaInterna: ALIQUOTAS_INTERNAS_INICIAIS[uf],
 }));
 
 export const MAX_EXCECOES_NCM = 1000;
@@ -126,9 +151,9 @@ export function validarParametrosGerais(valor: unknown): ParametrosGerais {
     irCs: exigirPercentual(o.irCs, 'IRPJ + CSLL'),
     ganhoIcmsNaBasePisCofins: exigirBooleano(o.ganhoIcmsNaBasePisCofins, 'Ganho do ICMS na base de PIS/COFINS'),
     percentualRecolhimentoIcms: exigirPercentual(o.percentualRecolhimentoIcms, 'Percentual de recolhimento do ICMS', true),
-    percentualRecolhimentoIcmsMgNaoContribuinte: exigirPercentual(
-      o.percentualRecolhimentoIcmsMgNaoContribuinte,
-      '% de recolhimento do ICMS em MG para não contribuinte',
+    percentualRecolhimentoIcmsConsumidorFinal: exigirPercentual(
+      o.percentualRecolhimentoIcmsConsumidorFinal,
+      '% de recolhimento do ICMS na venda a não contribuinte/consumidor final',
       true,
     ),
     icmsInternoMgVenda: exigirPercentual(o.icmsInternoMgVenda, 'ICMS interno de MG na venda'),
@@ -181,6 +206,18 @@ export function validarTabelaFiscal(valor: unknown): TabelaFiscal {
   return { gerais: validarParametrosGerais(o.gerais), ufs: validarUfs(o.ufs), excecoesNcm: validarExcecoesNcm(o.excecoesNcm) };
 }
 
+/** Corpo do PUT do status: `{ status, versao }` (só administrador). */
+export function validarAtualizacaoStatus(valor: unknown): { versao: number; status: StatusTabelaFiscal } {
+  const o = exigirObjetoComChaves(valor, ['versao', 'status'], 'Status da tabela fiscal');
+  if (typeof o.versao !== 'number' || !Number.isSafeInteger(o.versao) || o.versao < 0) {
+    throw new ErroValidacao('Versão da tabela fiscal inválida — recarregue a tela.');
+  }
+  if (typeof o.status !== 'string' || !(STATUS_TABELA_FISCAL as readonly string[]).includes(o.status)) {
+    throw new ErroValidacao('Status inválido: use PROVISORIO ou VALIDADO.');
+  }
+  return { versao: o.versao, status: o.status as StatusTabelaFiscal };
+}
+
 /** Corpo do PUT: a tabela inteira mais a `versao` lida (concorrência otimista). */
 export function validarAtualizacaoTabelaFiscal(valor: unknown): { versao: number; tabela: TabelaFiscal } {
   const o = exigirObjetoComChaves(valor, ['versao', 'gerais', 'ufs', 'excecoesNcm'], 'Tabela fiscal');
@@ -215,7 +252,7 @@ export function paraParametrosDoCalculo(tabela: TabelaFiscal): ParametrosDoCalcu
       icmsInternoMgVenda: fracao(g.icmsInternoMgVenda),
       ganhoIcmsNaBasePisCofins: g.ganhoIcmsNaBasePisCofins,
       percentualRecolhimentoIcms: fracao(g.percentualRecolhimentoIcms),
-      percentualRecolhimentoIcmsMgNaoContribuinte: fracao(g.percentualRecolhimentoIcmsMgNaoContribuinte),
+      percentualRecolhimentoIcmsConsumidorFinal: fracao(g.percentualRecolhimentoIcmsConsumidorFinal),
       icmsInterestadualVendaPorUf,
       icmsImportadoVenda: fracao(g.icmsImportadoVenda),
       aliquotaInternaPorUf,
@@ -228,6 +265,19 @@ export function paraParametrosDoCalculo(tabela: TabelaFiscal): ParametrosDoCalcu
     pisCofins: fracao(g.pisCofins),
     irCs: fracao(g.irCs),
   };
+}
+
+/** Tarja azul de todo cálculo enquanto a tabela fiscal estiver "Provisório". */
+export const AVISO_PARAMETROS_PROVISORIOS: Aviso = {
+  nivel: 'AZUL',
+  codigo: 'PARAMETROS_FISCAIS_PROVISORIOS',
+  item: null,
+  mensagem: 'Parâmetros fiscais ainda não validados pelo fiscal.',
+};
+
+/** Avisos que vêm da própria tabela fiscal (entram em todo cálculo). */
+export function avisosDaTabelaFiscal(tabela: Pick<TabelaFiscalComMetadados, 'status'>): Aviso[] {
+  return tabela.status === 'VALIDADO' ? [] : [AVISO_PARAMETROS_PROVISORIOS];
 }
 
 /** Exceção de ICMS interno de MG para o NCM (fração), ou `null` se o NCM não tiver exceção (vale a geral). */

@@ -4,8 +4,8 @@ import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { ErroSemPermissao } from '../auth/erros.js';
 import { validarCodigoComponente, validarGravacaoCustoManual, validarRemocaoCustoManual } from '../precificacao/custoManual.js';
 import { listarCustosManuais, listarHistoricoCustosManuais, removerCustoManual, salvarCustoManual } from '../precificacao/custosManuaisRepositorio.js';
-import { validarAtualizacaoTabelaFiscal } from '../precificacao/parametrosFiscais.js';
-import { atualizarTabelaFiscal, lerTabelaFiscal, listarHistorico } from '../precificacao/parametrosFiscaisRepositorio.js';
+import { validarAtualizacaoStatus, validarAtualizacaoTabelaFiscal } from '../precificacao/parametrosFiscais.js';
+import { atualizarStatusTabelaFiscal, atualizarTabelaFiscal, lerTabelaFiscal, listarHistorico } from '../precificacao/parametrosFiscaisRepositorio.js';
 import { ErroValidacao } from '../validacao.js';
 import { assincrono } from './erroHttp.js';
 
@@ -56,6 +56,19 @@ export function criarRotasPrecificacao(): Router {
       const usuario = req.usuario!;
       const { tabela, alteracoes } = await atualizarTabelaFiscal(nova, versao, { id: usuario.id, nome: usuario.nome });
       res.json({ ...tabela, alteracoes: alteracoes.length });
+    }),
+  );
+
+  // Status "Provisório / Validado pelo fiscal" (25/11/2026): só administrador muda, com histórico.
+  rotas.put(
+    '/api/precificacao/parametros-fiscais/status',
+    exigirAutenticacao,
+    exigirAdministradorTabelaFiscal,
+    assincrono(async (req, res) => {
+      const { versao, status } = validarAtualizacaoStatus(req.body);
+      const usuario = req.usuario!;
+      const { tabela, alterou } = await atualizarStatusTabelaFiscal(status, versao, { id: usuario.id, nome: usuario.nome });
+      res.json({ ...tabela, alteracoes: alterou ? 1 : 0 });
     }),
   );
 

@@ -12,21 +12,34 @@ const CAMPOS_GERAIS = [
     { chave: 'pisCofins', rotulo: 'PIS/COFINS não cumulativo (%)', dica: 'Crédito na compra e débito na venda' },
     { chave: 'irCs', rotulo: 'IRPJ + CSLL sobre o lucro (%)' },
     { chave: 'icmsInternoMgVenda', rotulo: 'ICMS interno de MG na venda — geral (%)', dica: 'Cenário B, quando o NCM não tem exceção' },
-    { chave: 'icmsInternoMgCompra', rotulo: 'ICMS interno de MG na compra sem PTA (%)' },
+    { chave: 'icmsInternoMgCompra', rotulo: 'ICMS interno de MG na compra — fornecedor de MG sem PTA (%)', dica: 'Fornecedor de MG com PTA: 0% (diferimento)' },
     { chave: 'icmsInterestadualCompra', rotulo: 'ICMS interestadual na compra (%)', dica: 'Entrada em MG vinda de qualquer UF' },
     { chave: 'icmsImportadoVenda', rotulo: 'ICMS de importado na venda (%)' },
     { chave: 'icmsImportadoCompra', rotulo: 'ICMS de importado na compra (%)' },
-    { chave: 'percentualRecolhimentoIcms', rotulo: 'Recolhimento do ICMS na venda (%)', dica: 'Transição da Reforma (2029–2033)' },
     {
-        chave: 'percentualRecolhimentoIcmsMgNaoContribuinte',
-        rotulo: 'Recolhimento do ICMS em MG para não contribuinte (%)',
-        dica: 'Pendente de confirmação do fiscal sobre o PTA',
+        chave: 'percentualRecolhimentoIcms',
+        rotulo: 'Recolhimento do ICMS na venda a contribuinte (%)',
+        dica: 'PTA da ETK: 0% hoje; transição da Reforma (2029–2033)',
+    },
+    {
+        chave: 'percentualRecolhimentoIcmsConsumidorFinal',
+        rotulo: 'Recolhimento do ICMS na venda a não contribuinte / consumidor final (%)',
+        dica: 'O PTA não se aplica: padrão 100% (MG e outras UFs, com DIFAL fora de MG)',
     },
 ];
 const ROTULOS_CAMPO_HISTORICO = Object.fromEntries([
     ...CAMPOS_GERAIS.map((c) => [`gerais.${c.chave}`, c.rotulo]),
     ['gerais.ganhoIcmsNaBasePisCofins', 'Ganho do ICMS na base de PIS/COFINS'],
+    ['gerais.percentualRecolhimentoIcmsMgNaoContribuinte', 'Recolhimento do ICMS em MG para não contribuinte (campo antigo)'],
+    ['status', 'Status da tabela fiscal'],
 ]);
+const NOME_STATUS = { PROVISORIO: 'Provisório', VALIDADO: 'Validado pelo fiscal' };
+/** No histórico, o status aparece por extenso ("Validado pelo fiscal"), nunca o código cru. */
+function valorHistorico(campo, valor) {
+    if (valor === null || campo !== 'status')
+        return valor;
+    return NOME_STATUS[valor] ?? valor;
+}
 function el(id) {
     const elemento = document.getElementById(id);
     if (elemento === null)
@@ -68,6 +81,11 @@ export function inicializarFormacaoPreco() {
     const tbodyHistorico = el('precificacao-tbody-historico');
     const textoErroHistorico = el('precificacao-historico-erro');
     const botaoRecarregar = el('precificacao-recarregar');
+    const textoStatus = el('precificacao-status-fiscal-texto');
+    const textoStatusQuem = el('precificacao-status-fiscal-quem');
+    const botaoStatus = el('precificacao-status-fiscal-botao');
+    const tarjaStatus = el('precificacao-status-fiscal-tarja');
+    let statusAtual = 'PROVISORIO';
     const diagnostico = inicializarDiagnosticoCusto();
     const custosManuais = inicializarCustosManuais();
     let ehAdmin = false;
@@ -183,6 +201,16 @@ export function inicializarFormacaoPreco() {
                 : `Última alteração: ${new Date(tabela.atualizadoEm).toLocaleString('pt-BR')} por ${tabela.atualizadoPor ?? '—'}.`;
         botaoSalvar.hidden = !ehAdmin;
         botaoAdicionarNcm.hidden = !ehAdmin;
+        renderizarStatus(tabela);
+    }
+    function renderizarStatus(tabela) {
+        statusAtual = tabela.status;
+        textoStatus.textContent = NOME_STATUS[tabela.status] ?? tabela.status;
+        textoStatusQuem.textContent =
+            tabela.statusAlteradoEm === null ? '' : ` — desde ${new Date(tabela.statusAlteradoEm).toLocaleString('pt-BR')}, por ${tabela.statusAlteradoPor ?? '—'}`;
+        tarjaStatus.hidden = tabela.status === 'VALIDADO';
+        botaoStatus.hidden = !ehAdmin;
+        botaoStatus.textContent = tabela.status === 'VALIDADO' ? 'Voltar para "Provisório"' : 'Marcar como "Validado pelo fiscal"';
     }
     /** Número do campo; vazio → `null` (só onde a API aceita). Entrada que o navegador não entende nunca vira "vazio": ver `camposInvalidos`. */
     function lerNumero(input) {
@@ -248,7 +276,7 @@ export function inicializarFormacaoPreco() {
         }
         for (const r of registros) {
             const tr = document.createElement('tr');
-            for (const texto of [new Date(r.alteradoEm).toLocaleString('pt-BR'), r.usuarioNome, rotuloCampoHistorico(r.campo), r.valorAnterior ?? '—', r.valorNovo ?? '— (removido)']) {
+            for (const texto of [new Date(r.alteradoEm).toLocaleString('pt-BR'), r.usuarioNome, rotuloCampoHistorico(r.campo), valorHistorico(r.campo, r.valorAnterior) ?? '—', valorHistorico(r.campo, r.valorNovo) ?? '— (removido)']) {
                 const td = document.createElement('td');
                 td.textContent = texto;
                 tr.append(td);
@@ -287,6 +315,50 @@ export function inicializarFormacaoPreco() {
     });
     botaoRecarregar.addEventListener('click', () => {
         void carregar();
+    });
+    botaoStatus.addEventListener('click', () => {
+        if (!ehAdmin)
+            return;
+        if (sujo) {
+            mostrarErro('Salve (ou recarregue) as alterações da tabela antes de mudar o status.');
+            return;
+        }
+        if (versaoLida === null) {
+            mostrarErro('A tabela fiscal não foi carregada. Recarregue a tela antes de mudar o status.', true);
+            return;
+        }
+        const novo = statusAtual === 'VALIDADO' ? 'PROVISORIO' : 'VALIDADO';
+        const pergunta = novo === 'VALIDADO'
+            ? 'Confirmar que o fiscal validou TODOS os parâmetros desta tabela? A tarja azul sai de todos os cálculos. (Qualquer edição posterior volta a tabela para "Provisório".)'
+            : 'Voltar a tabela para "Provisório"? Todos os cálculos voltam a mostrar a tarja azul.';
+        if (!window.confirm(pergunta))
+            return;
+        void (async () => {
+            mostrarErro(null);
+            textoOk.hidden = true;
+            botaoStatus.disabled = true;
+            try {
+                const resposta = await fetch('/api/precificacao/parametros-fiscais/status', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ versao: versaoLida, status: novo }),
+                });
+                if (!resposta.ok) {
+                    mostrarErro(await lerMensagemDeErro(resposta), resposta.status === 409);
+                    return;
+                }
+                renderizar((await resposta.json()));
+                textoOk.textContent = `Status alterado para "${NOME_STATUS[novo]}".`;
+                textoOk.hidden = false;
+                await carregarHistorico();
+            }
+            catch {
+                mostrarErro('Falha de rede ao mudar o status. Tente de novo.');
+            }
+            finally {
+                botaoStatus.disabled = false;
+            }
+        })();
     });
     form.addEventListener('submit', (evento) => {
         evento.preventDefault();

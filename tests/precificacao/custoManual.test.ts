@@ -53,7 +53,7 @@ describe('validação estrita do custo manual (PUT)', () => {
   });
 
   it('PTA só em MG; importada só fora de MG (combinação incoerente é recusada, nunca ignorada)', () => {
-    expect(() => validarGravacaoCustoManual('MP1', corpo({ ufFornecedor: 'SP', diferimentoPta: true }))).toThrow(/só se aplica a compras de MG/);
+    expect(() => validarGravacaoCustoManual('MP1', corpo({ ufFornecedor: 'SP', diferimentoPta: true }))).toThrow(/"Fornecedor de MG com PTA" só se aplica a fornecedor de MG/);
     expect(() => validarGravacaoCustoManual('MP1', corpo({ ufFornecedor: 'MG', diferimentoPta: false, mercadoriaImportada: true }))).toThrow(/fora de MG/);
     expect(validarGravacaoCustoManual('MP1', corpo({ ufFornecedor: 'SP', diferimentoPta: false, mercadoriaImportada: true })).custo.mercadoriaImportada).toBe(true);
   });
@@ -167,6 +167,24 @@ describe('prioridade do custo: manual da simulação > manual salvo > Omie > sem
     const r = resolverCustoItem({ codigo: 'MP1', custoOmie: 12.86, manualSalvo: manual({ codigo: 'MP1', valorNota: null, ufFornecedor: 'SP', diferimentoPta: false }), manualSimulacao: null });
     expect(r).toMatchObject({ origem: 'OMIE', valorUnitario: 12.86, conflito: null });
     expect(r.dadosFiscais!.ufFornecedor).toBe('SP');
+  });
+
+  it('escolha "MANUAL" sem custo manual salvo = SEM CUSTO com tarja amarela; nunca 0 e nunca volta sozinho ao Omie', () => {
+    const r = resolverCustoItem({ codigo: 'MP00000045', custoOmie: 4, manualSalvo: null, manualSimulacao: null, escolhaConflito: 'MANUAL' });
+    expect(r).toMatchObject({ origem: 'SEM_CUSTO', valorUnitario: null, conflito: null });
+    expect(r.avisos).toEqual([
+      expect.objectContaining({ nivel: 'AMARELO', codigo: 'ITEM_SEM_CUSTO', item: 'MP00000045', mensagem: expect.stringContaining('Digite o custo do item MP00000045') }),
+    ]);
+    expect(r.avisos[0]!.mensagem).toContain('NÃO foi usado');
+    // Registro só com dados fiscais (valor vazio) também não é custo manual.
+    const soFiscal = resolverCustoItem({ codigo: 'MP00000045', custoOmie: 4, manualSalvo: manual({ valorNota: null }), manualSimulacao: null, escolhaConflito: 'MANUAL' });
+    expect(soFiscal.origem).toBe('SEM_CUSTO');
+    // Sem custo no Omie também: sem custo, nunca 0.
+    expect(resolverCustoItem({ codigo: 'MP1', custoOmie: null, manualSalvo: null, manualSimulacao: null, escolhaConflito: 'MANUAL' }).valorUnitario).toBeNull();
+  });
+
+  it('custo médio 0 no Omie = sem custo', () => {
+    expect(resolverCustoItem({ codigo: 'MP1', custoOmie: 0, manualSalvo: null, manualSimulacao: null }).origem).toBe('SEM_CUSTO');
   });
 
   it('erros explícitos: manual de outro item, custo do Omie inválido, escolha "OMIE" sem custo no Omie', () => {

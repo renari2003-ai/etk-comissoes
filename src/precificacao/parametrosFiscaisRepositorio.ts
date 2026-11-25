@@ -11,10 +11,18 @@ import {
   type ExcecaoNcm,
   type IcmsUf,
   type ParametrosGerais,
+  type StatusTabelaFiscal,
   type TabelaFiscal,
   type TabelaFiscalComMetadados,
 } from './parametrosFiscais.js';
-import { garantirEsquemaPrecificacao, nomeTabelaHistorico, nomeTabelaIcmsMgNcm, nomeTabelaIcmsUf, nomeTabelaParametrosFiscais } from './schema.js';
+import {
+  garantirEsquemaPrecificacao,
+  nomeTabelaHistorico,
+  nomeTabelaIcmsMgNcm,
+  nomeTabelaIcmsUf,
+  nomeTabelaParametrosFiscais,
+  nomeTabelaParametrosFiscaisExtra,
+} from './schema.js';
 
 /**
  * `numeric` do Postgres chega como TEXTO pelo `pg`. Conversão central, que recusa vazio, `null` e
@@ -36,7 +44,6 @@ interface LinhaParametros {
   ir_cs: string;
   ganho_icms_na_base_pis_cofins: boolean;
   recolhimento_icms: string;
-  recolhimento_icms_mg_nao_contribuinte: string;
   icms_interno_mg_venda: string;
   icms_interno_mg_compra: string;
   icms_interestadual_compra: string;
@@ -47,13 +54,23 @@ interface LinhaParametros {
   atualizado_por: string | null;
 }
 
-/** Campo da API → coluna do banco (ordem fixa, usada no UPDATE e no histórico). */
-const COLUNAS_GERAIS: ReadonlyArray<[keyof ParametrosGerais, keyof LinhaParametros]> = [
+interface LinhaExtra {
+  recolhimento_icms_consumidor_final: string;
+  status: string;
+  status_alterado_em: Date | null;
+  status_alterado_por: string | null;
+}
+
+/** Campos gerais que moram na tabela extra (25/11/2026), não na tabela de parâmetros original. */
+type CampoGeralExtra = 'percentualRecolhimentoIcmsConsumidorFinal';
+type CampoGeralOriginal = Exclude<keyof ParametrosGerais, CampoGeralExtra>;
+
+/** Campo da API → coluna da tabela de parâmetros original (ordem fixa, usada no UPDATE e no histórico). */
+const COLUNAS_GERAIS: ReadonlyArray<[CampoGeralOriginal, keyof LinhaParametros]> = [
   ['pisCofins', 'pis_cofins'],
   ['irCs', 'ir_cs'],
   ['ganhoIcmsNaBasePisCofins', 'ganho_icms_na_base_pis_cofins'],
   ['percentualRecolhimentoIcms', 'recolhimento_icms'],
-  ['percentualRecolhimentoIcmsMgNaoContribuinte', 'recolhimento_icms_mg_nao_contribuinte'],
   ['icmsInternoMgVenda', 'icms_interno_mg_venda'],
   ['icmsInternoMgCompra', 'icms_interno_mg_compra'],
   ['icmsInterestadualCompra', 'icms_interestadual_compra'],
@@ -61,12 +78,21 @@ const COLUNAS_GERAIS: ReadonlyArray<[keyof ParametrosGerais, keyof LinhaParametr
   ['icmsImportadoCompra', 'icms_importado_compra'],
 ];
 
-function linhaParaGerais(l: LinhaParametros): ParametrosGerais {
+/** Todos os campos gerais comparados no histórico, na ordem da tela. */
+const CAMPOS_GERAIS: ReadonlyArray<keyof ParametrosGerais> = [...COLUNAS_GERAIS.map(([c]) => c), 'percentualRecolhimentoIcmsConsumidorFinal'];
+
+function linhaParaGerais(l: LinhaParametros, extra: LinhaExtra): ParametrosGerais {
   const gerais = {} as Record<keyof ParametrosGerais, number | boolean>;
   for (const [campo, coluna] of COLUNAS_GERAIS) {
     gerais[campo] = campo === 'ganhoIcmsNaBasePisCofins' ? l.ganho_icms_na_base_pis_cofins : numeroDoBanco(l[coluna], coluna);
   }
+  gerais.percentualRecolhimentoIcmsConsumidorFinal = numeroDoBanco(extra.recolhimento_icms_consumidor_final, 'recolhimento_icms_consumidor_final');
   return gerais as unknown as ParametrosGerais;
+}
+
+function statusDoBanco(valor: string): StatusTabelaFiscal {
+  if (valor === 'PROVISORIO' || valor === 'VALIDADO') return valor;
+  throw new Error('Status inválido no banco (tabela fiscal da precificação).');
 }
 
 async function lerCom(executor: Pick<PoolClient, 'query'>, travar: boolean): Promise<TabelaFiscalComMetadados> {
@@ -75,6 +101,11 @@ async function lerCom(executor: Pick<PoolClient, 'query'>, travar: boolean): Pro
   );
   const linha = linhas[0];
   if (linha === undefined) throw new Error('Tabela fiscal da precificação sem a linha de parâmetros (id = 1).');
+  const { rows: linhasExtra } = await executor.query<LinhaExtra>(
+    `SELECT * FROM ${nomeTabelaParametrosFiscaisExtra()} WHERE id = 1${travar ? ' FOR UPDATE' : ''}`,
+  );
+  const extra = linhasExtra[0];
+  if (extra === undefined) throw new Error('Tabela fiscal da precificação sem a linha de parâmetros extras (id = 1).');
 
   const { rows: linhasUf } = await executor.query<{ uf: string; icms_interestadual_venda: string; aliquota_interna: string | null }>(
     `SELECT uf, icms_interestadual_venda, aliquota_interna FROM ${nomeTabelaIcmsUf()} ORDER BY uf`,
@@ -96,18 +127,36 @@ async function lerCom(executor: Pick<PoolClient, 'query'>, travar: boolean): Pro
   const excecoesNcm: ExcecaoNcm[] = linhasNcm.map((l) => ({ ncm: l.ncm.trim(), aliquota: numeroDoBanco(l.aliquota, `aliquota NCM ${l.ncm}`) }));
 
   return {
-    gerais: linhaParaGerais(linha),
+    gerais: linhaParaGerais(linha, extra),
     ufs,
     excecoesNcm,
+    status: statusDoBanco(extra.status),
+    statusAlteradoEm: extra.status_alterado_em === null ? null : extra.status_alterado_em.toISOString(),
+    statusAlteradoPor: extra.status_alterado_por,
     versao: numeroDoBanco(linha.versao, 'versao'),
     atualizadoEm: linha.atualizado_em === null ? null : linha.atualizado_em.toISOString(),
     atualizadoPor: linha.atualizado_por,
   };
 }
 
+/**
+ * Leitura num instantâneo só (REPEATABLE READ): parâmetros, status e versão vêm do mesmo momento —
+ * nunca "Validado" com a versão de antes da validação (que daria 409 sem motivo aparente).
+ */
 export async function lerTabelaFiscal(): Promise<TabelaFiscalComMetadados> {
   await garantirEsquemaPrecificacao();
-  return lerCom(obterPool(), false);
+  const cliente = await obterPool().connect();
+  try {
+    await cliente.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const tabela = await lerCom(cliente, false);
+    await cliente.query('COMMIT');
+    return tabela;
+  } catch (erro) {
+    await cliente.query('ROLLBACK').catch(() => undefined);
+    throw erro;
+  } finally {
+    cliente.release();
+  }
 }
 
 export interface Alteracao {
@@ -121,7 +170,7 @@ const texto = (v: number | boolean | null): string | null => (v === null ? null 
 /** Diferenças entre a tabela atual e a nova, campo a campo (é o que vai para o histórico). */
 export function diferencas(atual: TabelaFiscal, nova: TabelaFiscal): Alteracao[] {
   const alteracoes: Alteracao[] = [];
-  for (const [campo] of COLUNAS_GERAIS) {
+  for (const campo of CAMPOS_GERAIS) {
     if (atual.gerais[campo] !== nova.gerais[campo]) {
       alteracoes.push({ campo: `gerais.${campo}`, valorAnterior: texto(atual.gerais[campo]), valorNovo: texto(nova.gerais[campo]) });
     }
@@ -163,19 +212,26 @@ export async function atualizarTabelaFiscal(nova: TabelaFiscal, versaoLida: numb
   try {
     await cliente.query('BEGIN');
     const atual = await lerCom(cliente, true);
-    if (atual.versao !== versaoLida) {
-      const quando = atual.atualizadoEm === null ? '' : ` em ${new Date(atual.atualizadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
-      throw new ErroConflito(
-        `A tabela fiscal foi alterada por ${atual.atualizadoPor ?? 'outro usuário'}${quando} depois que você abriu a tela. Recarregue e refaça a sua alteração.`,
-      );
-    }
+    if (atual.versao !== versaoLida) throw new ErroConflito(mensagemConflito(atual));
     const alteracoes = diferencas(atual, nova);
+    // Tabela "Validada" que é editada volta sozinha para "Provisório" (decisão conservadora de
+    // 25/11/2026): um valor novo nunca foi validado pelo fiscal, então a tarja azul volta.
+    if (alteracoes.length > 0 && atual.status === 'VALIDADO') {
+      await cliente.query(
+        `UPDATE ${nomeTabelaParametrosFiscaisExtra()} SET status = 'PROVISORIO', status_alterado_em = now(), status_alterado_por = $1 WHERE id = 1`,
+        [usuario.nome],
+      );
+      alteracoes.push({ campo: CAMPO_STATUS, valorAnterior: 'VALIDADO', valorNovo: 'PROVISORIO' });
+    }
     if (alteracoes.length > 0) {
       const sets = COLUNAS_GERAIS.map(([, coluna], i) => `${coluna} = $${i + 1}`).join(', ');
       await cliente.query(
         `UPDATE ${nomeTabelaParametrosFiscais()} SET ${sets}, versao = versao + 1, atualizado_em = now(), atualizado_por = $${COLUNAS_GERAIS.length + 1} WHERE id = 1`,
         [...COLUNAS_GERAIS.map(([campo]) => nova.gerais[campo]), usuario.nome],
       );
+      await cliente.query(`UPDATE ${nomeTabelaParametrosFiscaisExtra()} SET recolhimento_icms_consumidor_final = $1 WHERE id = 1`, [
+        nova.gerais.percentualRecolhimentoIcmsConsumidorFinal,
+      ]);
       for (const u of nova.ufs) {
         await cliente.query(`UPDATE ${nomeTabelaIcmsUf()} SET icms_interestadual_venda = $1, aliquota_interna = $2 WHERE uf = $3`, [
           u.icmsInterestadualVenda,
@@ -202,6 +258,56 @@ export async function atualizarTabelaFiscal(nova: TabelaFiscal, versaoLida: numb
     const tabela = await lerCom(cliente, false);
     await cliente.query('COMMIT');
     return { tabela, alteracoes };
+  } catch (erro) {
+    await cliente.query('ROLLBACK').catch(() => undefined);
+    throw erro;
+  } finally {
+    cliente.release();
+  }
+}
+
+function mensagemConflito(atual: TabelaFiscalComMetadados): string {
+  const quando = atual.atualizadoEm === null ? '' : ` em ${new Date(atual.atualizadoEm).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
+  return `A tabela fiscal foi alterada por ${atual.atualizadoPor ?? 'outro usuário'}${quando} depois que você abriu a tela. Recarregue e refaça a sua alteração.`;
+}
+
+/** Campo do histórico usado para o status (Provisório / Validado pelo fiscal). */
+export const CAMPO_STATUS = 'status';
+
+/**
+ * Muda o status "Provisório / Validado pelo fiscal" (só administrador; a rota confere). Usa a mesma
+ * `versao` da tabela (concorrência otimista: 409 se outro admin salvou depois da leitura) e grava a
+ * mudança no histórico. Mesmo status: não grava nada.
+ */
+export async function atualizarStatusTabelaFiscal(
+  status: StatusTabelaFiscal,
+  versaoLida: number,
+  usuario: { id: string; nome: string },
+): Promise<{ tabela: TabelaFiscalComMetadados; alterou: boolean }> {
+  await garantirEsquemaPrecificacao();
+  const cliente = await obterPool().connect();
+  try {
+    await cliente.query('BEGIN');
+    const atual = await lerCom(cliente, true);
+    if (atual.versao !== versaoLida) throw new ErroConflito(mensagemConflito(atual));
+    const alterou = atual.status !== status;
+    if (alterou) {
+      await cliente.query(
+        `UPDATE ${nomeTabelaParametrosFiscaisExtra()} SET status = $1, status_alterado_em = now(), status_alterado_por = $2 WHERE id = 1`,
+        [status, usuario.nome],
+      );
+      await cliente.query(
+        `UPDATE ${nomeTabelaParametrosFiscais()} SET versao = versao + 1, atualizado_em = now(), atualizado_por = $1 WHERE id = 1`,
+        [usuario.nome],
+      );
+      await cliente.query(
+        `INSERT INTO ${nomeTabelaHistorico()} (usuario_id, usuario_nome, campo, valor_anterior, valor_novo) VALUES ($1, $2, $3, $4, $5)`,
+        [usuario.id, usuario.nome, CAMPO_STATUS, atual.status, status],
+      );
+    }
+    const tabela = await lerCom(cliente, false);
+    await cliente.query('COMMIT');
+    return { tabela, alterou };
   } catch (erro) {
     await cliente.query('ROLLBACK').catch(() => undefined);
     throw erro;

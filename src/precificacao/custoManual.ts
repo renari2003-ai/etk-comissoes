@@ -3,7 +3,7 @@
  * Spec: `docs/precificacao.md`, seção "Custo manual".
  *
  * - O custo é digitado como na nota de compra, COM impostos, junto dos dados fiscais da compra
- *   (UF do fornecedor, diferimento PTA, mercadoria importada, tipo de fornecedor e IPI %).
+ *   (UF do fornecedor, fornecedor de MG com PTA, mercadoria importada, tipo de fornecedor e IPI %).
  * - Um registro com `valorNota = null` guarda só os dados fiscais de um item ESTIMADO (tem custo no
  *   Omie, mas não tem nota de entrada) — nunca troca o custo do Omie.
  * - Prioridade: manual desta simulação > manual salvo > Omie > sem custo. Manual salvo diferente do
@@ -111,9 +111,9 @@ function validarIpiPercentual(valor: unknown): number | null {
 /** Valida os dados fiscais e as combinações (PTA só em MG; importada só fora de MG; Simples = IPI 0). */
 export function validarDadosFiscais(o: Record<string, unknown>): DadosFiscaisCompra {
   const ufFornecedor = validarUf(o.ufFornecedor, 'UF do fornecedor');
-  const diferimentoPta = exigirBooleano(o.diferimentoPta, 'Compra com diferimento PTA');
+  const diferimentoPta = exigirBooleano(o.diferimentoPta, 'Fornecedor de MG com PTA');
   const mercadoriaImportada = exigirBooleano(o.mercadoriaImportada, 'Mercadoria importada');
-  if (ufFornecedor !== 'MG' && diferimentoPta) throw new ErroValidacao('"Diferimento PTA" só se aplica a compras de MG.');
+  if (ufFornecedor !== 'MG' && diferimentoPta) throw new ErroValidacao('"Fornecedor de MG com PTA" só se aplica a fornecedor de MG.');
   if (ufFornecedor === 'MG' && mercadoriaImportada) throw new ErroValidacao('"Mercadoria importada" só se aplica a compras de fora de MG.');
   if (typeof o.tipoFornecedor !== 'string' || !(TIPOS_FORNECEDOR_VALIDOS as readonly string[]).includes(o.tipoFornecedor)) {
     throw new ErroValidacao('Tipo de fornecedor inválido (INDUSTRIA_NORMAL, SIMPLES_NACIONAL ou COMERCIO).');
@@ -280,6 +280,25 @@ export function resolverCustoItem(entrada: EntradaResolucaoCusto): CustoResolvid
     };
   }
   if (escolha === 'OMIE' && omie === null) throw new ErroValidacao(`Item ${codigo} não tem custo no Omie para escolher.`);
+  // Decisão de 25/11/2026: "manual" escolhido sem custo manual salvo = SEM CUSTO, com tarja amarela
+  // (código do item + campo para digitar). Nunca 0 e nunca volta sozinho para o custo do Omie.
+  if (escolha === 'MANUAL' && manual === null) {
+    return {
+      codigo,
+      origem: 'SEM_CUSTO',
+      valorUnitario: null,
+      dadosFiscais: fiscais(dadosFiscais),
+      conflito: null,
+      avisos: [
+        {
+          nivel: 'AMARELO',
+          codigo: 'ITEM_SEM_CUSTO',
+          item: codigo,
+          mensagem: `Item ${codigo}: foi escolhido o custo manual, mas não há custo manual salvo. Digite o custo do item ${codigo}${omie === null ? '' : ` (o custo do Omie, ${dinheiro(omie)}, NÃO foi usado)`}.`,
+        },
+      ],
+    };
+  }
   if (manual !== null) return { codigo, origem: 'MANUAL_SALVO', valorUnitario: manual, dadosFiscais: fiscais(dadosFiscais), conflito: null, avisos: [] };
   if (omie !== null) return { codigo, origem: 'OMIE', valorUnitario: omie, dadosFiscais: fiscais(dadosFiscais), conflito: null, avisos: [] };
   return { codigo, origem: 'SEM_CUSTO', valorUnitario: null, dadosFiscais: fiscais(dadosFiscais), conflito: null, avisos: [] };

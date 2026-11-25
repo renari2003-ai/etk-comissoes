@@ -10,7 +10,7 @@
  */
 
 import { executarDdlIdempotente, obterPool } from '../db.js';
-import { PARAMETROS_GERAIS_INICIAIS, UFS_INICIAIS } from './parametrosFiscais.js';
+import { ALIQUOTAS_INTERNAS_INICIAIS, FONTE_ALIQUOTAS_INTERNAS, PARAMETROS_GERAIS_INICIAIS, UFS_INICIAIS } from './parametrosFiscais.js';
 
 function nomeValidado(nome: string): string {
   if (!/^precificacao_[a-z0-9_]+$/.test(nome)) {
@@ -27,6 +27,14 @@ export function nomeTabelaIcmsUf(): string {
 }
 export function nomeTabelaIcmsMgNcm(): string {
   return nomeValidado(process.env.PRECIFICACAO_ICMS_MG_NCM_TABELA ?? 'precificacao_icms_mg_ncm');
+}
+/**
+ * Parâmetros fiscais acrescentados em 25/11/2026 (respostas do fiscal) numa tabela NOVA, porque a
+ * tabela de parâmetros já existe no banco da produção e não recebe ALTER: % de recolhimento do ICMS
+ * na venda a não contribuinte/consumidor final e o status "Provisório / Validado pelo fiscal".
+ */
+export function nomeTabelaParametrosFiscaisExtra(): string {
+  return nomeValidado(process.env.PRECIFICACAO_PARAMETROS_EXTRA_TABELA ?? 'precificacao_parametros_fiscais_extra');
 }
 export function nomeTabelaHistorico(): string {
   return nomeValidado(process.env.PRECIFICACAO_HISTORICO_TABELA ?? 'precificacao_parametros_historico');
@@ -136,6 +144,18 @@ async function criarEsquema(): Promise<void> {
   await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS ${custosHistorico}_codigo_idx ON ${custosHistorico} (codigo, alterado_em DESC)`);
   await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS ${custosHistorico}_alterado_em_idx ON ${custosHistorico} (alterado_em DESC)`);
 
+  // 25/11/2026 — parâmetros novos do fiscal (tabela nova; nada de ALTER em tabela existente).
+  const extra = nomeTabelaParametrosFiscaisExtra();
+  await executarDdlIdempotente(`
+    CREATE TABLE IF NOT EXISTS ${extra} (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      recolhimento_icms_consumidor_final NUMERIC(7,4) NOT NULL CHECK (recolhimento_icms_consumidor_final >= 0 AND recolhimento_icms_consumidor_final <= 100),
+      status TEXT NOT NULL CHECK (status IN ('PROVISORIO', 'VALIDADO')),
+      status_alterado_em TIMESTAMPTZ NULL,
+      status_alterado_por TEXT NULL
+    )
+  `);
+
   const pool = obterPool();
   const g = PARAMETROS_GERAIS_INICIAIS;
   await pool.query(
@@ -149,7 +169,8 @@ async function criarEsquema(): Promise<void> {
       g.irCs,
       g.ganhoIcmsNaBasePisCofins,
       g.percentualRecolhimentoIcms,
-      g.percentualRecolhimentoIcmsMgNaoContribuinte,
+      // Coluna antiga, sem uso desde 25/11/2026 (o recolhimento a consumidor final mora na tabela extra).
+      0,
       g.icmsInternoMgVenda,
       g.icmsInternoMgCompra,
       g.icmsInterestadualCompra,
@@ -163,4 +184,39 @@ async function criarEsquema(): Promise<void> {
      ON CONFLICT (uf) DO NOTHING`,
     [UFS_INICIAIS.map((u) => u.uf), UFS_INICIAIS.map((u) => u.icmsInterestadualVenda), UFS_INICIAIS.map((u) => u.aliquotaInterna)],
   );
+
+  // Primeira vez da tabela extra: nasce "Provisório", com 100% de recolhimento a consumidor final, e
+  // preenche as alíquotas internas que estão VAZIAS (nunca sobrescreve o que o administrador editou),
+  // com uma linha de histórico por UF dizendo a fonte. Numa transação: ou faz tudo, ou nada.
+  const cliente = await pool.connect();
+  try {
+    await cliente.query('BEGIN');
+    const { rowCount } = await cliente.query(
+      `INSERT INTO ${extra} (id, recolhimento_icms_consumidor_final, status) VALUES (1, $1, 'PROVISORIO') ON CONFLICT (id) DO NOTHING`,
+      [g.percentualRecolhimentoIcmsConsumidorFinal],
+    );
+    if (rowCount === 1) {
+      const ufsIniciais = Object.keys(ALIQUOTAS_INTERNAS_INICIAIS) as Array<keyof typeof ALIQUOTAS_INTERNAS_INICIAIS>;
+      const { rows } = await cliente.query<{ uf: string; aliquota_interna: string }>(
+        `UPDATE ${ufs} AS t SET aliquota_interna = v.aliquota
+         FROM UNNEST($1::char(2)[], $2::numeric[]) AS v(uf, aliquota)
+         WHERE t.uf = v.uf AND t.aliquota_interna IS NULL
+         RETURNING t.uf, t.aliquota_interna`,
+        [ufsIniciais, ufsIniciais.map((uf) => ALIQUOTAS_INTERNAS_INICIAIS[uf])],
+      );
+      if (rows.length > 0) {
+        await cliente.query(
+          `INSERT INTO ${historico} (usuario_id, usuario_nome, campo, valor_anterior, valor_novo)
+           SELECT 'sistema', $1, campo, NULL, valor FROM UNNEST($2::text[], $3::text[]) AS v(campo, valor)`,
+          [FONTE_ALIQUOTAS_INTERNAS, rows.map((r) => `uf.${r.uf.trim()}.aliquotaInterna`), rows.map((r) => String(Number(r.aliquota_interna)))],
+        );
+      }
+    }
+    await cliente.query('COMMIT');
+  } catch (erro) {
+    await cliente.query('ROLLBACK').catch(() => undefined);
+    throw erro;
+  } finally {
+    cliente.release();
+  }
 }

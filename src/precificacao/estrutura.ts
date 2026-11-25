@@ -109,17 +109,20 @@ export function abrirEstrutura(
 export interface TotalEstrutura {
   /** Σ quantidade no produto × custo unitário das folhas com custo. */
   total: number;
-  /** Folhas sem custo (entram com zero), sem repetir código. */
+  /** Folhas sem custo (custo `null` ou 0 — entram com zero), sem repetir código. */
   semCusto: string[];
   folhas: FolhaEstrutura[];
 }
 
-/** Custo total das folhas. Folha sem custo entra com zero e é listada em `semCusto`. */
+/**
+ * Custo total das folhas. Folha sem custo entra com zero e é listada em `semCusto`.
+ * Custo 0 também é "sem custo" (decisão de 25/11/2026: o custo médio 0 do Omie nunca é um custo válido).
+ */
 export function somarFolhas(folhas: readonly FolhaEstrutura[]): TotalEstrutura {
   let total = 0;
   const semCusto: string[] = [];
   for (const f of folhas) {
-    if (f.custoUnitario === null) {
+    if (f.custoUnitario === null || f.custoUnitario === 0) {
       if (!semCusto.includes(f.codigo)) semCusto.push(f.codigo);
       continue;
     }

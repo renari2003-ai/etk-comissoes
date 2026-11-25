@@ -10,7 +10,7 @@ Uma nova tela no app ETK Comissão: o usuário digita o código do produto, esco
 
 - Custo do produto a partir da estrutura no Omie: todos os kits abertos até as folhas, quantidade × (1 + perda) × custo médio de cada folha, sem GGF separado (ver "Decisões de 25/11/2026").
 - Limpeza do custo: retira os impostos recuperáveis (PIS/COFINS e IPI) e mantém o ICMS que é custo.
-- Preço por cenário de venda (MG autorizado, MG não autorizado, outra UF, não contribuinte com DIFAL).
+- Preço por cenário de venda (MG com PTA para industrialização, demais vendas em MG, outra UF contribuinte, não contribuinte/consumidor final com DIFAL).
 - Faixa de negociação: **preço piso** e **preço cheio**, com margem antes e depois do IR/CS.
 - Modo reverso: preço-alvo → margem real.
 - Tabela fiscal editável, sem precisar mexer no código.
@@ -30,10 +30,11 @@ Todas as regras abaixo foram confirmadas pelo Ricardo e pelo fiscal da ETK; cada
 | Regime | Lucro Real |
 | PIS/COFINS | Não cumulativo, 1,65% + 7,6% = 9,25%. Crédito na compra de insumos, débito na venda. ICMS excluído da base do débito (Tema 69 do STF) e da base do crédito (lei de 2023). |
 | IPI | Recuperável na compra (ETK é indústria). Na venda, calculado sobre o preço e somado por fora, pela alíquota do NCM no cadastro. |
-| ICMS na compra | **Sempre é custo, nunca crédito.** MG para industrialização com diferimento do PTA: 0%. MG sem diferimento: alíquota interna (padrão 18%, editável). Fora de MG: 12% de qualquer UF (4% se a mercadoria for importada). O percentual só serve para tirar o ICMS da base do crédito de PIS/COFINS (ver "Impostos na compra"). |
+| ICMS na compra | **Sempre é custo, nunca crédito.** Só é 0% (diferimento) quando o **fornecedor é de MG E tem PTA**. Fornecedor de MG sem PTA: ICMS destacado, alíquota interna (padrão 18%, editável). Fora de MG: 12% de qualquer UF (4% se a mercadoria for importada). O percentual só serve para tirar o ICMS da base do crédito de PIS/COFINS (ver "Impostos na compra"). |
 | IPI na compra | Recuperável. Sai da nota de entrada do Omie quando existe; sem nota, depende do tipo de fornecedor (ver "Impostos na compra"). |
-| ICMS na venda | Pelo regime especial, a ETK **não recolhe** o ICMS destacado: ele vira resultado. Vale para venda interestadual e para venda dentro de MG a cliente não autorizado. |
-| Cliente de MG autorizado | Cliente industrializador autorizado pela Delegacia Fiscal de MG: nota sai sem ICMS, e a ETK pode repassar como desconto. |
+| ICMS na venda a contribuinte | Pelo regime especial (PTA), a ETK **não recolhe** o ICMS destacado na venda a contribuinte: ele vira resultado. Vale para venda interestadual a contribuinte e para venda dentro de MG a contribuinte (fora do cenário A). |
+| ICMS na venda a não contribuinte / consumidor final | **O PTA não se aplica** (fiscal, 25/11/2026): o ICMS destacado é **recolhido** e vira custo, não lucro. Vale em MG (cenário B) e nas outras UFs (cenário D, junto com o DIFAL). Percentual de recolhimento editável na tabela fiscal, padrão 100%. |
+| Cliente com PTA (compra para industrialização) | Cliente industrializador de MG com PTA: na **venda para industrialização**, a nota sai sem ICMS (cenário A), e a ETK pode repassar como desconto. |
 | DIFAL | Venda para não contribuinte (ou uso e consumo) em outra UF: o DIFAL é pago ao estado de destino e **continua sendo custo**. |
 | Ganho do ICMS em IRPJ/CSLL | É receita tributável: entra no lucro e paga cerca de 34% (IRPJ 15% + adicional 10% + CSLL 9%). |
 | Ganho do ICMS em PIS/COFINS | **Não** entra na base, por decisão favorável obtida em 2025. Fica como chave liga/desliga na tabela fiscal. |
@@ -48,7 +49,7 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 | Estrutura do produto: componentes, quantidades, unidade, % de perda | Montar o custo, como no relatório "Imprimir Estrutura". Kits (tipo 03/04) têm estrutura própria e são abertos até as folhas | `geral/malha` – ConsultarEstrutura (endpoint confirmado na documentação em 24/11/2026) |
 | Custo unitário de cada folha | Custo bruto (com impostos) | A estrutura **não traz custo por item**. **Confirmado em 25/11/2026:** custo médio do estoque, `nCMC` da posição de estoque (`estoque/consulta` – ListarPosEstoque), sempre o atual |
 | Última nota de entrada de cada componente: UF do fornecedor, ICMS, IPI, PIS, COFINS | Saber se veio de dentro ou de fora de MG e quanto retirar de crédito | `produtos/recebimentonfe` – ListarRecebimentos |
-| Cliente: UF, inscrição estadual, contribuinte, campo "autorizado diferimento MG" | Escolher o cenário de venda | `geral/clientes` – ConsultarCliente |
+| Cliente: UF, inscrição estadual, contribuinte, campo "cliente com PTA (compra para industrialização)" | Escolher o cenário de venda (junto com a finalidade da venda: industrialização, revenda ou uso e consumo) | `geral/clientes` – ConsultarCliente |
 
 **Regra de fallback:** componente sem nota de entrada no Omie aparece marcado na tela como "estimado", e os créditos saem das regras de "Impostos na compra" (tipo de fornecedor, UF e cadastro do componente), nunca de um percentual médio.
 
@@ -80,6 +81,8 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 6. **Custo médio 0 no Omie = "sem custo" em todos os pontos** (cálculo, soma da estrutura, diagnóstico e avisos). O 0 nunca é usado como custo válido. O item vai para o custo manual, com tarja amarela.
 7. **"Manual" escolhido sem custo manual salvo = "sem custo".** Aparece a tarja amarela com o código do item e o campo para digitar. O custo nunca vira 0, e o sistema nunca volta sozinho para o custo do Omie sem avisar.
 
+Implementado em 25/11/2026: `somarFolhas` e `calcularCusto` tratam custo 0 como sem custo (tarja amarela `ITEM_SEM_CUSTO`), e o diagnóstico já usava só custo positivo. `resolverCustoItem` com a escolha "MANUAL" sem valor manual salvo devolve `SEM_CUSTO` com a tarja amarela, avisando que o custo do Omie não foi usado.
+
 ## Custo manual
 
 O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo item da estrutura aceita custo manual (não há GGF separado, pela decisão de 25/11/2026).
@@ -97,22 +100,22 @@ O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo
 | --- | --- |
 | Valor da nota (unitário, com impostos) | Obrigatório, maior que zero |
 | UF do fornecedor | Obrigatório; define o ICMS da compra |
-| Compra com diferimento PTA? | **Só aparece se a UF for MG**. Sim → ICMS 0%; Não → alíquota interna de MG da tabela fiscal (padrão 18%) |
+| Fornecedor de MG com PTA? | **Só aparece se a UF for MG**. Sim → ICMS 0% (diferimento); Não → ICMS destacado, alíquota interna de MG da tabela fiscal (padrão 18%), que é custo. (No banco e na API o campo continua `diferimento_pta` / `diferimentoPta`.) |
 | Mercadoria importada? | **Só aparece se a UF não for MG**. Sim → ICMS 4%; Não → 12% (entrada em MG vinda de qualquer UF) |
 | Tipo de fornecedor | Indústria normal (Lucro Real/Presumido), Simples Nacional ou comércio/distribuidor |
 | IPI % | **Indústria normal:** já preenchido com a alíquota do NCM no cadastro do componente no Omie, editável; sem NCM/IPI no cadastro, vem vazio e, se ficar vazio, o item entra pelo valor bruto, sem crédito (preço incompleto). **Simples Nacional:** travado em 0, campo desabilitado. **Comércio/distribuidor:** começa em 0, editável, com a dica "só se a nota destacar IPI (ex.: distribuidor de importado equiparado a indústria)" |
 
 Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para item estimado.
 
-**Item estimado** (tem custo no Omie, mas não tem nota de entrada): o operador informa a UF do fornecedor, o diferimento PTA ou a mercadoria importada, e o tipo de fornecedor. Esses dados ficam salvos na tabela de custos manuais, **sem trocar o custo do Omie**, para não ser preciso informar de novo a cada cálculo.
+**Item estimado** (tem custo no Omie, mas não tem nota de entrada): o operador informa a UF do fornecedor, se o fornecedor de MG tem PTA ou se a mercadoria é importada, e o tipo de fornecedor. Esses dados ficam salvos na tabela de custos manuais, **sem trocar o custo do Omie**, para não ser preciso informar de novo a cada cálculo.
 
 **Conflito com o Omie.** Se um item com custo manual salvo passar a ter custo no Omie, a tela mostra os dois valores e o operador escolhe qual usar. Até ele escolher, vale o manual (regra de prioridade).
 
 **Preço incompleto.** Se algum item continuar sem custo, o preço é calculado mesmo assim (o item entra com custo zero) e a tela mostra em destaque **"Preço incompleto: X itens sem custo"**. A simulação salva registra essa condição.
 
-**Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, o diferimento PTA, o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
+**Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, "fornecedor de MG com PTA", o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
 
-**Tabela de custos manuais.** Código do componente, valor da nota com impostos (vazio quando o registro só guarda os dados fiscais de um item estimado), UF do fornecedor, diferimento PTA (S/N, só MG), mercadoria importada (S/N, só fora de MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
+**Tabela de custos manuais.** Código do componente, valor da nota com impostos (vazio quando o registro só guarda os dados fiscais de um item estimado), UF do fornecedor, fornecedor de MG com PTA (S/N, só MG), mercadoria importada (S/N, só fora de MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
 
 **Onde fica (etapa 3):** `precificacao_custos_manuais` (um registro por código, com `versao` para concorrência otimista) e `precificacao_custos_manuais_historico` (campo a campo: data, usuário, valor anterior e valor novo, inclusive na remoção). Funções puras em `src/precificacao/custoManual.ts` (validação estrita, créditos pela regra de "Impostos na compra" e prioridade); repositório em `custosManuaisRepositorio.ts`. Quem tem a permissão `precificacao` lê, inclui, altera e remove, porque é o operador que digita o custo. A tela fica no modo "💲 Precificação" → "Custos manuais". Remover um custo manual volta a valer o Omie. Gravar em cima de uma leitura antiga responde 409.
 
@@ -124,8 +127,8 @@ Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para it
 
 | Compra | ICMS |
 | --- | --- |
-| MG, para industrialização, com diferimento do PTA | 0% |
-| MG sem diferimento | alíquota interna de MG (padrão 18%, editável na tabela fiscal) |
+| Fornecedor de MG **com PTA** (diferimento) | 0% |
+| Fornecedor de MG sem PTA | ICMS destacado: alíquota interna de MG (padrão 18%, editável na tabela fiscal) |
 | Fora de MG | 12% de qualquer UF; 4% para mercadoria importada. (Os 7% só existem na **venda** de MG para Norte, Nordeste, Centro-Oeste e ES.) |
 
 Com nota de entrada no Omie, vale o ICMS destacado na nota.
@@ -151,8 +154,8 @@ Exemplos com V = R$ 112,00 e IPI 12% (vProd = R$ 100,00, IPI = R$ 12,00):
 
 | Compra | ICMS | PIS/COFINS | Custo líquido |
 | --- | --- | --- | --- |
-| MG com diferimento PTA | R$ 0,00 | 9,25% × 100,00 = R$ 9,25 | R$ 90,75 |
-| MG sem diferimento (18%) | R$ 18,00 | 9,25% × 82,00 = R$ 7,585 | R$ 92,415 (sem arredondar no meio da conta) |
+| Fornecedor de MG com PTA | R$ 0,00 | 9,25% × 100,00 = R$ 9,25 | R$ 90,75 |
+| Fornecedor de MG sem PTA (18%) | R$ 18,00 | 9,25% × 82,00 = R$ 7,585 | R$ 92,415 (sem arredondar no meio da conta) |
 | SP, 12% | R$ 12,00 | 9,25% × 88,00 = R$ 8,14 | R$ 91,86 |
 | Fornecedor Simples, MG com PTA (IPI 0, V = R$ 100,00) | R$ 0,00 | R$ 9,25 | R$ 90,75 |
 
@@ -177,16 +180,18 @@ O preço sai em sete passos: custo líquido, cenário, divisor, preço cheio e p
 
 | Cenário | ICMS destacado | ICMS recolhido | PIS/COFINS efetivo | DIFAL |
 | --- | --- | --- | --- | --- |
-| A. MG, cliente autorizado | 0% | 0% | 9,25% | não |
-| B. MG, cliente não autorizado | alíquota interna de MG (geral 18%, ou exceção do NCM) | 0% | 9,25% × (1 − ICMS) | não |
-| C. Outra UF, contribuinte | 12%, 7% ou 4% | 0% | 9,25% × (1 − ICMS) | não |
-| D. Outra UF, não contribuinte ou uso e consumo | 12%, 7% ou 4% | 0% | 9,25% × (1 − ICMS) | sim, alíquota interna do destino − interestadual |
+| A. MG, cliente com PTA **e** venda para industrialização | 0% | 0% | 9,25% | não |
+| B. MG, demais vendas a contribuinte (sem PTA, ou com PTA mas não para industrialização) | alíquota interna de MG (geral 18%, ou exceção do NCM) | recolhimento a contribuinte (0% hoje) | 9,25% × (1 − ICMS) | não |
+| B. MG, não contribuinte ou uso e consumo (consumidor final) | alíquota interna de MG | **recolhimento a consumidor final (padrão 100%)** | 9,25% × (1 − ICMS) | não |
+| C. Outra UF, contribuinte | 12%, 7% ou 4% | recolhimento a contribuinte (0% hoje) | 9,25% × (1 − ICMS) | não |
+| D. Outra UF, não contribuinte ou uso e consumo | 12%, 7% ou 4% | **recolhimento a consumidor final (padrão 100%)** | 9,25% × (1 − ICMS) | sim, alíquota interna do destino − interestadual |
 
-Detalhes dos cenários (aprovados em 24/11/2026):
+Detalhes dos cenários (aprovados em 24/11/2026; respostas do fiscal em 25/11/2026):
 
-- **ICMS recolhido** = ICMS destacado × "percentual de recolhimento do ICMS" da tabela fiscal (0% hoje; até 100% na transição da Reforma).
-- **Cliente de MG consumidor final** (não contribuinte, ou contribuinte comprando para uso e consumo, mesmo se autorizado): cenário B, com o recolhimento dado pelo parâmetro próprio "% de recolhimento do ICMS em MG para não contribuinte" (padrão 0%) e o aviso **"Confirmar com o fiscal se o ICMS é recolhido"**, até o fiscal confirmar se o PTA cobre esse caso.
-- **"Autorizado diferimento MG"** só vale para cliente de MG contribuinte (industrializador); marcado para cliente de fora de MG ou não contribuinte é recusado como dado inconsistente.
+- **ICMS recolhido na venda a contribuinte** = ICMS destacado × "recolhimento do ICMS na venda a contribuinte" da tabela fiscal (0% hoje, pelo PTA; até 100% na transição da Reforma).
+- **ICMS recolhido na venda a não contribuinte ou consumidor final** (não contribuinte, ou contribuinte comprando para uso e consumo, mesmo com PTA) = ICMS destacado × "recolhimento do ICMS na venda a não contribuinte / consumidor final", **padrão 100%**: o PTA não se aplica, o ICMS destacado é recolhido e vira custo. Vale em MG (cenário B) e nas outras UFs (cenário D, junto com o DIFAL). Com 100%, preço piso = preço cheio. O aviso antigo "confirmar com o fiscal se o ICMS é recolhido" (`MG_CONSUMIDOR_FINAL_ICMS`) saiu: o fiscal respondeu.
+- **Cenário A** só quando as duas condições valem: **venda para industrialização E cliente com PTA**. Cliente com PTA numa venda que não é para industrialização cai no cenário B (contribuinte). A finalidade da venda (industrialização, revenda, uso e consumo) é escolhida na tela a cada cálculo; "para industrialização" e "para uso e consumo" juntos, ou "para industrialização" com cliente não contribuinte, são recusados como dado inconsistente.
+- **"Cliente com PTA (compra para industrialização)"** (antes "autorizado diferimento MG") só vale para cliente de MG contribuinte (industrializador); marcado para cliente de fora de MG ou não contribuinte é recusado como dado inconsistente.
 - **Alíquota interna de MG na venda (cenário B):** a geral (padrão 18%) da tabela fiscal; se o NCM do produto tiver exceção cadastrada, vale a exceção.
 - **Conteúdo importado** (4%) só vale para venda interestadual; dentro de MG vale a alíquota interna de MG.
 - **DIFAL** nunca é negativo: alíquota interna menor que a interestadual dá DIFAL zero. O cenário D sempre mostra o aviso "DIFAL na base simples — validar com o fiscal".
@@ -228,20 +233,28 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 | ICMS para conteúdo importado | 4% | Usa a origem do produto |
 | ICMS interno de MG na venda (geral) | 18% | Cenário B, quando o NCM não tem exceção |
 | Exceções de ICMS interno de MG por NCM | nenhuma | Cenário B; só os NCMs com alíquota diferente da geral |
-| Alíquota interna de cada UF (para DIFAL) | vazia (preenchida pelo administrador) | Cenário D; UF vazia dá tarja vermelha só no cenário D |
-| Percentual de recolhimento do ICMS na venda | 0% | Para a transição da Reforma Tributária (2029 a 2033) |
-| % de recolhimento do ICMS em MG para não contribuinte | 0% | Venda a consumidor final em MG (cenário B); pendente de confirmação do fiscal sobre a cobertura do PTA |
-| ICMS interno de MG na compra sem diferimento | 18% | Compra em MG sem PTA; só tira o ICMS da base do PIS/COFINS |
+| Alíquota interna de cada UF (para DIFAL), sem FCP | Buscador NCM, nov/2026, **a confirmar pelo fiscal**: AC 19; AL 20,5; AM 20; AP 18; BA 20,5; CE 20; DF 20; ES 17; GO 19; MA 23; MS 17; MT 17; PA 19; PB 20; PE 20,5; PI 22,5; PR 19,5; RJ 20; RN 20; RO 19,5; RR 20; RS 17; SC 17; SE 19; SP 18; TO 20 (MG 18 é o ICMS interno de MG na venda) | Cenário D; todas editáveis; UF vazia dá tarja vermelha só no cenário D. Sem FCP por enquanto (depende do produto) |
+| Recolhimento do ICMS na venda a contribuinte | 0% | PTA da ETK; para a transição da Reforma Tributária (2029 a 2033) |
+| Recolhimento do ICMS na venda a não contribuinte / consumidor final | **100%** | O PTA não se aplica (fiscal, 25/11/2026); cenários B (consumidor final em MG) e D |
+| ICMS interno de MG na compra (fornecedor de MG sem PTA) | 18% | Fornecedor de MG com PTA: 0%; só tira o ICMS da base do PIS/COFINS |
+| Status da tabela | **Provisório** | "Provisório / Validado pelo fiscal": só o administrador muda, com histórico. Enquanto "Provisório", **todo cálculo mostra a tarja azul "Parâmetros fiscais ainda não validados pelo fiscal"** |
 | ICMS interestadual na compra | 12% | Entrada em MG vinda de qualquer UF (sem tabela por UF) |
 | ICMS na compra de mercadoria importada | 4% | Compra de fora com conteúdo importado |
 | Despesas fixas padrão | último valor usado | Preenchido na hora de gerar |
 | Comissão | 1% a 4% | Escolhida na tela |
 
-**Campo novo no cadastro de cliente:** "Autorizado diferimento MG (S/N)". Pode ser um campo adicional no Omie ou uma tabela própria do app, indexada pelo código do cliente.
+**Campo novo no cadastro de cliente:** "Cliente com PTA (compra para industrialização) (S/N)" (antes "Autorizado diferimento MG"). Pode ser um campo adicional no Omie ou uma tabela própria do app, indexada pelo código do cliente.
 
 **Histórico:** toda alteração na tabela fiscal guarda data, usuário (id e nome), campo, valor anterior e valor novo (tabela `precificacao_parametros_historico`, visível só para o administrador).
 
 **Onde fica (etapa 2):** `precificacao_parametros_fiscais` (uma linha, parâmetros gerais), `precificacao_icms_uf` (26 UFs fora de MG: ICMS interestadual de venda e alíquota interna), `precificacao_icms_mg_ncm` (exceções por NCM) e o histórico. Percentuais em pontos (9,25 = 9,25%), até 4 casas. Valores iniciais entram só na primeira vez, nunca por cima de uma edição. Tela: modo "💲 Precificação" → "Tabela fiscal da formação de preço" (quem tem a permissão `precificacao` vê; só o administrador edita).
+
+**Onde fica (25/11/2026):** como a tabela de parâmetros já existe no banco da produção e não recebe `ALTER`, os parâmetros novos ficam numa tabela nova, `precificacao_parametros_fiscais_extra` (uma linha): recolhimento a não contribuinte/consumidor final e o status (com data e quem mudou). A coluna antiga `recolhimento_icms_mg_nao_contribuinte` ficou sem uso. Na primeira vez que essa tabela é criada, as alíquotas internas **vazias** das UFs são preenchidas com os valores do Buscador NCM, com uma linha de histórico por UF ("Valor inicial: Buscador NCM, nov/2026 (a confirmar pelo fiscal)"). Alíquota já editada pelo administrador nunca é trocada, e uma UF esvaziada depois de propósito não é preenchida de novo. O status muda por `PUT /api/precificacao/parametros-fiscais/status` (`{ versao, status }`, só administrador; mesma `versao` da tabela, 409 se outro admin salvou antes). A tarja azul sai de `avisosDaTabelaFiscal` e entra em todo cálculo quando a tela de cálculo for ligada (etapa 5). **Item obrigatório da etapa 5, com teste:** todo resultado de cálculo inclui os avisos da tabela fiscal.
+
+Regras do status (revisão de 25/11/2026):
+- **Qualquer edição de uma tabela "Validada" a volta sozinha para "Provisório"**, com uma linha de histórico (status VALIDADO → PROVISORIO). É a escolha conservadora, porque um valor novo nunca foi validado pelo fiscal. Salvar sem mudar nada não mexe no status.
+- O recolhimento a consumidor final nasce em 100% (resposta do fiscal) e **não aproveita** o valor da coluna antiga `recolhimento_icms_mg_nao_contribuinte` (era 0%, aguardando o fiscal).
+- Num banco novo, as alíquotas internas entram direto como valor inicial, sem linha de histórico. A linha "Valor inicial: Buscador NCM…" só aparece num banco que já existia com as alíquotas vazias.
 
 ## Avisos (tarjas)
 
@@ -254,7 +267,7 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | `PRODUTO_SEM_ESTRUTURA` | Produto sem estrutura no Omie | Cadastrar a estrutura no Omie |
 | `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA` | Cenário D com a alíquota interna da UF vazia | "Peça ao administrador para preencher a UF X na tabela fiscal" |
 | `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO` | Venda interestadual com a UF sem ICMS interestadual | "Peça ao administrador para preencher a UF X na tabela fiscal" |
-| `CLIENTE_INCONSISTENTE` | Ex.: autorizado diferimento MG de fora de MG ou não contribuinte | Corrigir o cadastro do cliente |
+| `CLIENTE_INCONSISTENTE` | Ex.: cliente com PTA de fora de MG ou não contribuinte; venda "para industrialização" e "para uso e consumo" ao mesmo tempo, ou para industrialização a não contribuinte | Corrigir o cadastro do cliente ou a finalidade da venda |
 | `OMIE_INDISPONIVEL` | Erro ou demora da Omie | "Não foi possível consultar o Omie. Tente de novo em alguns minutos" |
 | `SEM_PRECO_POSSIVEL` | Impostos + comissão + despesas + margem ≥ 100% | Reduzir a margem, a comissão ou as despesas |
 
@@ -273,12 +286,12 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | `CUSTO_ESTIMADO` | Itens com custo "estimado" (sem nota de entrada) |
 | `CUSTO_MANUAL_DIFERENTE_OMIE` | Custo manual diferente do custo do Omie (mostra os dois) |
 | `DIFAL_BASE_SIMPLES` | Cenário D: "validar com o fiscal" |
-| `MG_CONSUMIDOR_FINAL_ICMS` | Cliente de MG não contribuinte ou uso e consumo: "confirmar com o fiscal se o ICMS é recolhido" |
+| `PARAMETROS_FISCAIS_PROVISORIOS` | Tabela fiscal com status "Provisório": "Parâmetros fiscais ainda não validados pelo fiscal" (em todo cálculo) |
 | `PRECO_CHEIO_INDISPONIVEL` | Só o preço cheio passa de 100% no divisor; vale o piso |
 
 **Modo reverso:** preço-alvo abaixo do piso dá tarja **vermelha no bloco do resultado do modo reverso** (`ALVO_ABAIXO_DO_PISO`), sem bloquear o preço principal.
 
-**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `DIFAL_BASE_SIMPLES`, `MG_CONSUMIDOR_FINAL_ICMS`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Na etapa 3: `CUSTO_MANUAL_DIFERENTE_OMIE`. Os que dependem do Omie (`PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`) entram na etapa 4. `GGF_AUSENTE` foi retirado em 25/11/2026 (sem GGF separado).
+**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `DIFAL_BASE_SIMPLES`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Na etapa 3: `CUSTO_MANUAL_DIFERENTE_OMIE`. Em 25/11/2026: `PARAMETROS_FISCAIS_PROVISORIOS` entrou e `MG_CONSUMIDOR_FINAL_ICMS` saiu (o fiscal respondeu). Os que dependem do Omie (`PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`) entram na etapa 4. `GGF_AUSENTE` foi retirado em 25/11/2026 (sem GGF separado).
 
 ## Tela
 
@@ -332,7 +345,7 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 
 Rotas da tabela fiscal com o prefixo `/api/precificacao/parametros-fiscais` (para não confundir com os parâmetros fiscais do módulo de fretes).
 
-**Dados persistidos:** tabela fiscal, histórico de alterações, custos manuais e seu histórico, simulações salvas (com o custo usado em cada item) e o campo "autorizado diferimento MG". Banco: o Postgres/Supabase que o app já usa (`src/db.ts`); tabelas criadas com `CREATE TABLE IF NOT EXISTS`. **Atenção:** o Preview do Vercel usa o mesmo `DATABASE_URL` da produção — só são criadas tabelas novas da precificação, nunca alteradas ou apagadas tabelas existentes.
+**Dados persistidos:** tabela fiscal, histórico de alterações, custos manuais e seu histórico, simulações salvas (com o custo usado em cada item) e o campo "cliente com PTA (compra para industrialização)". Banco: o Postgres/Supabase que o app já usa (`src/db.ts`); tabelas criadas com `CREATE TABLE IF NOT EXISTS`. **Atenção:** o Preview do Vercel usa o mesmo `DATABASE_URL` da produção — só são criadas tabelas novas da precificação, nunca alteradas ou apagadas tabelas existentes.
 
 **Cache:** estrutura e notas de entrada em cache por algumas horas, para não estourar o limite de chamadas do Omie, com botão "atualizar custos" na tela.
 
@@ -346,7 +359,7 @@ Com custo líquido de R$ 90,75, comissão de 3%, despesas de 10% e margem de 12%
 | --- | --- | --- | --- | --- |
 | C, cheio (ICMS 12%) | 0,5486 | R$ 165,42 | R$ 39,70 (24,0%) | R$ 26,20 (15,8%) |
 | C, piso (ICMS 12%) | 0,6686 | R$ 135,73 | R$ 16,29 (12,0%) | R$ 10,75 (7,9%) |
-| A, MG autorizado | 0,6575 | R$ 138,02 | R$ 16,56 (12,0%) | R$ 10,93 (7,9%) |
+| A, MG com PTA, venda para industrialização | 0,6575 | R$ 138,02 | R$ 16,56 (12,0%) | R$ 10,93 (7,9%) |
 
 No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não recolhido (R$ 19,85).
 
@@ -357,14 +370,16 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 - Alíquotas internas de MG por NCM (cenário B) e a regra de DIFAL por UF (base simples ou dupla).
 - Se os custos unitários da ficha técnica já incluem o IPI da compra.
 - O IPI fora da base do PIS/COFINS e do ICMS na compra para industrialização.
-- Se o PTA cobre venda a não contribuinte/consumidor final em MG (hoje: parâmetro de recolhimento próprio, padrão 0%, com aviso na tela).
+- ~~Se o PTA cobre venda a não contribuinte/consumidor final~~ — respondido em 25/11/2026: não cobre; o ICMS é recolhido (padrão 100%, editável).
+- As alíquotas internas por UF (valores iniciais do Buscador NCM, nov/2026) e o FCP por produto. Até o fiscal validar a tabela inteira, ela fica "Provisório", com tarja azul em todo cálculo.
 - DIFAL de contribuinte de outra UF comprando para uso e consumo: pela LC 190/2022, quem recolhe é o destinatário; hoje o cálculo trata como custo da ETK (cenário D).
 
 **Próximos passos (no VS Code, sobre o repositório do ETK Comissão)**
 
 - [x] Ler o repositório e mapear o cliente do Omie e o banco já usados.
 - [x] Validar a fonte do custo com o PA00000001: custo médio do estoque (`nCMC`), sem GGF separado (decisões de 25/11/2026).
-- [ ] Confirmar no Preview se o "Valor GGF" (R$ 59,76) do relatório é o custo total do produto (o diagnóstico já soma as folhas).
+- [x] Confirmar no Preview se o "Valor GGF" (R$ 59,76) do relatório é o custo total do produto: confirmado em 25/11/2026.
+- [x] Respostas do fiscal de 25/11/2026 (ICMS na compra só 0% com fornecedor de MG com PTA; consumidor final recolhe; cenário A só com PTA + industrialização; alíquotas internas iniciais; status "Provisório / Validado"): cálculo, tabela fiscal, telas e testes.
 - [x] Criar o módulo `precificacao` com os testes do exemplo numérico (etapa 1).
 - [x] Criar a tabela fiscal e a tela de administração (etapa 2).
 - [x] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI): etapa 3. O IPI pré-preenchido pelo cadastro do Omie e o uso no preço entram nas etapas 4 e 5.

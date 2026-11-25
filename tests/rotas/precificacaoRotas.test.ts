@@ -36,6 +36,7 @@ vi.mock('../../src/auth/usuariosRepositorio.js', () => ({
 const repositorio = vi.hoisted(() => ({
   lerTabelaFiscal: vi.fn(),
   atualizarTabelaFiscal: vi.fn(),
+  atualizarStatusTabelaFiscal: vi.fn(),
   listarHistorico: vi.fn(),
 }));
 vi.mock('../../src/precificacao/parametrosFiscaisRepositorio.js', () => repositorio);
@@ -46,7 +47,17 @@ const { criarRotasPrecificacao } = await import('../../src/rotas/precificacaoRot
 const { tratadorDeErros } = await import('../../src/rotas/erroHttp.js');
 const { NOME_COOKIE_SESSAO } = await import('../../src/auth/cookies.js');
 
-const TABELA = { gerais: PARAMETROS_GERAIS_INICIAIS, ufs: UFS_INICIAIS, excecoesNcm: [], versao: 0, atualizadoEm: null, atualizadoPor: null };
+const TABELA = {
+  gerais: PARAMETROS_GERAIS_INICIAIS,
+  ufs: UFS_INICIAIS,
+  excecoesNcm: [],
+  versao: 0,
+  atualizadoEm: null,
+  atualizadoPor: null,
+  status: 'PROVISORIO',
+  statusAlteradoEm: null,
+  statusAlteradoPor: null,
+};
 
 describe('rotas da tabela fiscal da precificação — proteção e validação', () => {
   const app = express();
@@ -70,6 +81,7 @@ describe('rotas da tabela fiscal da precificação — proteção e validação'
     repositorio.lerTabelaFiscal.mockReset().mockResolvedValue(TABELA);
     repositorio.atualizarTabelaFiscal.mockReset().mockResolvedValue({ tabela: TABELA, alteracoes: [] });
     repositorio.listarHistorico.mockReset().mockResolvedValue([]);
+    repositorio.atualizarStatusTabelaFiscal.mockReset().mockResolvedValue({ tabela: { ...TABELA, status: 'VALIDADO', versao: 1 }, alterou: true });
   });
 
   const como = (token: string | null, caminho: string, init: RequestInit = {}) =>
@@ -118,6 +130,27 @@ describe('rotas da tabela fiscal da precificação — proteção e validação'
       expect((await put('admin', corpo)).status).toBe(400);
     }
     expect(repositorio.atualizarTabelaFiscal).not.toHaveBeenCalled();
+  });
+
+  it('status "Provisório / Validado": só administrador muda (403 para operador), payload estrito (400), grava com versão e usuário', async () => {
+    const putStatus = (token: string | null, corpo: unknown) =>
+      como(token, '/api/precificacao/parametros-fiscais/status', { method: 'PUT', body: JSON.stringify(corpo) });
+    expect((await putStatus(null, { versao: 0, status: 'VALIDADO' })).status).toBe(401);
+    expect((await putStatus('comPermissao', { versao: 0, status: 'VALIDADO' })).status).toBe(403);
+    for (const corpo of [{ versao: 0, status: 'OK' }, { status: 'VALIDADO' }, { versao: 0, status: 'VALIDADO', extra: 1 }]) {
+      expect((await putStatus('admin', corpo)).status).toBe(400);
+    }
+    expect(repositorio.atualizarStatusTabelaFiscal).not.toHaveBeenCalled();
+    const resposta = await putStatus('admin', { versao: 0, status: 'VALIDADO' });
+    expect(resposta.status).toBe(200);
+    expect(((await resposta.json()) as { status: string; alteracoes: number })).toMatchObject({ status: 'VALIDADO', alteracoes: 1 });
+    expect(repositorio.atualizarStatusTabelaFiscal).toHaveBeenCalledWith('VALIDADO', 0, { id: 'id-administrador-false', nome: 'Nome administrador' });
+
+    const { ErroConflito } = await import('../../src/validacao.js');
+    repositorio.atualizarStatusTabelaFiscal.mockRejectedValueOnce(new ErroConflito('A tabela fiscal foi alterada por outro usuário. Recarregue.'));
+    const conflito = await putStatus('admin', { versao: 0, status: 'PROVISORIO' });
+    expect(conflito.status).toBe(409);
+    expect(((await conflito.json()) as { erro: string }).erro).toContain('Recarregue');
   });
 
   it('conflito de versão do repositório vira 409', async () => {

@@ -2254,3 +2254,16 @@ tfoot tr td:first-child {
   color: #b42318;
   font-weight: 600;
 }
+
+/* Tarja azul (informativa) da formação de preço — ex.: "Parâmetros fiscais ainda não validados pelo fiscal". */
+.tarja-azul {
+  padding: 10px 14px;
+  border-radius: var(--raio-sm);
+  background: #e8f1fd;
+  border: 1px solid #9cc1f0;
+  color: #123f75;
+  font-size: 13px;
+}
+.tarja-azul[hidden] {
+  display: none;
+}

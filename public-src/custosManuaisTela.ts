@@ -41,7 +41,7 @@ const ROTULO_TIPO: Record<TipoFornecedor, string> = {
 const ROTULO_CAMPO: Record<string, string> = {
   valorNota: 'Valor da nota',
   ufFornecedor: 'UF do fornecedor',
-  diferimentoPta: 'Diferimento PTA',
+  diferimentoPta: 'Fornecedor de MG com PTA',
   mercadoriaImportada: 'Mercadoria importada',
   tipoFornecedor: 'Tipo de fornecedor',
   ipiPercentual: 'IPI %',
@@ -335,7 +335,7 @@ export function inicializarCustosManuais(): { ativar: () => void } {
       if (Number.isNaN(valorNota)) return mostrarErro('Valor da nota não entendido (ex.: 12,86).');
       if (Number.isNaN(ipiPercentual)) return mostrarErro('IPI % não entendido (ex.: 12 ou 6,5).');
       if (selectUf.value === '') return mostrarErro('Escolha a UF do fornecedor.');
-      if (selectUf.value === 'MG' && selectPta.value === '') return mostrarErro('Diga se a compra em MG tem diferimento PTA (Sim ou Não).');
+      if (selectUf.value === 'MG' && selectPta.value === '') return mostrarErro('Diga se o fornecedor de MG tem PTA (Sim ou Não).');
       const corpo = {
         versao: versaoEmEdicao,
         valorNota,

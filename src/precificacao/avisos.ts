@@ -29,7 +29,7 @@ export type CodigoAviso =
   | 'CUSTO_ESTIMADO'
   | 'CUSTO_MANUAL_DIFERENTE_OMIE'
   | 'DIFAL_BASE_SIMPLES'
-  | 'MG_CONSUMIDOR_FINAL_ICMS'
+  | 'PARAMETROS_FISCAIS_PROVISORIOS'
   | 'PRECO_CHEIO_INDISPONIVEL'
   // Resultado do modo reverso (vermelho só no bloco do reverso; não bloqueia o preço principal)
   | 'ALVO_ABAIXO_DO_PISO';

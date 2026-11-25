@@ -1123,6 +1123,16 @@ OBSERVACOES: Entrega em horário comercial.</pre>
         Percentuais em pontos (9,25 = 9,25%), com até 4 casas. Só o administrador edita; toda alteração fica no histórico.
       </p>
       <p id="precificacao-parametros-atualizado" class="filtro-data-legenda"></p>
+      <div id="precificacao-status-fiscal" class="filtros-relatorio">
+        <p>
+          Status: <strong id="precificacao-status-fiscal-texto">—</strong>
+          <span id="precificacao-status-fiscal-quem" class="filtro-data-legenda"></span>
+        </p>
+        <button type="button" id="precificacao-status-fiscal-botao" class="botao-secundario" hidden></button>
+      </div>
+      <p id="precificacao-status-fiscal-tarja" class="tarja-azul" role="status" hidden>
+        Parâmetros fiscais ainda não validados pelo fiscal. Todo cálculo mostra esta tarja até o administrador marcar "Validado pelo fiscal".
+      </p>
       <form id="precificacao-form-parametros" autocomplete="off" novalidate>
         <fieldset>
           <legend>Parâmetros gerais</legend>
@@ -1140,7 +1150,7 @@ OBSERVACOES: Entrega em horário comercial.</pre>
                 <tr>
                   <th scope="col">UF</th>
                   <th scope="col">ICMS interestadual de venda (%)</th>
-                  <th scope="col">Alíquota interna (%) — DIFAL</th>
+                  <th scope="col">Alíquota interna (%) — DIFAL, sem FCP <small id="precificacao-ufs-fonte">(valores iniciais: Buscador NCM, nov/2026 — a confirmar pelo fiscal)</small></th>
                 </tr>
               </thead>
               <tbody id="precificacao-tbody-ufs"></tbody>
@@ -1211,11 +1221,11 @@ OBSERVACOES: Entrega em horário comercial.</pre>
             <select id="precificacao-custo-uf" required></select>
           </div>
           <div class="campo-filtro" id="precificacao-custo-campo-pta">
-            <label for="precificacao-custo-pta">Compra com diferimento PTA?</label>
+            <label for="precificacao-custo-pta">Fornecedor de MG com PTA?</label>
             <select id="precificacao-custo-pta">
               <option value="">Escolha…</option>
-              <option value="sim">Sim (ICMS 0%)</option>
-              <option value="nao">Não (alíquota interna de MG)</option>
+              <option value="sim">Sim (ICMS 0%, diferimento)</option>
+              <option value="nao">Não (ICMS destacado, alíquota interna de MG — é custo)</option>
             </select>
           </div>
           <div class="campo-filtro" id="precificacao-custo-campo-importada" hidden>

@@ -14,7 +14,7 @@ const ROTULO_TIPO = {
 const ROTULO_CAMPO = {
     valorNota: 'Valor da nota',
     ufFornecedor: 'UF do fornecedor',
-    diferimentoPta: 'Diferimento PTA',
+    diferimentoPta: 'Fornecedor de MG com PTA',
     mercadoriaImportada: 'Mercadoria importada',
     tipoFornecedor: 'Tipo de fornecedor',
     ipiPercentual: 'IPI %',
@@ -309,7 +309,7 @@ export function inicializarCustosManuais() {
             if (selectUf.value === '')
                 return mostrarErro('Escolha a UF do fornecedor.');
             if (selectUf.value === 'MG' && selectPta.value === '')
-                return mostrarErro('Diga se a compra em MG tem diferimento PTA (Sim ou Não).');
+                return mostrarErro('Diga se o fornecedor de MG tem PTA (Sim ou Não).');
             const corpo = {
                 versao: versaoEmEdicao,
                 valorNota,

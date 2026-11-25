@@ -50,6 +50,12 @@ describe('abrirEstrutura — custo pelas folhas, sem duplicidade', () => {
     expect(r.semCusto).toEqual(['MO37']);
   });
 
+  it('custo 0 (custo médio zerado no Omie) é "sem custo", nunca um custo válido', () => {
+    const r = somarFolhas(abrirEstrutura([folha('MP45', 1, 0), folha('MP1', 2, 5)]));
+    expect(r.total).toBeCloseTo(10, 10);
+    expect(r.semCusto).toEqual(['MP45']);
+  });
+
   it('o mesmo item em dois kits diferentes conta nos dois (usos diferentes, não duplicidade)', () => {
     const r = somarFolhas(
       abrirEstrutura([
