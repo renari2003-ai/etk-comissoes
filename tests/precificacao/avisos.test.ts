@@ -4,7 +4,7 @@ import { ErroValidacao } from '../../src/validacao.js';
 
 const azul: Aviso = { nivel: 'AZUL', codigo: 'DIFAL_BASE_SIMPLES', item: null, mensagem: 'a' };
 const amarelo1: Aviso = { nivel: 'AMARELO', codigo: 'ITEM_SEM_CUSTO', item: 'X', mensagem: 'b' };
-const amarelo2: Aviso = { nivel: 'AMARELO', codigo: 'GGF_AUSENTE', item: 'GGF', mensagem: 'c' };
+const amarelo2: Aviso = { nivel: 'AMARELO', codigo: 'ITEM_SEM_NCM_IPI', item: 'MP2', mensagem: 'c' };
 const vermelho: Aviso = { nivel: 'VERMELHO', codigo: 'PRODUTO_SEM_ESTRUTURA', item: 'PA1', mensagem: 'd' };
 const alvo: Aviso = { nivel: 'VERMELHO', codigo: 'ALVO_ABAIXO_DO_PISO', item: null, mensagem: 'e' };
 

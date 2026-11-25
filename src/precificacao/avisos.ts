@@ -24,7 +24,6 @@ export type CodigoAviso =
   // Amarelos (preço incompleto)
   | 'ITEM_SEM_CUSTO'
   | 'ITEM_SEM_NCM_IPI'
-  | 'GGF_AUSENTE'
   | 'COMPONENTES_NAO_CONSULTADOS'
   // Azuis (informativos)
   | 'CUSTO_ESTIMADO'
@@ -38,7 +37,7 @@ export type CodigoAviso =
 export interface Aviso {
   nivel: NivelAviso;
   codigo: CodigoAviso;
-  /** Item afetado (código do componente, "GGF", UF...), ou `null` se o aviso é do cálculo todo. */
+  /** Item afetado (código do componente, UF...), ou `null` se o aviso é do cálculo todo. */
   item: string | null;
   /** O que está errado e como resolver, já em linguagem do operador. */
   mensagem: string;

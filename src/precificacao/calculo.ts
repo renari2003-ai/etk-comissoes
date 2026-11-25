@@ -213,18 +213,32 @@ export interface ResultadoCusto {
   itensSemCusto: string[];
   /** Itens com custo mas sem NCM/IPI: entraram pelo valor bruto, sem crédito. */
   itensSemCredito: string[];
-  ggfAusente: boolean;
+  /**
+   * Custo de fabricação somado (sem crédito). Hoje é sempre 0: o "% de custo de fabricação" está
+   * DESLIGADO (decisão de 2026-11-25 — o custo de fabricação fica dentro das "despesas fixas %").
+   */
+  custoFabricacao: number;
   completo: boolean;
   /** Avisos AMARELOS (preço incompleto), um por item. */
   avisos: Aviso[];
 }
 
+export interface OpcoesCusto {
+  /**
+   * Estrutura pronta para o futuro "% de custo de fabricação" da tabela fiscal — DESLIGADO por
+   * padrão (0). Fração sobre o custo BRUTO dos materiais, somada ao bruto e ao líquido (não tem
+   * crédito). A base exata deve ser confirmada com o usuário quando o parâmetro for ligado.
+   */
+  percentualCustoFabricacao?: number;
+}
+
 /**
- * Custo bruto = Σ quantidade × custo unitário + GGF; custo líquido = Σ quantidade × custo líquido + GGF.
- * O GGF não tem crédito. Item sem custo entra com ZERO; item sem NCM/IPI entra pelo bruto, sem crédito;
- * GGF ausente entra com zero. Em todos esses casos o preço sai mesmo assim, com aviso amarelo.
+ * Custo bruto = Σ quantidade × custo unitário; custo líquido = Σ quantidade × custo líquido.
+ * Os itens são as FOLHAS da estrutura (`abrirEstrutura`): o kit nunca entra junto com os itens de
+ * dentro dele. Não há GGF separado (decisão de 2026-11-25). Item sem custo entra com ZERO; item sem
+ * NCM/IPI entra pelo bruto, sem crédito. Nos dois casos o preço sai mesmo assim, com aviso amarelo.
  */
-export function calcularCusto(itens: ItemCusto[], ggf: number | null): ResultadoCusto {
+export function calcularCusto(itens: ItemCusto[], opcoes: OpcoesCusto = {}): ResultadoCusto {
   let custoBruto = 0;
   let custoLiquido = 0;
   const itensSemCusto: string[] = [];
@@ -233,6 +247,8 @@ export function calcularCusto(itens: ItemCusto[], ggf: number | null): Resultado
   for (const item of itens) {
     const quantidade = exigirFinitoNaoNegativo(item.quantidade, `Quantidade do item ${item.codigo}`);
     if (item.custoBrutoUnitario === null) {
+      // O mesmo código em vários ramos da estrutura: um aviso só ("X itens sem custo" sem contar a mais).
+      if (itensSemCusto.includes(item.codigo)) continue;
       itensSemCusto.push(item.codigo);
       avisos.push({
         nivel: 'AMARELO',
@@ -246,13 +262,15 @@ export function calcularCusto(itens: ItemCusto[], ggf: number | null): Resultado
     let liquido: number;
     if (item.custoLiquidoUnitario === null) {
       liquido = bruto;
-      itensSemCredito.push(item.codigo);
-      avisos.push({
-        nivel: 'AMARELO',
-        codigo: 'ITEM_SEM_NCM_IPI',
-        item: item.codigo,
-        mensagem: `Item ${item.codigo} sem NCM ou alíquota de IPI no cadastro — entrou pelo valor bruto, sem crédito. Corrija o cadastro do item ${item.codigo} no Omie.`,
-      });
+      if (!itensSemCredito.includes(item.codigo)) {
+        itensSemCredito.push(item.codigo);
+        avisos.push({
+          nivel: 'AMARELO',
+          codigo: 'ITEM_SEM_NCM_IPI',
+          item: item.codigo,
+          mensagem: `Item ${item.codigo} sem NCM ou alíquota de IPI no cadastro — entrou pelo valor bruto, sem crédito. Corrija o cadastro do item ${item.codigo} no Omie.`,
+        });
+      }
     } else {
       liquido = exigirFinitoNaoNegativo(item.custoLiquidoUnitario, `Custo líquido do item ${item.codigo}`);
       if (liquido > bruto) throw new ErroValidacao(`Custo líquido do item ${item.codigo} maior que o custo bruto.`);
@@ -260,21 +278,17 @@ export function calcularCusto(itens: ItemCusto[], ggf: number | null): Resultado
     custoBruto += quantidade * bruto;
     custoLiquido += quantidade * liquido;
   }
-  const ggfAusente = ggf === null;
-  if (ggf === null) {
-    avisos.push({ nivel: 'AMARELO', codigo: 'GGF_AUSENTE', item: 'GGF', mensagem: 'GGF não encontrado — entrou como zero. Digite o GGF manual.' });
-  } else {
-    const valorGgf = exigirFinitoNaoNegativo(ggf, 'GGF');
-    custoBruto += valorGgf;
-    custoLiquido += valorGgf;
-  }
+  const percentual = exigirFracao(opcoes.percentualCustoFabricacao ?? 0, '% de custo de fabricação');
+  const custoFabricacao = percentual * custoBruto;
+  custoBruto += custoFabricacao;
+  custoLiquido += custoFabricacao;
   return {
     custoBruto,
     creditos: custoBruto - custoLiquido,
     custoLiquido,
     itensSemCusto,
     itensSemCredito,
-    ggfAusente,
+    custoFabricacao,
     completo: avisos.length === 0,
     avisos,
   };

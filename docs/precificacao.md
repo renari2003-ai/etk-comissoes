@@ -8,13 +8,13 @@ Uma nova tela no app ETK Comissão: o usuário digita o código do produto, esco
 
 **Dentro do escopo**
 
-- Custo do produto a partir da estrutura no Omie (componentes + GGF).
+- Custo do produto a partir da estrutura no Omie: todos os kits abertos até as folhas, quantidade × (1 + perda) × custo médio de cada folha, sem GGF separado (ver "Decisões de 25/11/2026").
 - Limpeza do custo: retira os impostos recuperáveis (PIS/COFINS e IPI) e mantém o ICMS que é custo.
 - Preço por cenário de venda (MG autorizado, MG não autorizado, outra UF, não contribuinte com DIFAL).
 - Faixa de negociação: **preço piso** e **preço cheio**, com margem antes e depois do IR/CS.
 - Modo reverso: preço-alvo → margem real.
 - Tabela fiscal editável, sem precisar mexer no código.
-- Custo manual por item da estrutura (e do GGF) quando o Omie não tiver custo ou o custo estiver errado — ver "Custo manual".
+- Custo manual por item da estrutura quando o Omie não tiver custo ou o custo estiver errado — ver "Custo manual".
 
 **Fora do escopo (nesta versão)**
 
@@ -45,9 +45,8 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 | Dado | Para que serve | Endpoint de referência |
 | --- | --- | --- |
 | Produto acabado: código, descrição, NCM, alíquota de IPI, origem | Alíquota de IPI na venda; origem define o ICMS de 4% para conteúdo importado | `geral/produtos` – ConsultarProduto |
-| Estrutura do produto: componentes, quantidades, unidade, % de perda | Montar o custo, como no relatório "Imprimir Estrutura" | `geral/malha` – ConsultarEstrutura (endpoint confirmado na documentação em 24/11/2026) |
-| GGF do produto acabado | Somado ao custo bruto | `geral/malha` – `custoProducao.vGGF` (ConsultarEstrutura) ou `nValorGGF` (ConsultarDadosProducao) — **campo exato em validação** |
-| Custo unitário dos componentes | Custo bruto (com impostos) | A estrutura **não traz custo por item**. Hipótese: `nCMC` da posição de estoque (`estoque/consulta` – ListarPosEstoque) — **em validação** com o PA00000001 pela rota temporária de diagnóstico |
+| Estrutura do produto: componentes, quantidades, unidade, % de perda | Montar o custo, como no relatório "Imprimir Estrutura". Kits (tipo 03/04) têm estrutura própria e são abertos até as folhas | `geral/malha` – ConsultarEstrutura (endpoint confirmado na documentação em 24/11/2026) |
+| Custo unitário de cada folha | Custo bruto (com impostos) | A estrutura **não traz custo por item**. **Confirmado em 25/11/2026:** custo médio do estoque, `nCMC` da posição de estoque (`estoque/consulta` – ListarPosEstoque), sempre o atual |
 | Última nota de entrada de cada componente: UF do fornecedor, ICMS, IPI, PIS, COFINS | Saber se veio de dentro ou de fora de MG e quanto retirar de crédito | `produtos/recebimentonfe` – ListarRecebimentos |
 | Cliente: UF, inscrição estadual, contribuinte, campo "autorizado diferimento MG" | Escolher o cenário de venda | `geral/clientes` – ConsultarCliente |
 
@@ -55,15 +54,23 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 
 **Cadastro do componente (`geral/produtos` – ConsultarProduto):** NCM e alíquota de IPI de cada componente, usados no IPI da compra sem nota. Componente sem NCM ou sem alíquota de IPI (com fornecedor indústria normal) entra **pelo valor bruto, sem crédito**, e deixa o preço **incompleto** (ver "Relatório de conferência do cadastro").
 
-**Validação da fonte de custo (24/11/2026):** relatório do PA00000001 (CEO SOFS 12/24 FO 4D): Valor GGF R$ 59,76; PI10000014 0,192111; MP00000008 17,06279; MO00000013 5,238053; MO00000037 e MP00000045 sem custo unitário. A rota temporária `GET /api/precificacao/diagnostico/:codigo` (só administrador, só leitura, **removida antes de produção**) mostra de qual campo da API sai cada número. Se o custo dos itens for o `nCMC`, a decisão de usá-lo volta ao usuário antes de seguir, porque o código atual o considera pouco confiável (ver `src/calculo/custoEstimado.ts`).
+**Validação da fonte de custo (24/11/2026):** relatório do PA00000001 (CEO SOFS 12/24 FO 4D): "Valor GGF" R$ 59,76; PI10000014 0,192111; MP00000008 17,06279; MO00000013 5,238053; MO00000037 e MP00000045 sem custo unitário. A rota temporária `GET /api/precificacao/diagnostico/:codigo` (só administrador, só leitura, **removida antes de produção**) mostra de qual campo da API sai cada número.
+
+### Decisões de 25/11/2026 (após o diagnóstico do PA00000001)
+
+1. **Custo base = custo médio do estoque (`nCMC`), sempre o ATUAL.** PI10000014 e MO00000013 batem com o relatório. MP00000008 (17,06 → 12,86) e MP00000002 mudaram porque o relatório é antigo, e isso não é erro.
+2. **"Valor GGF" do relatório = custo total do produto (hipótese em teste).** A hipótese é que os R$ 59,76 do relatório "Imprimir Estrutura" sejam a soma de quantidade × custo de todas as folhas, abrindo todos os kits, e não um GGF. O diagnóstico soma das duas formas (com o custo médio atual e com os valores do relatório onde estão anotados) e compara com os R$ 59,76. O resultado é registrado aqui quando conferido. Enquanto isso, o diagnóstico já chama a linha de "Custo total do produto (o relatório chama de 'Valor GGF')".
+3. **Regra de custo:** abrir os kits até as folhas e somar quantidade × (1 + perda) × custo médio de cada folha, igual ao relatório do Omie. A quantidade acumulada é o produto de quantidade × (1 + perda) de cada nível do caminho. **Nunca** se soma o custo do kit e o dos itens de dentro dele ao mesmo tempo. Kit sem estrutura entra com o custo médio do próprio kit. Estrutura em ciclo ou com mais de 10 níveis é erro explícito. Implementado em `src/precificacao/estrutura.ts`, com testes de não duplicidade.
+4. **Itens sem custo** no PA00000001 (PI00000048, MO00000038, MP00000045, MO00000067, MP00000042, MO00000037) vão para o **custo manual** (etapa 3).
+5. **Sem GGF separado.** O custo de fabricação fica dentro das "despesas fixas %" informadas na tela. O GGF saiu do cálculo do custo: não há mais aviso "GGF ausente" nem custo manual de GGF. A estrutura fica pronta para um futuro **"% de custo de fabricação"** (`calcularCusto(itens, { percentualCustoFabricacao })`), **desligado por padrão (0)**: fração sobre o custo bruto dos materiais, somada ao bruto e ao líquido, sem crédito. Quando for ligado, a base precisa ser confirmada, e o parâmetro vai para uma tabela nova (a tabela fiscal existente não recebe `ALTER`).
 
 ## Custo manual
 
-O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo item da estrutura, e também o GGF, aceita custo manual.
+O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo item da estrutura aceita custo manual (não há GGF separado, pela decisão de 25/11/2026).
 
 **Origem do custo por item.** Cada linha da estrutura mostra uma de três origens: **Omie**, **Manual** ou **Sem custo**. Item sem custo aparece destacado, já com o campo para digitar.
 
-**Digitar ou corrigir.** O operador pode digitar o custo de qualquer item, mesmo os que têm custo do Omie, e o GGF. Ao confirmar, escolhe:
+**Digitar ou corrigir.** O operador pode digitar o custo de qualquer item, mesmo os que têm custo do Omie. Ao confirmar, escolhe:
 
 - **Só nesta simulação:** vale para o cálculo atual (e fica gravado na simulação, se for salva), sem afetar os próximos cálculos.
 - **Salvar para próximos cálculos:** grava na tabela de custos manuais e passa a ter **prioridade sobre o Omie**.
@@ -89,7 +96,11 @@ Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para it
 
 **Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, o diferimento PTA, o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
 
-**Tabela de custos manuais.** Código do componente (ou do produto acabado, para o GGF), valor da nota com impostos (vazio quando o registro só guarda os dados fiscais de um item estimado), UF do fornecedor, diferimento PTA (S/N, só MG), mercadoria importada (S/N, só fora de MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
+**Tabela de custos manuais.** Código do componente, valor da nota com impostos (vazio quando o registro só guarda os dados fiscais de um item estimado), UF do fornecedor, diferimento PTA (S/N, só MG), mercadoria importada (S/N, só fora de MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
+
+**Onde fica (etapa 3):** `precificacao_custos_manuais` (um registro por código, com `versao` para concorrência otimista) e `precificacao_custos_manuais_historico` (campo a campo: data, usuário, valor anterior e valor novo, inclusive na remoção). Funções puras em `src/precificacao/custoManual.ts` (validação estrita, créditos pela regra de "Impostos na compra" e prioridade); repositório em `custosManuaisRepositorio.ts`. Quem tem a permissão `precificacao` lê, inclui, altera e remove, porque é o operador que digita o custo. A tela fica no modo "💲 Precificação" → "Custos manuais". Remover um custo manual volta a valer o Omie. Gravar em cima de uma leitura antiga responde 409.
+
+**Prioridade (implementada em `resolverCustoItem`):** manual "só nesta simulação" > manual salvo > Omie > sem custo. Se o manual salvo for diferente do Omie, aparece a tarja azul `CUSTO_MANUAL_DIFERENTE_OMIE` com os dois valores, e vale o manual até o operador escolher "Omie". Um registro só com dados fiscais (valor vazio) mantém o custo do Omie e leva os dados fiscais.
 
 ## Impostos na compra (créditos do custo)
 
@@ -141,7 +152,7 @@ Somente leitura. Para um produto (ou para todos os produtos que têm estrutura n
 
 O preço sai em sete passos: custo líquido, cenário, divisor, preço cheio e piso, IPI por fora, lucro antes e depois do IR/CS e, se pedido, o modo reverso.
 
-1. **Custo bruto** = soma de (quantidade × custo unitário) de cada componente + GGF.
+1. **Custo bruto** = soma de (quantidade acumulada × custo unitário) de cada **folha** da estrutura. Os kits são abertos e o kit nunca entra junto com os itens de dentro dele. Não há GGF separado.
 2. **Custo líquido**: para cada componente, retira os créditos pelas regras de "Impostos na compra" (nota de entrada do Omie, ou tipo de fornecedor e cadastro quando não há nota).
    - PIS/COFINS: 9,25% sobre o valor dos produtos sem o ICMS.
    - IPI: o da nota; sem nota, pelo tipo de fornecedor e NCM.
@@ -237,7 +248,6 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | --- | --- | --- |
 | `ITEM_SEM_CUSTO` | Item sem custo (entra como zero) | Lista os códigos, com botão para digitar o custo manual |
 | `ITEM_SEM_NCM_IPI` | Componente sem NCM ou sem IPI no cadastro (entra pelo bruto, sem crédito) | "Corrija o cadastro do item X no Omie" |
-| `GGF_AUSENTE` | GGF não encontrado (entra como zero) | Digitar o GGF manual |
 | `COMPONENTES_NAO_CONSULTADOS` | Estrutura com mais de 60 componentes | Lista os itens que ficaram de fora da consulta |
 
 **Azul: informativa.**
@@ -252,7 +262,7 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 
 **Modo reverso:** preço-alvo abaixo do piso dá tarja **vermelha no bloco do resultado do modo reverso** (`ALVO_ABAIXO_DO_PISO`), sem bloquear o preço principal.
 
-**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `GGF_AUSENTE`, `DIFAL_BASE_SIMPLES`, `MG_CONSUMIDOR_FINAL_ICMS`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Os que dependem do Omie ou do custo manual (`PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`, `CUSTO_MANUAL_DIFERENTE_OMIE`) entram nas etapas 3 e 4.
+**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `DIFAL_BASE_SIMPLES`, `MG_CONSUMIDOR_FINAL_ICMS`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Na etapa 3: `CUSTO_MANUAL_DIFERENTE_OMIE`. Os que dependem do Omie (`PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`) entram na etapa 4. `GGF_AUSENTE` foi retirado em 25/11/2026 (sem GGF separado).
 
 ## Tela
 
@@ -301,7 +311,8 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 | `PUT /api/precificacao/parametros-fiscais` | Altera a tabela inteira (só administrador), com a `versao` lida: se outro administrador salvou antes, responde 409 e a tela oferece recarregar. Validação estrita (400), grava histórico |
 | `GET /api/precificacao/parametros-fiscais/historico?limite=` | Histórico de alterações (só administrador) |
 | `POST /api/simulacoes` | Salva uma simulação |
-| `GET /api/precificacao/custos-manuais` / `PUT /api/precificacao/custos-manuais/:codigo` | Lê e grava custo manual salvo (com histórico) |
+| `GET /api/precificacao/custos-manuais` / `PUT` e `DELETE /api/precificacao/custos-manuais/:codigo` | Lê, grava e remove custo manual salvo, com `versao` (409 se outro usuário mudou antes) e validação estrita (400) |
+| `GET /api/precificacao/custos-manuais/historico?codigo=&limite=` | Histórico dos custos manuais |
 
 Rotas da tabela fiscal com o prefixo `/api/precificacao/parametros-fiscais` (para não confundir com os parâmetros fiscais do módulo de fretes).
 
@@ -336,10 +347,11 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 **Próximos passos (no VS Code, sobre o repositório do ETK Comissão)**
 
 - [x] Ler o repositório e mapear o cliente do Omie e o banco já usados.
-- [ ] Validar a fonte do custo e do GGF com o PA00000001 (rota temporária de diagnóstico no Preview).
+- [x] Validar a fonte do custo com o PA00000001: custo médio do estoque (`nCMC`), sem GGF separado (decisões de 25/11/2026).
+- [ ] Confirmar no Preview se o "Valor GGF" (R$ 59,76) do relatório é o custo total do produto (o diagnóstico já soma as folhas).
 - [x] Criar o módulo `precificacao` com os testes do exemplo numérico (etapa 1).
 - [x] Criar a tabela fiscal e a tela de administração (etapa 2).
-- [ ] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI).
+- [x] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI): etapa 3. O IPI pré-preenchido pelo cadastro do Omie e o uso no preço entram nas etapas 4 e 5.
 - [ ] Integrar estrutura, notas de entrada, cadastro (NCM/IPI) e cliente do Omie.
 - [ ] Relatório de conferência do cadastro (componentes sem NCM/IPI), só leitura.
 - [ ] Montar a tela e validar com 3 produtos reais junto com o fiscal.

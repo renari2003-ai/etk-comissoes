@@ -2,7 +2,7 @@
 // VERSAO: altere a cada deploy com mudança de frontend. O navegador só detecta nova versão
 // quando o conteúdo deste arquivo muda — aí o SW novo instala, fica em espera e a tela mostra
 // "Nova atualização disponível" / "ATUALIZAR AGORA" (ver index.html).
-const VERSAO = '2026-11-05.1';
+const VERSAO = '2026-11-25.1';
 const CACHE_NAME = `etk-comissoes-${VERSAO}`;
 const ASSETS_TO_CACHE = [
   '/index.html',
@@ -12,6 +12,8 @@ const ASSETS_TO_CACHE = [
   '/formatacao.js',
   '/fretes.js',
   '/precificacao.js',
+  '/formacaoPreco.js',
+  '/custosManuaisTela.js',
   '/relatorios.js',
   '/usuarios.js',
   '/favicon.png',

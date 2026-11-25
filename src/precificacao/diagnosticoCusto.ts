@@ -24,6 +24,7 @@ import type { EstoqueOmie } from '../calculo/tipos.js';
 import type { ProdutoOmie } from '../omie/cliente.js';
 import { OmieError } from '../omie/erros.js';
 import { ErroValidacao } from '../validacao.js';
+import { abrirEstrutura, somarFolhas, type NoEstrutura } from './estrutura.js';
 
 export interface ClienteOmieDiagnosticoCusto {
   consultarEstrutura(codProduto: string): Promise<Record<string, unknown>>;
@@ -51,6 +52,9 @@ export const REFERENCIAS_RELATORIO: Record<string, ReferenciaRelatorio> = {
     },
   },
 };
+
+/** O relatório chama de "Valor GGF"; a hipótese de 2026-11-25 é que seja o custo total do produto. */
+const ROTULO_VALOR_GGF = 'Valor "GGF" do relatório';
 
 const CODIGO_VALIDO = /^[A-Za-z0-9._-]{1,60}$/;
 
@@ -116,6 +120,11 @@ export interface SubestruturaDiagnostico {
   quantidadeNoProduto: number;
   custoProducao: Record<string, number> | null;
   dadosProducao: Record<string, number> | null;
+  /**
+   * A estrutura (itens) foi lida? Falha só nos dados de produção NÃO impede abrir o kit — só a
+   * falha da própria estrutura faz o kit entrar com o custo médio dele.
+   */
+  estruturaLida: boolean;
   erro?: string;
 }
 
@@ -130,8 +139,32 @@ export interface ResultadoDiagnosticoCusto {
   /** Preenchido quando a estrutura tem mais itens que `MAX_COMPONENTES_DIAGNOSTICO`. */
   componentesNaoConsultados: number;
   subestruturas: SubestruturaDiagnostico[];
+  /** Teste da hipótese de 2026-11-25: o "Valor GGF" do relatório é o custo total do produto. */
+  custoTotal: CustoTotalDiagnostico;
   conferencia: ConferenciaValor[] | null;
   resumo: ResumoDiagnostico;
+}
+
+/**
+ * Custo total do produto pela regra de 2026-11-25 (`precificacao/estrutura.ts`): abre todos os kits
+ * até as folhas e soma quantidade × (1 + perda) × custo de cada folha; kit sem estrutura entra com
+ * o próprio custo. Nunca soma o kit e os itens de dentro dele ao mesmo tempo.
+ */
+export interface CustoTotalDiagnostico {
+  /** Com o custo médio ATUAL do estoque (nCMC) de cada folha. `null` se a soma falhou (ver `erro`). */
+  comCustoMedioAtual: number | null;
+  /** Igual, mas com o valor do relatório nas folhas que têm valor de referência. `null` sem referência. */
+  comValoresDoRelatorio: number | null;
+  /** Quantas folhas usaram o valor do relatório no lugar do custo médio atual. */
+  folhasComValorDoRelatorio: number;
+  folhas: number;
+  /** Folhas sem custo (entraram com zero). */
+  itensSemCusto: string[];
+  /** Kits sem estrutura (ou cuja estrutura não foi lida) que entraram com o próprio custo médio. */
+  kitsComCustoProprio: string[];
+  /** Motivos pelos quais a soma pode estar incompleta. */
+  ressalvas: string[];
+  erro?: string;
 }
 
 function paraNumero(valor: unknown): number | null {
@@ -231,6 +264,7 @@ export async function diagnosticarCusto(
       codigo,
       nivel: 0,
       quantidadeNoProduto: 1,
+      estruturaLida: true,
       custoProducao: camposNumericos(estrutura.custoProducao as Record<string, unknown> | undefined),
       dadosProducao: 'erro' in dadosProducao ? null : camposNumericos(dadosProducao),
     },
@@ -290,10 +324,11 @@ export async function diagnosticarCusto(
       if (nivel >= MAX_NIVEIS_DIAGNOSTICO || jaAbertos.has(cod.toUpperCase())) continue;
       jaAbertos.add(cod.toUpperCase());
       const qtdNoProduto = qtdPai * quantidadeComPerda(componente);
-      const sub: SubestruturaDiagnostico = { codigo: cod, nivel, quantidadeNoProduto: qtdNoProduto, custoProducao: null, dadosProducao: null };
+      const sub: SubestruturaDiagnostico = { codigo: cod, nivel, quantidadeNoProduto: qtdNoProduto, custoProducao: null, dadosProducao: null, estruturaLida: false };
       subestruturas.push(sub);
       try {
         const estruturaSub = await cliente.consultarEstrutura(cod);
+        sub.estruturaLida = true;
         sub.custoProducao = camposNumericos(estruturaSub.custoProducao as Record<string, unknown> | undefined);
         if (!((sub.custoProducao?.vGGF ?? 0) > 0)) {
           try {
@@ -310,7 +345,8 @@ export async function diagnosticarCusto(
     }
   }
 
-  const conferencia = conferir(codigo, subestruturas, componentes);
+  const custoTotal = calcularCustoTotalDiagnostico(codigo, componentes, subestruturas, componentesNaoConsultados);
+  const conferencia = conferir(codigo, subestruturas, componentes, custoTotal);
   return {
     aviso: 'Rota TEMPORÁRIA de diagnóstico (somente leitura) — remover antes de produção.',
     codigo,
@@ -321,8 +357,9 @@ export async function diagnosticarCusto(
     componentes,
     componentesNaoConsultados,
     subestruturas,
+    custoTotal,
     conferencia,
-    resumo: resumirDiagnostico(codigo, subestruturas, componentes, componentesNaoConsultados, conferencia),
+    resumo: resumirDiagnostico(codigo, componentes, componentesNaoConsultados, conferencia, custoTotal),
   };
 }
 
@@ -357,13 +394,115 @@ function candidatosGgf(subestruturas: SubestruturaDiagnostico[]): { origem: stri
   return saida;
 }
 
-function conferir(codigo: string, subestruturas: SubestruturaDiagnostico[], componentes: ComponenteDiagnostico[]): ConferenciaValor[] | null {
+/** Monta a árvore a partir da lista plana (`pai` de cada item) e soma as folhas pela regra da precificação. */
+export function calcularCustoTotalDiagnostico(
+  codigo: string,
+  componentes: ComponenteDiagnostico[],
+  subestruturas: SubestruturaDiagnostico[],
+  componentesNaoConsultados: number,
+): CustoTotalDiagnostico {
+  const referencia = referenciaDoRelatorio(codigo);
+  const filhosPorPai = new Map<string, ComponenteDiagnostico[]>();
+  for (const c of componentes) {
+    const chave = c.pai.toUpperCase();
+    filhosPorPai.set(chave, [...(filhosPorPai.get(chave) ?? []), c]);
+  }
+  const abertas = new Map(subestruturas.slice(1).map((s) => [s.codigo.toUpperCase(), s]));
+  const kitsComCustoProprio = new Set<string>();
+  const ressalvas: string[] = [];
+  if (componentesNaoConsultados > 0) ressalvas.push(`${componentesNaoConsultados} item(ns) da estrutura ficaram de fora do diagnóstico.`);
+
+  const ehKit = (c: ComponenteDiagnostico): boolean => c.tipo !== null && TIPOS_COM_ESTRUTURA.has(c.tipo);
+  const valorDoRelatorio = (cod: string): number | null => {
+    if (referencia === undefined || !Object.hasOwn(referencia.componentes, cod)) return null;
+    const ref = referencia.componentes[cod];
+    return typeof ref === 'string' ? interpretarValorRelatorio(ref).valor : null;
+  };
+  const montar = (c: ComponenteDiagnostico, ancestrais: ReadonlySet<string>, usarRelatorio: boolean): NoEstrutura => {
+    const cod = c.codProdMalha ?? '(sem código)';
+    const chave = cod.toUpperCase();
+    // Nunca adivinhar: quantidade ausente/ilegível ou perda ilegível derrubam a soma com o motivo.
+    // Perda AUSENTE (o Omie não manda o campo) é 0%.
+    const q = paraNumero(c.quantidade);
+    if (q === null || q < 0) throw new ErroValidacao(`Quantidade do item ${cod} ausente ou ilegível na estrutura do Omie (${String(c.quantidade)}).`);
+    const p = c.percPerda === undefined || c.percPerda === null ? 0 : paraNumero(c.percPerda);
+    if (p === null || p < 0) throw new ErroValidacao(`% de perda do item ${cod} ilegível na estrutura do Omie (${String(c.percPerda)}).`);
+    if (ancestrais.has(chave)) {
+      throw new ErroValidacao(`Estrutura em ciclo: o item ${cod} aparece dentro dele mesmo. Corrija a estrutura no Omie.`);
+    }
+    const doRelatorio = usarRelatorio ? valorDoRelatorio(cod) : null;
+    const no: NoEstrutura = {
+      codigo: cod,
+      descricao: c.descricao,
+      quantidade: q,
+      perda: p / 100,
+      custoUnitario: doRelatorio ?? custoDoSistema(c)?.valor ?? null,
+    };
+    if (!ehKit(c)) return no;
+    const sub = abertas.get(chave);
+    const filhos = filhosPorPai.get(chave) ?? [];
+    if (sub === undefined || !sub.estruturaLida || filhos.length === 0) {
+      // Kit sem estrutura (ou não lida): entra com o custo médio do PRÓPRIO kit, como folha.
+      kitsComCustoProprio.add(cod);
+      if (c.codProdMalha === null) ressalvas.push('Um kit da estrutura veio sem código; entrou com o custo médio do próprio kit.');
+      else if (sub !== undefined && !sub.estruturaLida) ressalvas.push(`A estrutura do kit ${cod} não pôde ser lida (${sub.erro ?? 'erro desconhecido'}); entrou com o custo médio do próprio kit.`);
+      else if (sub === undefined) ressalvas.push(`O kit ${cod} não foi aberto (limite de níveis); entrou com o custo médio do próprio kit.`);
+      return no;
+    }
+    const proximos = new Set(ancestrais).add(chave);
+    return { ...no, filhos: filhos.map((f) => montar(f, proximos, usarRelatorio)) };
+  };
+
+  const raiz = new Set([codigo.toUpperCase()]);
+  const diretos = filhosPorPai.get(codigo.toUpperCase()) ?? [];
+  try {
+    const atual = somarFolhas(abrirEstrutura(diretos.map((c) => montar(c, raiz, false)), { codigoRaiz: codigo }));
+    let comValoresDoRelatorio: number | null = null;
+    let folhasComValorDoRelatorio = 0;
+    if (referencia !== undefined) {
+      const folhasRel = abrirEstrutura(diretos.map((c) => montar(c, raiz, true)), { codigoRaiz: codigo });
+      comValoresDoRelatorio = somarFolhas(folhasRel).total;
+      folhasComValorDoRelatorio = folhasRel.filter((f) => valorDoRelatorio(f.codigo) !== null).length;
+    }
+    return {
+      comCustoMedioAtual: atual.total,
+      comValoresDoRelatorio,
+      folhasComValorDoRelatorio,
+      folhas: atual.folhas.length,
+      itensSemCusto: atual.semCusto,
+      kitsComCustoProprio: [...kitsComCustoProprio],
+      ressalvas: [...new Set(ressalvas)],
+    };
+  } catch (erro) {
+    return {
+      comCustoMedioAtual: null,
+      comValoresDoRelatorio: null,
+      folhasComValorDoRelatorio: 0,
+      folhas: 0,
+      itensSemCusto: [],
+      kitsComCustoProprio: [...kitsComCustoProprio],
+      ressalvas: [...new Set(ressalvas)],
+      erro: erro instanceof ErroValidacao ? erro.message : 'Erro interno ao somar a estrutura.',
+    };
+  }
+}
+
+function conferir(
+  codigo: string,
+  subestruturas: SubestruturaDiagnostico[],
+  componentes: ComponenteDiagnostico[],
+  custoTotal: CustoTotalDiagnostico,
+): ConferenciaValor[] | null {
   const referencia = referenciaDoRelatorio(codigo);
   if (referencia === undefined) return null;
 
   const raiz = subestruturas[0]!;
   const { valor: ggfRelatorio, tolerancia } = interpretarValorRelatorio(referencia.ggf);
-  const ggfQueConfere = [
+  const somas = [
+    { origem: 'Custo total', campo: 'folhas × custo médio atual', valor: custoTotal.comCustoMedioAtual },
+    { origem: 'Custo total', campo: 'folhas × valores do relatório', valor: custoTotal.folhasComValorDoRelatorio > 0 ? custoTotal.comValoresDoRelatorio : null },
+  ];
+  const ggfQueConfere: CampoQueConfere[] = [
     ...camposQueConferem(referencia.ggf, [
       { origem: 'ConsultarEstrutura.custoProducao', campos: raiz.custoProducao },
       { origem: 'ConsultarDadosProducao', campos: raiz.dadosProducao },
@@ -371,8 +510,9 @@ function conferir(codigo: string, subestruturas: SubestruturaDiagnostico[], comp
     ...candidatosGgf(subestruturas)
       .slice(2)
       .filter((c) => Math.abs(c.valor - ggfRelatorio) <= tolerancia),
+    ...somas.flatMap((c) => (c.valor !== null && Math.abs(c.valor - ggfRelatorio) <= tolerancia ? [{ origem: c.origem, campo: c.campo, valor: c.valor }] : [])),
   ];
-  const conferencia: ConferenciaValor[] = [{ rotulo: 'Valor GGF', esperado: referencia.ggf, confere: ggfQueConfere }];
+  const conferencia: ConferenciaValor[] = [{ rotulo: ROTULO_VALOR_GGF, esperado: referencia.ggf, confere: ggfQueConfere }];
 
   for (const [cod, esperado] of Object.entries(referencia.componentes)) {
     const componente = componentes.find((c) => c.codProdMalha === cod);
@@ -482,72 +622,85 @@ function listaBr(itens: string[]): string {
 /**
  * Regras fixas que transformam o diagnóstico em tabela + conclusão sem termos técnicos.
  * Não decide preço nenhum: só diz o que bate, o que falta e se o custo já é confiável.
+ *
+ * Decisões de 2026-11-25 refletidas aqui:
+ * - O custo de cada item é o custo médio ATUAL do estoque; diferença para o relatório (que é
+ *   antigo) é informativa, não pendência.
+ * - Não há GGF separado: o "Valor GGF" do relatório é comparado com o CUSTO TOTAL do produto
+ *   (folhas × custo), na hipótese de que seja isso.
+ * - Item sem custo vai para o custo manual (etapa 3).
  */
 export function resumirDiagnostico(
   codigo: string,
-  subestruturas: SubestruturaDiagnostico[],
   componentes: ComponenteDiagnostico[],
   componentesNaoConsultados: number,
   conferencia: ConferenciaValor[] | null,
+  custoTotal: CustoTotalDiagnostico,
 ): ResumoDiagnostico {
   const referencia = referenciaDoRelatorio(codigo);
   const linhas: LinhaResumo[] = [];
   const conclusao: ItemConclusao[] = [];
   const pendencias: string[] = [];
 
-  // ── GGF ──
-  const confGgf = conferencia?.find((c) => c.rotulo === 'Valor GGF');
-  const candidatos = candidatosGgf(subestruturas);
-  const ggfBate = confGgf !== undefined && confGgf.confere.length > 0;
-  const ggfEscolhido = ggfBate
-    ? { valor: confGgf.confere[0]!.valor, origem: nomeOrigem(confGgf.confere[0]!) }
-    : (() => {
-        const positivo = candidatos.find((c) => c.valor > 0);
-        return positivo === undefined
-          ? { valor: 0, origem: 'o Omie devolve GGF zero (produto e subníveis)' }
-          : { valor: positivo.valor, origem: nomeOrigem(positivo) };
-      })();
+  // ── custo total (hipótese: é o "Valor GGF" do relatório) ──
+  const confTotal = conferencia?.find((c) => c.rotulo === ROTULO_VALOR_GGF);
+  const totalBate = confTotal !== undefined && confTotal.confere.some((c) => c.origem === 'Custo total');
   linhas.push({
-    item: 'GGF (gastos gerais de fabricação)',
-    descricao: null,
+    item: 'Custo total do produto (o relatório chama de "Valor GGF")',
+    descricao: 'soma de quantidade × (1 + perda) × custo médio atual de cada item, abrindo todos os kits',
     nivel: 0,
     pai: null,
     valorRelatorio: referencia?.ggf ?? '—',
-    valorSistema: ggfEscolhido.valor,
-    origem: ggfEscolhido.origem,
-    bate: referencia === undefined ? null : ggfBate,
+    valorSistema: custoTotal.comCustoMedioAtual,
+    origem: 'soma dos itens com o custo médio atual do estoque',
+    bate: referencia === undefined || custoTotal.comCustoMedioAtual === null ? null : totalBate,
   });
-  if (referencia === undefined) {
-    conclusao.push({
-      tipo: 'info',
-      texto: `O GGF encontrado é R$ ${numeroBr(ggfEscolhido.valor)} (${ggfEscolhido.origem}). Não há valor do relatório do Omie cadastrado para conferir este produto.`,
-    });
-  } else if (ggfBate) {
-    conclusao.push({ tipo: 'ok', texto: `O GGF bate com o relatório (R$ ${referencia.ggf}) e vem do ${ggfEscolhido.origem}.` });
+  if (custoTotal.comCustoMedioAtual === null) {
+    conclusao.push({ tipo: 'problema', texto: `Não foi possível somar o custo total: ${custoTotal.erro ?? 'erro desconhecido'}.` });
+    pendencias.push('a soma do custo total');
   } else {
-    conclusao.push({
-      tipo: 'problema',
-      texto:
-        ggfEscolhido.valor === 0
-          ? `O GGF não bate: o relatório mostra R$ ${referencia.ggf}, mas o Omie devolve GGF zero para este produto e para os kits. É preciso descobrir onde esse valor está cadastrado no Omie ou informá-lo à mão.`
-          : `O GGF não bate: o relatório mostra R$ ${referencia.ggf} e o sistema encontrou R$ ${numeroBr(ggfEscolhido.valor)} (${ggfEscolhido.origem}).`,
-    });
-    pendencias.push('o GGF');
+    const atual = custoTotal.comCustoMedioAtual;
+    if (referencia === undefined) {
+      conclusao.push({ tipo: 'info', texto: `Custo total do produto com o custo médio atual: R$ ${numeroBr(atual)} (${custoTotal.folhas} itens, abrindo todos os kits).` });
+    } else {
+      const { valor: ref } = interpretarValorRelatorio(referencia.ggf);
+      const rel = custoTotal.comValoresDoRelatorio;
+      const partes = [
+        `Custo total com o custo médio atual: R$ ${numeroBr(atual)} (diferença de R$ ${numeroBr(atual - ref)} para os R$ ${referencia.ggf} do relatório)`,
+      ];
+      if (rel !== null && custoTotal.folhasComValorDoRelatorio > 0) {
+        partes.push(
+          `trocando ${custoTotal.folhasComValorDoRelatorio === 1 ? 'o item que tem' : `os ${custoTotal.folhasComValorDoRelatorio} itens que têm`} valor anotado do relatório por esse valor: R$ ${numeroBr(rel)} (diferença de R$ ${numeroBr(rel - ref)})`,
+        );
+      }
+      conclusao.push({
+        tipo: totalBate ? 'ok' : 'info',
+        texto: `${totalBate ? 'Confirmado: o "Valor GGF" do relatório é o custo total do produto. ' : 'Teste da hipótese "Valor GGF = custo total do produto": '}${partes.join('; ')}.`,
+      });
+    }
+    if (custoTotal.kitsComCustoProprio.length > 0) {
+      conclusao.push({ tipo: 'info', texto: `Kits sem estrutura que entraram com o custo médio do próprio kit: ${listaBr(custoTotal.kitsComCustoProprio)}.` });
+    }
+    for (const r of custoTotal.ressalvas) conclusao.push({ tipo: 'problema', texto: r });
+    if (custoTotal.ressalvas.length > 0) pendencias.push('as ressalvas da soma');
   }
+  conclusao.push({ tipo: 'info', texto: 'Não há GGF separado: o custo de fabricação fica dentro das "despesas fixas %" informadas na tela.' });
 
   // ── itens ──
   const semCusto: string[] = [];
-  const naoBatem: string[] = [];
-  const fontesQueBatem = new Set<string>();
+  const diferentes: string[] = [];
   let conferidos = 0;
   let batem = 0;
   for (const c of componentes) {
     const cod = c.codProdMalha ?? '(sem código)';
     const sistema = custoDoSistema(c);
-    if (sistema === null) semCusto.push(cod);
+    if (sistema === null && !semCusto.includes(cod)) semCusto.push(cod);
     const ref = referencia !== undefined && c.codProdMalha !== null && Object.hasOwn(referencia.componentes, c.codProdMalha) ? referencia.componentes[c.codProdMalha] : undefined;
     let bate: boolean | null = null;
-    let origem = sistema?.origem ?? (c.camposNumericosEstoque === null ? 'não encontrado no estoque do Omie' : 'custo zero no estoque do Omie');
+    const kitAberto = c.tipo !== null && TIPOS_COM_ESTRUTURA.has(c.tipo) && componentes.some((x) => x.pai.toUpperCase() === cod.toUpperCase());
+    let origem = kitAberto
+      ? `kit aberto: o custo vem dos itens de dentro${sistema === null ? '' : ` (custo médio do kit, ${numeroBr(sistema.valor)}, não entra)`}`
+      : (sistema?.origem ?? (c.camposNumericosEstoque === null ? 'não encontrado no estoque do Omie → custo manual' : 'custo zero no estoque do Omie → custo manual'));
     if (ref === null) {
       bate = sistema === null;
     } else if (typeof ref === 'string') {
@@ -556,11 +709,10 @@ export function resumirDiagnostico(
       bate = sistema !== null && Math.abs(sistema.valor - valor) <= tolerancia;
       if (bate) {
         batem++;
-        fontesQueBatem.add(sistema!.origem);
       } else {
         const outro = conferencia?.find((x) => x.rotulo === c.codProdMalha)?.confere[0];
         if (outro !== undefined) origem += ` (o relatório bate com: ${nomeOrigem(outro)})`;
-        naoBatem.push(`${cod} (relatório ${ref}; sistema ${sistema === null ? 'sem custo' : numeroBr(sistema.valor)})`);
+        diferentes.push(`${cod} (relatório ${ref}; hoje ${sistema === null ? 'sem custo' : numeroBr(sistema.valor)})`);
       }
     }
     linhas.push({
@@ -582,49 +734,38 @@ export function resumirDiagnostico(
     linhas.push({ item: cod, descricao: null, nivel: 1, pai: null, valorRelatorio: ref ?? 'sem custo', valorSistema: null, origem: 'não aparece na estrutura do Omie (nem nos kits)', bate: false });
   }
 
-  if (referencia === undefined) {
-    // sem conferência de itens
-  } else if (conferidos === 0) {
-    conclusao.push({ tipo: 'info', texto: 'Nenhum item com custo do relatório foi encontrado na estrutura para conferir.' });
-  } else if (batem === conferidos) {
-    conclusao.push({
-      tipo: 'ok',
-      texto: `Os custos dos itens conferidos batem com o relatório (${batem} de ${conferidos}) e usam o ${listaBr([...fontesQueBatem])} do Omie.`,
-    });
-  } else {
-    conclusao.push({ tipo: 'problema', texto: `${conferidos - batem} de ${conferidos} itens conferidos não batem com o relatório: ${listaBr(naoBatem)}.` });
-    pendencias.push('os itens cujo custo não bate');
+  if (referencia !== undefined) {
+    if (conferidos === 0) {
+      conclusao.push({ tipo: 'info', texto: 'Nenhum item com custo do relatório foi encontrado na estrutura para conferir.' });
+    } else if (batem === conferidos) {
+      conclusao.push({ tipo: 'ok', texto: `Os custos dos itens conferidos batem com o relatório (${batem} de ${conferidos}): a base é o custo médio do estoque.` });
+    } else {
+      conclusao.push({
+        tipo: 'info',
+        texto: `${batem} de ${conferidos} itens conferidos batem com o relatório. Mudaram desde o relatório (o sistema usa o custo médio ATUAL, que é o correto): ${listaBr(diferentes)}.`,
+      });
+    }
   }
   if (naoEncontrados.length > 0) {
     conclusao.push({ tipo: 'problema', texto: `O relatório mostra ${listaBr(naoEncontrados)}, mas ${naoEncontrados.length === 1 ? 'esse item não aparece' : 'esses itens não aparecem'} na estrutura que o Omie devolve (nem dentro dos kits).` });
     pendencias.push('os itens que não aparecem na estrutura');
   }
 
-  // ── sem custo ──
-  const diretos = componentes.filter((c) => c.nivel === 1);
-  const diretosSemCusto = diretos.filter((c) => custoDoSistema(c) === null).length;
-  if (componentes.some((c) => c.nivel > 1)) {
-    conclusao.push({
-      tipo: diretosSemCusto === 0 ? 'ok' : 'problema',
-      texto:
-        diretosSemCusto === 0
-          ? `Os ${diretos.length} itens diretos do produto (incluindo os kits) têm custo no estoque do Omie.`
-          : `${diretosSemCusto} de ${diretos.length} itens diretos do produto estão sem custo no estoque do Omie.`,
-    });
-  }
+  // ── sem custo → custo manual ──
+  // Só as FOLHAS da soma precisam de custo: um kit aberto não entra com o próprio custo. Se a soma
+  // falhou, cai na lista de todos os itens (conservador).
+  if (custoTotal.comCustoMedioAtual !== null) semCusto.splice(0, semCusto.length, ...custoTotal.itensSemCusto);
+  const totalDeItens = custoTotal.comCustoMedioAtual !== null ? custoTotal.folhas : componentes.length;
   if (semCusto.length === 0) {
-    conclusao.push({ tipo: 'ok', texto: `Todos os ${componentes.length} itens da estrutura têm custo.` });
+    conclusao.push({ tipo: 'ok', texto: `Todos os ${totalDeItens} itens que entram no custo têm custo.` });
   } else {
     conclusao.push({
       tipo: 'problema',
-      texto: `Sem custo: ${listaBr(semCusto)}. Se o preço for montado item a item (abrindo os kits), eles entram como zero — precisam de custo digitado à mão (ou de uma compra lançada no Omie).`,
+      texto: `Sem custo no Omie: ${listaBr(semCusto)}. Eles entram como zero até alguém informar o custo manual (tela "Custos manuais").`,
     });
-    pendencias.push(semCusto.length === 1 ? 'o item sem custo' : `os ${semCusto.length} itens sem custo`);
+    pendencias.push(semCusto.length === 1 ? 'o custo manual do item sem custo' : `o custo manual dos ${semCusto.length} itens sem custo`);
   }
-  if (componentesNaoConsultados > 0) {
-    conclusao.push({ tipo: 'problema', texto: `A estrutura é grande: ${componentesNaoConsultados} item(ns) ficaram de fora deste diagnóstico.` });
-    pendencias.push('os itens que ficaram de fora do diagnóstico');
-  }
+  if (componentesNaoConsultados > 0) pendencias.push('os itens que ficaram de fora do diagnóstico');
 
   // ── perda ──
   const comPerda = componentes.filter((c) => (paraNumero(c.percPerda) ?? 0) > 0);
@@ -633,21 +774,21 @@ export function resumirDiagnostico(
       ? { tipo: 'info', texto: 'Nenhum item tem % de perda cadastrado na estrutura (todos 0%), então a perda não muda nenhuma quantidade.' }
       : {
           tipo: 'info',
-          texto: `${comPerda.length} item(ns) têm % de perda cadastrado: ${listaBr(comPerda.map((c) => `${c.codProdMalha ?? '?'} (${(paraNumero(c.percPerda) ?? 0).toLocaleString('pt-BR')}%)`))}. A perda não muda o custo unitário de nenhum item; ela só conta quando o preço é montado item a item, e aí a quantidade deve ser quantidade × (1 + perda). Se o preço usar o custo pronto dos kits, vale o custo médio que o Omie já tem para eles.`,
+          texto: `${comPerda.length} item(ns) têm % de perda cadastrado: ${listaBr(comPerda.map((c) => `${c.codProdMalha ?? '?'} (${(paraNumero(c.percPerda) ?? 0).toLocaleString('pt-BR')}%)`))}. A soma já usa quantidade × (1 + perda).`,
         },
   );
 
   // ── veredito ──
   const podeUsar = referencia !== undefined && pendencias.length === 0;
   if (podeUsar) {
-    conclusao.push({ tipo: 'ok', texto: 'Pode usar: o custo encontrado pelo sistema confere com o relatório do Omie e nenhum item está sem custo.' });
+    conclusao.push({ tipo: 'ok', texto: 'Pode usar: o custo foi somado item a item, com o custo médio atual, e nenhum item está sem custo.' });
   } else if (referencia === undefined) {
     conclusao.push({
       tipo: 'info',
-      texto: `Não dá para confirmar este custo: não há valores do relatório do Omie cadastrados para ${codigo}.${semCusto.length > 0 ? ' E há itens sem custo.' : ''}`,
+      texto: `Não há valores do relatório do Omie cadastrados para ${codigo} para conferir.${semCusto.length > 0 ? ' E há itens sem custo, que precisam de custo manual.' : ''}`,
     });
   } else {
-    conclusao.push({ tipo: 'problema', texto: `Ainda não dá para usar este custo para formar preço. Falta resolver: ${listaBr(pendencias)}.` });
+    conclusao.push({ tipo: 'problema', texto: `Ainda não dá para usar este custo para formar preço. Falta: ${listaBr(pendencias)}.` });
   }
 
   return { linhas, conclusao, podeUsar };

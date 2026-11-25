@@ -39,6 +39,8 @@ const repositorio = vi.hoisted(() => ({
   listarHistorico: vi.fn(),
 }));
 vi.mock('../../src/precificacao/parametrosFiscaisRepositorio.js', () => repositorio);
+// As rotas de custo manual têm testes próprios (precificacaoCustosManuaisRotas.test.ts); aqui o repositório nunca é tocado.
+vi.mock('../../src/precificacao/custosManuaisRepositorio.js', () => ({}));
 
 const { criarRotasPrecificacao } = await import('../../src/rotas/precificacaoRotas.js');
 const { tratadorDeErros } = await import('../../src/rotas/erroHttp.js');

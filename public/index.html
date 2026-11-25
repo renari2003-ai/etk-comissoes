@@ -1188,6 +1188,99 @@ OBSERVACOES: Entrega em horário comercial.</pre>
         </table>
       </div>
     </section>
+    <section id="precificacao-secao-custos-manuais" class="painel-usuarios">
+      <h2 class="titulo-secao">Custos manuais</h2>
+      <p class="filtro-data-legenda">
+        Para item sem custo no Omie ou com custo errado. Digite o valor unitário como na nota de compra, <strong>com impostos</strong>:
+        os créditos (IPI e PIS/COFINS) saem sozinhos. Salvo aqui, vale nos próximos cálculos, na frente do custo do Omie. Nunca é gravado no Omie.
+        Valor vazio guarda só os dados fiscais de um item que tem custo no Omie mas não tem nota de entrada.
+      </p>
+      <form id="precificacao-form-custo-manual" autocomplete="off" novalidate>
+        <p id="precificacao-custo-modo" class="filtro-data-legenda"></p>
+        <div class="filtros-relatorio">
+          <div class="campo-filtro">
+            <label for="precificacao-custo-codigo">Código do componente</label>
+            <input id="precificacao-custo-codigo" type="text" maxlength="60" required placeholder="ex.: MP00000045" />
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-custo-valor">Valor da nota (unitário, com impostos)</label>
+            <input id="precificacao-custo-valor" type="text" inputmode="decimal" placeholder="ex.: 12,86" />
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-custo-uf">UF do fornecedor</label>
+            <select id="precificacao-custo-uf" required></select>
+          </div>
+          <div class="campo-filtro" id="precificacao-custo-campo-pta">
+            <label for="precificacao-custo-pta">Compra com diferimento PTA?</label>
+            <select id="precificacao-custo-pta">
+              <option value="">Escolha…</option>
+              <option value="sim">Sim (ICMS 0%)</option>
+              <option value="nao">Não (alíquota interna de MG)</option>
+            </select>
+          </div>
+          <div class="campo-filtro" id="precificacao-custo-campo-importada" hidden>
+            <label for="precificacao-custo-importada">Mercadoria importada?</label>
+            <select id="precificacao-custo-importada">
+              <option value="nao">Não (ICMS 12%)</option>
+              <option value="sim">Sim (ICMS 4%)</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-custo-tipo">Tipo de fornecedor</label>
+            <select id="precificacao-custo-tipo">
+              <option value="INDUSTRIA_NORMAL">Indústria normal (Lucro Real/Presumido)</option>
+              <option value="SIMPLES_NACIONAL">Simples Nacional</option>
+              <option value="COMERCIO">Comércio/distribuidor</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-custo-ipi">IPI %</label>
+            <input id="precificacao-custo-ipi" type="text" inputmode="decimal" aria-describedby="precificacao-custo-ipi-dica" />
+            <small id="precificacao-custo-ipi-dica" class="filtro-data-legenda"></small>
+          </div>
+        </div>
+        <button type="submit" id="precificacao-custo-salvar" class="botao-secundario">Salvar custo manual</button>
+        <button type="button" id="precificacao-custo-limpar" class="botao-secundario">Limpar</button>
+        <p id="precificacao-custo-erro" class="painel-login-erro" role="alert" hidden></p>
+        <p id="precificacao-custo-ok" class="filtro-data-legenda" role="status" hidden></p>
+      </form>
+      <div class="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Código</th>
+              <th scope="col">Valor da nota</th>
+              <th scope="col">UF</th>
+              <th scope="col">PTA / importada</th>
+              <th scope="col">Tipo de fornecedor</th>
+              <th scope="col">IPI</th>
+              <th scope="col">Alterado por</th>
+              <th scope="col">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-tbody-custos"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="painel-usuarios">
+      <h2 class="titulo-secao">Histórico dos custos manuais</h2>
+      <p id="precificacao-custos-historico-erro" class="painel-login-erro" role="alert" hidden></p>
+      <div class="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Quando</th>
+              <th scope="col">Quem</th>
+              <th scope="col">Item</th>
+              <th scope="col">Campo</th>
+              <th scope="col">Antes</th>
+              <th scope="col">Depois</th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-tbody-custos-historico"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <main class="conteudo" id="modo-consulta">

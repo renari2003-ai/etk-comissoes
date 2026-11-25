@@ -2,6 +2,8 @@ import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { ErroSemPermissao } from '../auth/erros.js';
+import { validarCodigoComponente, validarGravacaoCustoManual, validarRemocaoCustoManual } from '../precificacao/custoManual.js';
+import { listarCustosManuais, listarHistoricoCustosManuais, removerCustoManual, salvarCustoManual } from '../precificacao/custosManuaisRepositorio.js';
 import { validarAtualizacaoTabelaFiscal } from '../precificacao/parametrosFiscais.js';
 import { atualizarTabelaFiscal, lerTabelaFiscal, listarHistorico } from '../precificacao/parametrosFiscaisRepositorio.js';
 import { ErroValidacao } from '../validacao.js';
@@ -63,6 +65,51 @@ export function criarRotasPrecificacao(): Router {
     exigirAdministradorTabelaFiscal,
     assincrono(async (req, res) => {
       res.json(await listarHistorico(validarLimite(req.query.limite)));
+    }),
+  );
+
+  // ── Custos manuais (etapa 3): quem tem a permissão `precificacao` lê e grava (é o operador que
+  // digita o custo); toda alteração vai para o histórico com o usuário. Nunca grava no Omie.
+  rotas.get(
+    '/api/precificacao/custos-manuais',
+    exigirAutenticacao,
+    exigirPermissao('precificacao'),
+    assincrono(async (_req, res) => {
+      res.json(await listarCustosManuais());
+    }),
+  );
+
+  rotas.get(
+    '/api/precificacao/custos-manuais/historico',
+    exigirAutenticacao,
+    exigirPermissao('precificacao'),
+    assincrono(async (req, res) => {
+      const codigo = req.query.codigo === undefined ? null : validarCodigoComponente(req.query.codigo);
+      res.json(await listarHistoricoCustosManuais(codigo, validarLimite(req.query.limite)));
+    }),
+  );
+
+  rotas.put(
+    '/api/precificacao/custos-manuais/:codigo',
+    exigirAutenticacao,
+    exigirPermissao('precificacao'),
+    assincrono(async (req, res) => {
+      const { versao, custo } = validarGravacaoCustoManual(req.params.codigo, req.body);
+      const usuario = req.usuario!;
+      res.json(await salvarCustoManual(custo, versao, { id: usuario.id, nome: usuario.nome }));
+    }),
+  );
+
+  rotas.delete(
+    '/api/precificacao/custos-manuais/:codigo',
+    exigirAutenticacao,
+    exigirPermissao('precificacao'),
+    assincrono(async (req, res) => {
+      const codigo = validarCodigoComponente(req.params.codigo);
+      const versao = validarRemocaoCustoManual(req.body);
+      const usuario = req.usuario!;
+      await removerCustoManual(codigo, versao, { id: usuario.id, nome: usuario.nome });
+      res.status(204).end();
     }),
   );
 

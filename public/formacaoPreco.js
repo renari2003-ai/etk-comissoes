@@ -5,6 +5,7 @@
  * Percentuais em pontos (9,25 = 9,25%), como na API.
  */
 import { obterUsuarioLogado } from './auth.js';
+import { inicializarCustosManuais } from './custosManuaisTela.js';
 // TEMPORÁRIO: diagnóstico do custo — remover junto com a rota antes de produção.
 import { inicializarDiagnosticoCusto } from './diagnosticoCustoTela.js';
 const CAMPOS_GERAIS = [
@@ -68,6 +69,7 @@ export function inicializarFormacaoPreco() {
     const textoErroHistorico = el('precificacao-historico-erro');
     const botaoRecarregar = el('precificacao-recarregar');
     const diagnostico = inicializarDiagnosticoCusto();
+    const custosManuais = inicializarCustosManuais();
     let ehAdmin = false;
     /** Versão lida do servidor — volta no PUT (concorrência otimista: 409 se outro admin salvou antes). */
     let versaoLida = null;
@@ -327,6 +329,7 @@ export function inicializarFormacaoPreco() {
     return {
         ativar: () => {
             diagnostico.ativar(obterUsuarioLogado()?.papel === 'administrador');
+            custosManuais.ativar();
             // Edição não salva: não recarrega por cima (o admin pode ter só trocado de aba).
             if (sujo)
                 return;

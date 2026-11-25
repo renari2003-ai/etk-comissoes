@@ -31,6 +31,13 @@ export function nomeTabelaIcmsMgNcm(): string {
 export function nomeTabelaHistorico(): string {
   return nomeValidado(process.env.PRECIFICACAO_HISTORICO_TABELA ?? 'precificacao_parametros_historico');
 }
+/** Custos manuais (etapa 3) — nunca gravados no Omie. */
+export function nomeTabelaCustosManuais(): string {
+  return nomeValidado(process.env.PRECIFICACAO_CUSTOS_MANUAIS_TABELA ?? 'precificacao_custos_manuais');
+}
+export function nomeTabelaCustosManuaisHistorico(): string {
+  return nomeValidado(process.env.PRECIFICACAO_CUSTOS_MANUAIS_HISTORICO_TABELA ?? 'precificacao_custos_manuais_historico');
+}
 
 let esquemaGarantido: Promise<void> | null = null;
 
@@ -92,6 +99,42 @@ async function criarEsquema(): Promise<void> {
     )
   `);
   await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS ${historico}_alterado_em_idx ON ${historico} (alterado_em DESC)`);
+
+  // Etapa 3 — custos manuais e histórico (tabelas novas; nada de ALTER em tabela existente).
+  const custos = nomeTabelaCustosManuais();
+  const custosHistorico = nomeTabelaCustosManuaisHistorico();
+  await executarDdlIdempotente(`
+    CREATE TABLE IF NOT EXISTS ${custos} (
+      codigo TEXT PRIMARY KEY,
+      valor_nota NUMERIC(18,6) NULL CHECK (valor_nota IS NULL OR valor_nota > 0),
+      uf_fornecedor CHAR(2) NOT NULL,
+      diferimento_pta BOOLEAN NOT NULL,
+      mercadoria_importada BOOLEAN NOT NULL,
+      tipo_fornecedor TEXT NOT NULL CHECK (tipo_fornecedor IN ('INDUSTRIA_NORMAL', 'SIMPLES_NACIONAL', 'COMERCIO')),
+      ipi_percentual NUMERIC(7,4) NULL CHECK (ipi_percentual IS NULL OR (ipi_percentual >= 0 AND ipi_percentual < 100)),
+      versao INTEGER NOT NULL DEFAULT 1,
+      -- Remoção lógica: a linha fica (com a versão), para a versão nunca recomeçar em 1 numa nova
+      -- inclusão do mesmo código — senão uma tela aberta antes da remoção gravaria por cima.
+      removido BOOLEAN NOT NULL DEFAULT false,
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      atualizado_por_id TEXT NOT NULL,
+      atualizado_por_nome TEXT NOT NULL
+    )
+  `);
+  await executarDdlIdempotente(`
+    CREATE TABLE IF NOT EXISTS ${custosHistorico} (
+      id BIGSERIAL PRIMARY KEY,
+      alterado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      usuario_id TEXT NOT NULL,
+      usuario_nome TEXT NOT NULL,
+      codigo TEXT NOT NULL,
+      campo TEXT NOT NULL,
+      valor_anterior TEXT NULL,
+      valor_novo TEXT NULL
+    )
+  `);
+  await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS ${custosHistorico}_codigo_idx ON ${custosHistorico} (codigo, alterado_em DESC)`);
+  await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS ${custosHistorico}_alterado_em_idx ON ${custosHistorico} (alterado_em DESC)`);
 
   const pool = obterPool();
   const g = PARAMETROS_GERAIS_INICIAIS;

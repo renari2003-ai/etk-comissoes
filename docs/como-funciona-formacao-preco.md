@@ -20,8 +20,11 @@ Enquanto houver um desses avisos, trate o preço como provisório.
 
 ## De onde vem o custo
 
-1. A tela busca no Omie a **estrutura do produto** (componentes e quantidades) e o **GGF**.
-2. Cada componente recebe um custo, e a linha mostra de onde ele veio:
+1. A tela busca no Omie a **estrutura do produto** (componentes, quantidades e % de perda). Os kits que têm estrutura própria são abertos até o último nível, como no relatório "Imprimir Estrutura" do Omie.
+   - O custo do produto é a soma, item a item, de **quantidade × (1 + perda) × custo médio do estoque**, usando sempre o custo médio **atual**. Por isso ele pode ser diferente de um relatório antigo.
+   - Um kit aberto **nunca** entra com o próprio custo junto com o dos itens de dentro dele, para não contar duas vezes. Se o kit não tem estrutura no Omie, entra com o custo médio do próprio kit.
+   - Não existe GGF separado: o custo de fabricação já está dentro das **despesas fixas %** que você informa na tela.
+2. Cada item recebe um custo, e a linha mostra de onde ele veio:
    - **Omie:** custo cadastrado no Omie.
    - **Manual:** custo digitado por alguém da ETK.
    - **Sem custo:** nem o Omie nem o cadastro manual têm valor. A linha aparece destacada.
@@ -31,7 +34,7 @@ Enquanto houver um desses avisos, trate o preço como provisório.
 
 ## Quando um item vem sem custo ou com custo errado
 
-Clique no campo de custo do item (ou do GGF) e preencha:
+No modo **💲 Precificação**, use a seção **"Custos manuais"** (ou, quando a tela de preço estiver pronta, o campo de custo do próprio item) e preencha:
 
 - **Valor da nota:** o valor unitário como aparece na nota de compra, **com impostos**.
 - **UF do fornecedor.**
@@ -50,7 +53,11 @@ Se o componente não tem NCM ou alíquota de IPI no cadastro do Omie e o fornece
 Depois escolha:
 
 - **Só nesta simulação:** o valor vale só para este cálculo.
-- **Salvar para próximos cálculos:** o valor fica guardado e passa a valer em todos os próximos cálculos, **na frente do custo do Omie**. Toda mudança fica registrada (quem mudou, quando e qual era o valor anterior).
+- **Salvar para próximos cálculos:** o valor fica guardado e passa a valer em todos os próximos cálculos, **na frente do custo do Omie**. Toda mudança fica registrada (quem mudou, quando e qual era o valor anterior) no "Histórico dos custos manuais". Para voltar a usar o custo do Omie, clique em **Remover**.
+
+Se o item tem custo no Omie mas não tem nota de entrada, deixe o **valor da nota vazio** e preencha só UF, PTA ou importada, tipo de fornecedor e IPI. O custo do Omie continua valendo, e esses dados ficam guardados para você não ter de informá-los a cada cálculo.
+
+Se duas pessoas alterarem o mesmo item ao mesmo tempo, quem salvar por último recebe o aviso para recarregar a tela. Nada é desfeito sem aviso.
 
 Se um item tem custo manual salvo e o Omie passar a ter custo para ele, a tela mostra **os dois valores** para você escolher qual usar.
 
@@ -59,7 +66,7 @@ Se um item tem custo manual salvo e o Omie passar a ter custo para ele, a tela m
 Tudo o que estiver errado ou faltando aparece numa tarja no topo do resultado, dizendo o que é, em qual item e como resolver. A simulação salva e o PDF levam as mesmas tarjas.
 
 - **Vermelha:** o preço não aparece até o problema ser resolvido. Exemplos: produto sem estrutura no Omie; UF do cliente sem alíquota na tabela fiscal ("peça ao administrador para preencher a UF X"); cadastro do cliente inconsistente; Omie fora do ar ("tente de novo em alguns minutos").
-- **Amarela:** o preço aparece, mas marcado **"INCOMPLETO – não usar em cotação"**. Exemplos: item sem custo (com botão para digitar o custo), componente sem NCM ou IPI no cadastro ("corrija o cadastro do item X no Omie"), GGF ausente, estrutura com mais de 60 componentes.
+- **Amarela:** o preço aparece, mas marcado **"INCOMPLETO – não usar em cotação"**. Exemplos: item sem custo (com botão para digitar o custo), componente sem NCM ou IPI no cadastro ("corrija o cadastro do item X no Omie"), estrutura com mais de 60 componentes.
 - **Azul:** informativa. Exemplos: item com custo estimado (sem nota de entrada), custo manual diferente do custo do Omie, DIFAL na base simples, cliente de MG não contribuinte.
 
 No modo reverso, um preço-alvo abaixo do piso aparece numa tarja vermelha no próprio bloco do modo reverso.

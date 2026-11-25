@@ -537,39 +537,50 @@ describe('impostos na compra (créditos do custo)', () => {
 
   it('ponta a ponta: nota → créditos → custo do produto → preço (MG com PTA reproduz o exemplo da spec)', () => {
     const compra = custo(112, 0.12, 0);
-    const r = calcularCusto([{ codigo: 'MP1', quantidade: 1, custoBrutoUnitario: compra.valorBruto, custoLiquidoUnitario: compra.custoLiquido }], 0);
+    const r = calcularCusto([{ codigo: 'MP1', quantidade: 1, custoBrutoUnitario: compra.valorBruto, custoLiquidoUnitario: compra.custoLiquido }]);
     expect(r.custoLiquido).toBeCloseTo(90.75, 10);
     const cheio = precos(cenario(CLIENTE_SP_CONTRIBUINTE), { custoLiquido: r.custoLiquido }).cheio!;
     expect(r2(cheio.preco)).toBe(165.42);
   });
 });
 
-describe('custo do produto (estrutura + GGF)', () => {
-  it('custo bruto e líquido = Σ quantidade × custo + GGF (GGF sem crédito)', () => {
-    const r = calcularCusto(
-      [
-        { codigo: 'MP1', quantidade: 2, custoBrutoUnitario: 112, custoLiquidoUnitario: 90.75 },
-        { codigo: 'PI1', quantidade: 0.5, custoBrutoUnitario: 10, custoLiquidoUnitario: 9 },
-      ],
-      59.76,
-    );
-    expect(r.custoBruto).toBeCloseTo(2 * 112 + 0.5 * 10 + 59.76, 10);
-    expect(r.custoLiquido).toBeCloseTo(2 * 90.75 + 0.5 * 9 + 59.76, 10);
+describe('custo do produto (folhas da estrutura, sem GGF separado)', () => {
+  it('custo bruto e líquido = Σ quantidade × custo; sem GGF e sem custo de fabricação por padrão', () => {
+    const r = calcularCusto([
+      { codigo: 'MP1', quantidade: 2, custoBrutoUnitario: 112, custoLiquidoUnitario: 90.75 },
+      { codigo: 'PI1', quantidade: 0.5, custoBrutoUnitario: 10, custoLiquidoUnitario: 9 },
+    ]);
+    expect(r.custoBruto).toBeCloseTo(2 * 112 + 0.5 * 10, 10);
+    expect(r.custoLiquido).toBeCloseTo(2 * 90.75 + 0.5 * 9, 10);
     expect(r.creditos).toBeCloseTo(2 * 21.25 + 0.5 * 1, 10);
+    expect(r.custoFabricacao).toBe(0);
     expect(r.completo).toBe(true);
     expect(r.itensSemCusto).toEqual([]);
     expect(r.avisos).toEqual([]);
   });
 
+  it('nenhum aviso de GGF: produto completo sem GGF não fica incompleto', () => {
+    const r = calcularCusto([{ codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 }]);
+    expect(r.completo).toBe(true);
+    expect(r.avisos).toEqual([]);
+  });
+
+  it('"% de custo de fabricação" (desligado por padrão): quando informado, soma % × custo bruto dos materiais, sem crédito', () => {
+    const r = calcularCusto([{ codigo: 'MP1', quantidade: 2, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 }], { percentualCustoFabricacao: 0.1 });
+    expect(r.custoFabricacao).toBeCloseTo(20, 10);
+    expect(r.custoBruto).toBeCloseTo(220, 10);
+    expect(r.custoLiquido).toBeCloseTo(200, 10);
+    expect(r.creditos).toBeCloseTo(20, 10);
+    expect(() => calcularCusto([], { percentualCustoFabricacao: 1 })).toThrow(ErroValidacao);
+    expect(() => calcularCusto([], { percentualCustoFabricacao: -0.1 })).toThrow(ErroValidacao);
+  });
+
   it('tarja AMARELA "item sem custo": entra com zero, com o código do item e "digite o custo manual"', () => {
-    const r = calcularCusto(
-      [
-        { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
-        { codigo: 'MO00000037', quantidade: 2, custoBrutoUnitario: null, custoLiquidoUnitario: null },
-      ],
-      10,
-    );
-    expect(r.custoLiquido).toBeCloseTo(100, 10);
+    const r = calcularCusto([
+      { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
+      { codigo: 'MO00000037', quantidade: 2, custoBrutoUnitario: null, custoLiquidoUnitario: null },
+    ]);
+    expect(r.custoLiquido).toBeCloseTo(90, 10);
     expect(r.itensSemCusto).toEqual(['MO00000037']);
     expect(r.completo).toBe(false);
     expect(r.avisos).toEqual([
@@ -578,15 +589,12 @@ describe('custo do produto (estrutura + GGF)', () => {
   });
 
   it('tarja AMARELA "sem NCM/IPI": item com custo entra pelo valor BRUTO, sem crédito (nunca zero)', () => {
-    const r = calcularCusto(
-      [
-        { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
-        { codigo: 'MP00000045', quantidade: 3, custoBrutoUnitario: 50, custoLiquidoUnitario: null },
-      ],
-      10,
-    );
-    expect(r.custoBruto).toBeCloseTo(100 + 150 + 10, 10);
-    expect(r.custoLiquido).toBeCloseTo(90 + 150 + 10, 10);
+    const r = calcularCusto([
+      { codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 },
+      { codigo: 'MP00000045', quantidade: 3, custoBrutoUnitario: 50, custoLiquidoUnitario: null },
+    ]);
+    expect(r.custoBruto).toBeCloseTo(100 + 150, 10);
+    expect(r.custoLiquido).toBeCloseTo(90 + 150, 10);
     expect(r.itensSemCredito).toEqual(['MP00000045']);
     expect(r.itensSemCusto).toEqual([]);
     expect(r.completo).toBe(false);
@@ -595,16 +603,21 @@ describe('custo do produto (estrutura + GGF)', () => {
     expect(r.avisos[0]!.mensagem).toContain('Corrija o cadastro do item MP00000045 no Omie');
   });
 
-  it('tarja AMARELA "GGF ausente": entra com zero', () => {
-    const r = calcularCusto([{ codigo: 'MP1', quantidade: 1, custoBrutoUnitario: 100, custoLiquidoUnitario: 90 }], null);
-    expect(r.ggfAusente).toBe(true);
-    expect(r.itensSemCusto).toEqual([]);
-    expect(r.completo).toBe(false);
-    expect(r.avisos).toEqual([{ nivel: 'AMARELO', codigo: 'GGF_AUSENTE', item: 'GGF', mensagem: 'GGF não encontrado — entrou como zero. Digite o GGF manual.' }]);
+  it('o mesmo item em vários ramos (folhas repetidas): soma todas as quantidades, mas um aviso só por código', () => {
+    const r = calcularCusto([
+      { codigo: 'MO37', quantidade: 1, custoBrutoUnitario: null, custoLiquidoUnitario: null },
+      { codigo: 'MO37', quantidade: 2, custoBrutoUnitario: null, custoLiquidoUnitario: null },
+      { codigo: 'MP45', quantidade: 1, custoBrutoUnitario: 10, custoLiquidoUnitario: null },
+      { codigo: 'MP45', quantidade: 3, custoBrutoUnitario: 10, custoLiquidoUnitario: null },
+    ]);
+    expect(r.itensSemCusto).toEqual(['MO37']);
+    expect(r.itensSemCredito).toEqual(['MP45']);
+    expect(r.custoLiquido).toBeCloseTo(40, 10);
+    expect(r.avisos.map((a) => `${a.codigo}:${a.item}`)).toEqual(['ITEM_SEM_CUSTO:MO37', 'ITEM_SEM_NCM_IPI:MP45']);
   });
 
   it('custo líquido maior que o bruto ou quantidade negativa → erro explícito', () => {
-    expect(() => calcularCusto([{ codigo: 'X', quantidade: 1, custoBrutoUnitario: 10, custoLiquidoUnitario: 11 }], 0)).toThrow(ErroValidacao);
-    expect(() => calcularCusto([{ codigo: 'X', quantidade: -1, custoBrutoUnitario: 10, custoLiquidoUnitario: 9 }], 0)).toThrow(ErroValidacao);
+    expect(() => calcularCusto([{ codigo: 'X', quantidade: 1, custoBrutoUnitario: 10, custoLiquidoUnitario: 11 }])).toThrow(ErroValidacao);
+    expect(() => calcularCusto([{ codigo: 'X', quantidade: -1, custoBrutoUnitario: 10, custoLiquidoUnitario: 9 }])).toThrow(ErroValidacao);
   });
 });

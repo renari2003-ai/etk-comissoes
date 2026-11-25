@@ -61,7 +61,7 @@ describe('diagnóstico de custo (rota temporária) — conferência com o relat�
     const r = await diagnosticarCusto(clienteFalso(), 'PA00000001', '24/11/2026');
     const porRotulo = Object.fromEntries((r.conferencia ?? []).map((c) => [c.rotulo, c]));
 
-    expect(porRotulo['Valor GGF']!.confere.map((c) => `${c.origem}.${c.campo}`)).toEqual([
+    expect(porRotulo['Valor "GGF" do relatório']!.confere.map((c) => `${c.origem}.${c.campo}`)).toEqual([
       'ConsultarEstrutura.custoProducao.vGGF',
       'ConsultarDadosProducao.nValorGGF',
     ]);
@@ -253,14 +253,125 @@ describe('diagnóstico de custo — subníveis (kits) e resumo em linguagem simp
     expect(cliente.chamadas.filter((c) => c.startsWith('estrutura:'))).toEqual(['estrutura:PA00000001', 'estrutura:KIT1']);
   });
 
-  it('GGF dos kits é somado pela quantidade (com perda) e pode bater com o relatório', async () => {
-    // 2 kits × 29,88 = 59,76
-    const r = await diagnosticarCusto(clienteComKit(29.88), 'PA00000001', '24/11/2026');
-    const ggf = r.resumo.linhas[0]!;
-    expect(ggf.bate).toBe(true);
-    expect(ggf.valorSistema).toBeCloseTo(59.76, 6);
-    expect(ggf.origem).toBe('GGF somado das estruturas dos kits/subníveis');
-    expect(r.resumo.conclusao[0]).toEqual({ tipo: 'ok', texto: expect.stringContaining('O GGF bate com o relatório (R$ 59,76)') });
+  it('custo total: abre o kit e soma só os itens de dentro (o custo do kit, R$ 25, NÃO entra junto)', async () => {
+    const r = await diagnosticarCusto(clienteComKit(), 'PA00000001', '24/11/2026');
+    // PI10000014: 1 × 0,192111; KIT1 (×2): MP08 0,5 × 1,10 × 17,06279 + MO13 1 × 5,238053 + MP45 sem custo.
+    const esperado = 0.192111 + 2 * (0.5 * 1.1 * 17.06279 + 5.238053);
+    expect(r.custoTotal.comCustoMedioAtual).toBeCloseTo(esperado, 9);
+    expect(r.custoTotal.folhas).toBe(4);
+    expect(r.custoTotal.itensSemCusto).toEqual(['MP00000045']);
+    expect(r.custoTotal.kitsComCustoProprio).toEqual([]);
+    const linha = r.resumo.linhas[0]!;
+    expect(linha).toMatchObject({ item: 'Custo total do produto (o relatório chama de "Valor GGF")', valorRelatorio: '59,76', bate: false });
+    expect(linha.valorSistema).toBeCloseTo(esperado, 9);
+  });
+
+  it('custo total também com os valores do relatório no lugar do custo médio atual (relatório antigo)', async () => {
+    const base = clienteComKit();
+    const cliente = clienteFalso({
+      ...base,
+      async obterEstoqueProduto(id, data) {
+        if (id === 20) return { listaEstoque: [{ nCodProd: 20, nCMC: 12.86 }] };
+        return base.obterEstoqueProduto(id, data);
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(r.custoTotal.comCustoMedioAtual).toBeCloseTo(0.192111 + 2 * (0.5 * 1.1 * 12.86 + 5.238053), 9);
+    expect(r.custoTotal.comValoresDoRelatorio).toBeCloseTo(0.192111 + 2 * (0.5 * 1.1 * 17.06279 + 5.238053), 9);
+    expect(r.custoTotal.folhasComValorDoRelatorio).toBe(3);
+    const textos = r.resumo.conclusao.map((c) => c.texto);
+    expect(textos).toContainEqual(expect.stringMatching(/^Teste da hipótese "Valor GGF = custo total do produto": Custo total com o custo médio atual: R\$ /));
+    expect(textos).toContainEqual(expect.stringContaining('Mudaram desde o relatório (o sistema usa o custo médio ATUAL, que é o correto): MP00000008 (relatório 17,06279; hoje 12,86)'));
+  });
+
+  it('kit SEM estrutura entra com o custo médio do próprio kit', async () => {
+    const base = clienteComKit();
+    const cliente = clienteFalso({
+      ...base,
+      async consultarEstrutura(cod) {
+        if (cod === 'KIT1') return { ident: { idProduto: 70 }, itens: [] };
+        return base.consultarEstrutura(cod);
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(r.custoTotal.comCustoMedioAtual).toBeCloseTo(0.192111 + 2 * 25, 9);
+    expect(r.custoTotal.kitsComCustoProprio).toEqual(['KIT1']);
+  });
+
+  it('falha só nos dados de produção do kit NÃO impede abrir o kit (a estrutura foi lida)', async () => {
+    const base = clienteComKit();
+    const cliente = clienteFalso({
+      ...base,
+      async consultarDadosProducao(id) {
+        if (id === 70) throw new OmieError('dados de produção indisponíveis');
+        return { nValorGGF: 0 };
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(r.subestruturas.find((s) => s.codigo === 'KIT1')).toMatchObject({ estruturaLida: true, erro: expect.stringContaining('dados de produção') });
+    expect(r.custoTotal.comCustoMedioAtual).toBeCloseTo(0.192111 + 2 * (0.5 * 1.1 * 17.06279 + 5.238053), 9);
+    expect(r.custoTotal.kitsComCustoProprio).toEqual([]);
+    expect(r.custoTotal.ressalvas).toEqual([]);
+  });
+
+  it('estrutura do kit que não pôde ser lida: entra com o custo do próprio kit, com ressalva', async () => {
+    const base = clienteComKit();
+    const cliente = clienteFalso({
+      ...base,
+      async consultarEstrutura(cod) {
+        if (cod === 'KIT1') throw new OmieError('estrutura indisponível');
+        return base.consultarEstrutura(cod);
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(r.custoTotal.comCustoMedioAtual).toBeCloseTo(0.192111 + 2 * 25, 9);
+    expect(r.custoTotal.ressalvas).toEqual([expect.stringContaining('A estrutura do kit KIT1 não pôde ser lida (estrutura: estrutura indisponível)')]);
+  });
+
+  it('kit aberto sem custo próprio no Omie NÃO vira pendência de custo manual (só as folhas contam)', async () => {
+    const base = clienteComKit();
+    const cliente = clienteFalso({
+      ...base,
+      async obterEstoqueProduto(id, data) {
+        if (id === 70) return { listaEstoque: [{ nCodProd: 70, nCMC: 0 }] };
+        return base.obterEstoqueProduto(id, data);
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    const semCusto = r.resumo.conclusao.find((c) => c.texto.startsWith('Sem custo no Omie'))!;
+    expect(semCusto.texto).toContain('MP00000045');
+    expect(semCusto.texto).not.toContain('KIT1');
+    expect(r.resumo.linhas.find((l) => l.item === 'KIT1')!.origem).toBe('kit aberto: o custo vem dos itens de dentro');
+  });
+
+  it('quantidade ilegível na estrutura não é adivinhada: a soma não sai e o motivo aparece', async () => {
+    const cliente = clienteFalso({
+      async consultarEstrutura() {
+        return { ident: { idProduto: 1 }, itens: [{ codProdMalha: 'PI10000014', idProdMalha: 10, quantProdMalha: 'um' }] };
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA99999999', '24/11/2026');
+    expect(r.custoTotal.comCustoMedioAtual).toBeNull();
+    expect(r.custoTotal.erro).toMatch(/Quantidade do item PI10000014 ausente ou ilegível/);
+    expect(r.resumo.conclusao[0]).toMatchObject({ tipo: 'problema', texto: expect.stringContaining('Não foi possível somar o custo total') });
+  });
+
+  it('quando a soma bate com o "Valor GGF" do relatório, confirma que ele é o custo total', async () => {
+    const cliente = clienteFalso({
+      async consultarEstrutura() {
+        return { ident: { idProduto: 1 }, custoProducao: { vGGF: 0 }, itens: [{ codProdMalha: 'X1', idProdMalha: 80, quantProdMalha: 2 }] };
+      },
+      async obterEstoqueProduto(id) {
+        return { listaEstoque: id === 80 ? [{ nCodProd: 80, nCMC: 29.88 }] : [] };
+      },
+      async consultarDadosProducao() {
+        return { nValorGGF: 0 };
+      },
+    });
+    const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
+    expect(r.resumo.linhas[0]!.bate).toBe(true);
+    expect(r.conferencia![0]!.confere).toEqual([{ origem: 'Custo total', campo: 'folhas × custo médio atual', valor: 59.76 }]);
+    expect(r.resumo.conclusao[0]).toMatchObject({ tipo: 'ok', texto: expect.stringContaining('Confirmado: o "Valor GGF" do relatório é o custo total do produto.') });
   });
 
   it('tabela: valor do relatório, valor do sistema em português e ✔/✘; sem custo aparece como tal', async () => {
@@ -272,14 +383,18 @@ describe('diagnóstico de custo — subníveis (kits) e resumo em linguagem simp
     expect(porItem.MO00000037).toMatchObject({ valorSistema: null, bate: false, origem: expect.stringContaining('não aparece na estrutura') });
   });
 
-  it('conclusão: GGF zerado, itens batem, itens sem custo, perda e veredito "ainda não dá"', async () => {
+  it('conclusão: sem GGF separado, itens batem, sem custo vai para o custo manual, perda e veredito "ainda não dá"', async () => {
     const r = await diagnosticarCusto(clienteComKit(), 'PA00000001', '24/11/2026');
     const textos = r.resumo.conclusao.map((c) => `${c.tipo}: ${c.texto}`);
-    expect(textos[0]).toMatch(/^problema: O GGF não bate: o relatório mostra R\$ 59,76, mas o Omie devolve GGF zero/);
-    expect(textos).toContainEqual(expect.stringMatching(/^ok: Os custos dos itens conferidos batem com o relatório \(3 de 3\) e usam o custo médio do estoque do Omie\.$/));
-    expect(textos).toContainEqual(expect.stringMatching(/^problema: Sem custo: MP00000045\./));
-    expect(textos).toContainEqual(expect.stringMatching(/1 item\(ns\) têm % de perda cadastrado: MP00000008 \(10%\)/));
-    expect(textos.at(-1)).toMatch(/^problema: Ainda não dá para usar este custo para formar preço\. Falta resolver: o GGF, /);
+    expect(textos[0]).toMatch(/^info: Teste da hipótese "Valor GGF = custo total do produto"/);
+    expect(textos).toContainEqual('info: Não há GGF separado: o custo de fabricação fica dentro das "despesas fixas %" informadas na tela.');
+    expect(textos.some((t) => /GGF (não bate|zero)/.test(t))).toBe(false);
+    expect(textos).toContainEqual('ok: Os custos dos itens conferidos batem com o relatório (3 de 3): a base é o custo médio do estoque.');
+    expect(textos).toContainEqual(expect.stringMatching(/^problema: Sem custo no Omie: MP00000045\. .*custo manual/));
+    expect(textos).toContainEqual(expect.stringMatching(/1 item\(ns\) têm % de perda cadastrado: MP00000008 \(10%\)\. A soma já usa quantidade × \(1 \+ perda\)\./));
+    expect(textos.at(-1)).toBe(
+      'problema: Ainda não dá para usar este custo para formar preço. Falta: os itens que não aparecem na estrutura e o custo manual do item sem custo.',
+    );
     expect(r.resumo.podeUsar).toBe(false);
   });
 
@@ -305,7 +420,7 @@ describe('diagnóstico de custo — subníveis (kits) e resumo em linguagem simp
       const r = await diagnosticarCusto(cliente, 'PA00000001', '24/11/2026');
       expect(r.resumo.podeUsar).toBe(true);
       expect(r.resumo.conclusao.at(-1)!.texto).toMatch(/^Pode usar/);
-      expect(r.resumo.conclusao[0]!.texto).toContain('vem do GGF da estrutura do produto');
+      expect(r.resumo.conclusao[0]!.texto).toContain('Teste da hipótese');
     } finally {
       REFERENCIAS_RELATORIO.PA00000001 = original;
     }
@@ -315,17 +430,20 @@ describe('diagnóstico de custo — subníveis (kits) e resumo em linguagem simp
     const r = await diagnosticarCusto(clienteFalso(), 'PA99999999', '24/11/2026');
     expect(r.resumo.podeUsar).toBe(false);
     expect(r.resumo.linhas.every((l) => l.bate === null)).toBe(true);
-    expect(r.resumo.conclusao.at(-1)).toMatchObject({ tipo: 'info', texto: expect.stringContaining('não há valores do relatório do Omie cadastrados para PA99999999') });
+    expect(r.resumo.conclusao.at(-1)).toMatchObject({ tipo: 'info', texto: expect.stringContaining('Não há valores do relatório do Omie cadastrados para PA99999999') });
   });
 
   it('id em texto ("70") é aceito; ciclo de estrutura não entra em laço', async () => {
     const cliente = clienteFalso({
       async consultarEstrutura(cod) {
-        return { ident: { idProduto: '1' }, itens: [{ codProdMalha: cod === 'A' ? 'B' : 'A', idProdMalha: '70', tipoProdMalha: '03' }] };
+        return { ident: { idProduto: '1' }, itens: [{ codProdMalha: cod === 'A' ? 'B' : 'A', idProdMalha: '70', tipoProdMalha: '03', quantProdMalha: 1 }] };
       },
     });
     const r = await diagnosticarCusto(cliente, 'A', '24/11/2026');
     expect(r.componentes.map((c) => c.codProdMalha)).toEqual(['B', 'A']);
     expect(r.componentes[0]!.idProdMalha).toBe(70);
+    // Ciclo é erro explícito na soma — nunca o custo do kit entrando como folha em silêncio.
+    expect(r.custoTotal.comCustoMedioAtual).toBeNull();
+    expect(r.custoTotal.erro).toMatch(/Estrutura em ciclo: o item A aparece dentro dele mesmo/);
   });
 });
