@@ -56,6 +56,9 @@ function rotuloCampoHistorico(campo) {
     const ncm = /^ncm\.(\d{8})$/.exec(campo);
     if (ncm !== null)
         return `Exceção MG — NCM ${ncm[1]}`;
+    const ipi = /^ipi.(d{8})$/.exec(campo);
+    if (ipi !== null)
+        return `IPI — NCM ${ipi[1]}`;
     return campo;
 }
 async function lerMensagemDeErro(resposta) {
@@ -67,12 +70,15 @@ async function lerMensagemDeErro(resposta) {
         return `Erro ${resposta.status}`;
     }
 }
+const ROTULO_IPI_NCM = 'Alíquota de IPI do NCM (%)';
 export function inicializarFormacaoPreco() {
     const form = el('precificacao-form-parametros');
     const camposGerais = el('precificacao-campos-gerais');
     const tbodyUfs = el('precificacao-tbody-ufs');
     const tbodyNcm = el('precificacao-tbody-ncm');
     const botaoAdicionarNcm = el('precificacao-adicionar-ncm');
+    const tbodyIpi = el('precificacao-tbody-ipi');
+    const botaoAdicionarIpi = el('precificacao-adicionar-ipi');
     const botaoSalvar = el('precificacao-salvar');
     const textoAtualizado = el('precificacao-parametros-atualizado');
     const textoErro = el('precificacao-parametros-erro');
@@ -159,7 +165,8 @@ export function inicializarFormacaoPreco() {
             tbodyUfs.append(tr);
         }
     }
-    function adicionarLinhaNcm(excecao) {
+    /** Linha de NCM + alíquota (exceção de ICMS de MG ou IPI por NCM). */
+    function adicionarLinhaNcm(excecao, tbody = tbodyNcm, rotuloAliquota = 'Alíquota interna de MG para o NCM (%)') {
         const tr = document.createElement('tr');
         const tdNcm = document.createElement('td');
         const inputNcm = document.createElement('input');
@@ -174,7 +181,7 @@ export function inicializarFormacaoPreco() {
         inputNcm.disabled = !ehAdmin;
         tdNcm.append(inputNcm);
         const tdAliquota = document.createElement('td');
-        tdAliquota.append(inputNumero(excecao?.aliquota ?? null, 'Alíquota interna de MG para o NCM (%)', 'aliquota'));
+        tdAliquota.append(inputNumero(excecao?.aliquota ?? null, rotuloAliquota, 'aliquota'));
         const tdAcoes = document.createElement('td');
         if (ehAdmin) {
             const remover = document.createElement('button');
@@ -185,7 +192,7 @@ export function inicializarFormacaoPreco() {
             tdAcoes.append(remover);
         }
         tr.append(tdNcm, tdAliquota, tdAcoes);
-        tbodyNcm.append(tr);
+        tbody.append(tr);
     }
     function renderizar(tabela) {
         versaoLida = tabela.versao;
@@ -195,12 +202,16 @@ export function inicializarFormacaoPreco() {
         tbodyNcm.replaceChildren();
         for (const e of tabela.excecoesNcm)
             adicionarLinhaNcm(e);
+        tbodyIpi.replaceChildren();
+        for (const e of tabela.ipiNcm)
+            adicionarLinhaNcm(e, tbodyIpi, ROTULO_IPI_NCM);
         textoAtualizado.textContent =
             tabela.atualizadoEm === null
                 ? 'Valores iniciais — ainda não editados.'
                 : `Última alteração: ${new Date(tabela.atualizadoEm).toLocaleString('pt-BR')} por ${tabela.atualizadoPor ?? '—'}.`;
         botaoSalvar.hidden = !ehAdmin;
         botaoAdicionarNcm.hidden = !ehAdmin;
+        botaoAdicionarIpi.hidden = !ehAdmin;
         renderizarStatus(tabela);
     }
     function renderizarStatus(tabela) {
@@ -241,11 +252,11 @@ export function inicializarFormacaoPreco() {
             icmsInterestadualVenda: lerNumero(tr.querySelector('input[name="icmsInterestadualVenda"]')),
             aliquotaInterna: lerNumero(tr.querySelector('input[name="aliquotaInterna"]')),
         }));
-        const excecoesNcm = Array.from(tbodyNcm.querySelectorAll('tr')).map((tr) => ({
+        const lerListaNcm = (tbody) => Array.from(tbody.querySelectorAll('tr')).map((tr) => ({
             ncm: tr.querySelector('input[name="ncm"]')?.value.trim() ?? '',
             aliquota: lerNumero(tr.querySelector('input[name="aliquota"]')),
         }));
-        return { versao: versaoLida, gerais, ufs, excecoesNcm };
+        return { versao: versaoLida, gerais, ufs, excecoesNcm: lerListaNcm(tbodyNcm), ipiNcm: lerListaNcm(tbodyIpi) };
     }
     async function carregarHistorico() {
         secaoHistorico.hidden = !ehAdmin;
@@ -309,10 +320,16 @@ export function inicializarFormacaoPreco() {
     form.addEventListener('input', () => {
         sujo = true;
     });
-    tbodyNcm.addEventListener('click', (evento) => {
-        if (evento.target.closest('button') !== null)
-            sujo = true;
+    botaoAdicionarIpi.addEventListener('click', () => {
+        adicionarLinhaNcm(null, tbodyIpi, ROTULO_IPI_NCM);
+        sujo = true;
     });
+    for (const tbody of [tbodyNcm, tbodyIpi]) {
+        tbody.addEventListener('click', (evento) => {
+            if (evento.target.closest('button') !== null)
+                sujo = true;
+        });
+    }
     botaoRecarregar.addEventListener('click', () => {
         void carregar();
     });

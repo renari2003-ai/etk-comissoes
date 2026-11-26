@@ -1174,6 +1174,23 @@ OBSERVACOES: Entrega em horário comercial.</pre>
           </div>
           <button type="button" id="precificacao-adicionar-ncm" class="botao-secundario" hidden>Adicionar NCM</button>
         </fieldset>
+        <fieldset>
+          <legend>IPI por NCM</legend>
+          <p class="filtro-data-legenda">O cadastro de produto do Omie não tem alíquota de IPI, só o NCM. Esta tabela vale para o IPI na venda do produto acabado e para o IPI da compra sem nota. NCM fora da tabela: compra sem crédito (tarja amarela) e venda bloqueada (tarja vermelha). Valores a confirmar pelo fiscal.</p>
+          <div class="tabela-rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">NCM</th>
+                  <th scope="col">IPI (%)</th>
+                  <th scope="col" aria-label="Ações"></th>
+                </tr>
+              </thead>
+              <tbody id="precificacao-tbody-ipi"></tbody>
+            </table>
+          </div>
+          <button type="button" id="precificacao-adicionar-ipi" class="botao-secundario" hidden>Adicionar NCM</button>
+        </fieldset>
         <button type="submit" id="precificacao-salvar" class="botao-secundario" hidden>Salvar tabela fiscal</button>
         <p id="precificacao-parametros-erro" class="painel-login-erro" role="alert" hidden></p>
         <button type="button" id="precificacao-recarregar" class="botao-secundario" hidden>Recarregar a tabela fiscal</button>

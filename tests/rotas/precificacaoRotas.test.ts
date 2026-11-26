@@ -51,6 +51,7 @@ const TABELA = {
   gerais: PARAMETROS_GERAIS_INICIAIS,
   ufs: UFS_INICIAIS,
   excecoesNcm: [],
+  ipiNcm: [],
   versao: 0,
   atualizadoEm: null,
   atualizadoPor: null,
@@ -90,7 +91,7 @@ describe('rotas da tabela fiscal da precificação — proteção e validação'
       headers: { 'Content-Type': 'application/json', ...(token === null ? {} : { Cookie: `${NOME_COOKIE_SESSAO}=${token}` }) },
     });
   const put = (token: string | null, corpo: unknown) => como(token, '/api/precificacao/parametros-fiscais', { method: 'PUT', body: JSON.stringify(corpo) });
-  const corpoValido = () => ({ versao: 0, gerais: PARAMETROS_GERAIS_INICIAIS, ufs: UFS_INICIAIS, excecoesNcm: [] });
+  const corpoValido = () => ({ versao: 0, gerais: PARAMETROS_GERAIS_INICIAIS, ufs: UFS_INICIAIS, excecoesNcm: [], ipiNcm: [] });
 
   it('sem sessão: 401 na leitura, na gravação e no histórico, sem tocar o banco', async () => {
     expect((await como(null, '/api/precificacao/parametros-fiscais')).status).toBe(401);
@@ -119,7 +120,7 @@ describe('rotas da tabela fiscal da precificação — proteção e validação'
     const resposta = await put('admin', corpoValido());
     expect(resposta.status).toBe(200);
     expect(repositorio.atualizarTabelaFiscal).toHaveBeenCalledWith(
-      { gerais: PARAMETROS_GERAIS_INICIAIS, ufs: UFS_INICIAIS, excecoesNcm: [] },
+      { gerais: PARAMETROS_GERAIS_INICIAIS, ufs: UFS_INICIAIS, excecoesNcm: [], ipiNcm: [] },
       0,
       { id: 'id-administrador-false', nome: 'Nome administrador' },
     );

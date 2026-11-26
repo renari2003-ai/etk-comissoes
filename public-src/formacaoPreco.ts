@@ -34,6 +34,8 @@ interface TabelaFiscal {
   gerais: ParametrosGerais;
   ufs: IcmsUf[];
   excecoesNcm: ExcecaoNcm[];
+  /** IPI por NCM (26/11/2026): o cadastro do Omie não tem alíquota de IPI. */
+  ipiNcm: ExcecaoNcm[];
   versao: number;
   atualizadoEm: string | null;
   atualizadoPor: string | null;
@@ -99,6 +101,8 @@ function rotuloCampoHistorico(campo: string): string {
   if (uf !== null) return `${uf[1]} — ${uf[2] === 'aliquotaInterna' ? 'alíquota interna' : 'ICMS interestadual de venda'}`;
   const ncm = /^ncm\.(\d{8})$/.exec(campo);
   if (ncm !== null) return `Exceção MG — NCM ${ncm[1]}`;
+  const ipi = /^ipi.(d{8})$/.exec(campo);
+  if (ipi !== null) return `IPI — NCM ${ipi[1]}`;
   return campo;
 }
 
@@ -111,12 +115,16 @@ async function lerMensagemDeErro(resposta: Response): Promise<string> {
   }
 }
 
+const ROTULO_IPI_NCM = 'Alíquota de IPI do NCM (%)';
+
 export function inicializarFormacaoPreco(): { ativar: () => void } {
   const form = el<HTMLFormElement>('precificacao-form-parametros');
   const camposGerais = el<HTMLElement>('precificacao-campos-gerais');
   const tbodyUfs = el<HTMLTableSectionElement>('precificacao-tbody-ufs');
   const tbodyNcm = el<HTMLTableSectionElement>('precificacao-tbody-ncm');
   const botaoAdicionarNcm = el<HTMLButtonElement>('precificacao-adicionar-ncm');
+  const tbodyIpi = el<HTMLTableSectionElement>('precificacao-tbody-ipi');
+  const botaoAdicionarIpi = el<HTMLButtonElement>('precificacao-adicionar-ipi');
   const botaoSalvar = el<HTMLButtonElement>('precificacao-salvar');
   const textoAtualizado = el<HTMLElement>('precificacao-parametros-atualizado');
   const textoErro = el<HTMLElement>('precificacao-parametros-erro');
@@ -210,7 +218,8 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
     }
   }
 
-  function adicionarLinhaNcm(excecao: ExcecaoNcm | null): void {
+  /** Linha de NCM + alíquota (exceção de ICMS de MG ou IPI por NCM). */
+  function adicionarLinhaNcm(excecao: ExcecaoNcm | null, tbody: HTMLTableSectionElement = tbodyNcm, rotuloAliquota = 'Alíquota interna de MG para o NCM (%)'): void {
     const tr = document.createElement('tr');
     const tdNcm = document.createElement('td');
     const inputNcm = document.createElement('input');
@@ -225,7 +234,7 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
     inputNcm.disabled = !ehAdmin;
     tdNcm.append(inputNcm);
     const tdAliquota = document.createElement('td');
-    tdAliquota.append(inputNumero(excecao?.aliquota ?? null, 'Alíquota interna de MG para o NCM (%)', 'aliquota'));
+    tdAliquota.append(inputNumero(excecao?.aliquota ?? null, rotuloAliquota, 'aliquota'));
     const tdAcoes = document.createElement('td');
     if (ehAdmin) {
       const remover = document.createElement('button');
@@ -236,7 +245,7 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
       tdAcoes.append(remover);
     }
     tr.append(tdNcm, tdAliquota, tdAcoes);
-    tbodyNcm.append(tr);
+    tbody.append(tr);
   }
 
   function renderizar(tabela: TabelaFiscal): void {
@@ -246,12 +255,15 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
     renderizarUfs(tabela.ufs);
     tbodyNcm.replaceChildren();
     for (const e of tabela.excecoesNcm) adicionarLinhaNcm(e);
+    tbodyIpi.replaceChildren();
+    for (const e of tabela.ipiNcm) adicionarLinhaNcm(e, tbodyIpi, ROTULO_IPI_NCM);
     textoAtualizado.textContent =
       tabela.atualizadoEm === null
         ? 'Valores iniciais — ainda não editados.'
         : `Última alteração: ${new Date(tabela.atualizadoEm).toLocaleString('pt-BR')} por ${tabela.atualizadoPor ?? '—'}.`;
     botaoSalvar.hidden = !ehAdmin;
     botaoAdicionarNcm.hidden = !ehAdmin;
+    botaoAdicionarIpi.hidden = !ehAdmin;
     renderizarStatus(tabela);
   }
 
@@ -294,11 +306,12 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
       icmsInterestadualVenda: lerNumero(tr.querySelector<HTMLInputElement>('input[name="icmsInterestadualVenda"]')),
       aliquotaInterna: lerNumero(tr.querySelector<HTMLInputElement>('input[name="aliquotaInterna"]')),
     }));
-    const excecoesNcm = Array.from(tbodyNcm.querySelectorAll<HTMLTableRowElement>('tr')).map((tr) => ({
-      ncm: tr.querySelector<HTMLInputElement>('input[name="ncm"]')?.value.trim() ?? '',
-      aliquota: lerNumero(tr.querySelector<HTMLInputElement>('input[name="aliquota"]')),
-    }));
-    return { versao: versaoLida, gerais, ufs, excecoesNcm };
+    const lerListaNcm = (tbody: HTMLTableSectionElement) =>
+      Array.from(tbody.querySelectorAll<HTMLTableRowElement>('tr')).map((tr) => ({
+        ncm: tr.querySelector<HTMLInputElement>('input[name="ncm"]')?.value.trim() ?? '',
+        aliquota: lerNumero(tr.querySelector<HTMLInputElement>('input[name="aliquota"]')),
+      }));
+    return { versao: versaoLida, gerais, ufs, excecoesNcm: lerListaNcm(tbodyNcm), ipiNcm: lerListaNcm(tbodyIpi) };
   }
 
   async function carregarHistorico(): Promise<void> {
@@ -361,9 +374,15 @@ export function inicializarFormacaoPreco(): { ativar: () => void } {
   form.addEventListener('input', () => {
     sujo = true;
   });
-  tbodyNcm.addEventListener('click', (evento) => {
-    if ((evento.target as HTMLElement).closest('button') !== null) sujo = true;
+  botaoAdicionarIpi.addEventListener('click', () => {
+    adicionarLinhaNcm(null, tbodyIpi, ROTULO_IPI_NCM);
+    sujo = true;
   });
+  for (const tbody of [tbodyNcm, tbodyIpi]) {
+    tbody.addEventListener('click', (evento) => {
+      if ((evento.target as HTMLElement).closest('button') !== null) sujo = true;
+    });
+  }
   botaoRecarregar.addEventListener('click', () => {
     void carregar();
   });

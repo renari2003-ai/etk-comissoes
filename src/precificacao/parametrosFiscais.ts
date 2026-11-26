@@ -48,10 +48,23 @@ export interface ExcecaoNcm {
   aliquota: number;
 }
 
+/**
+ * Alíquota de IPI por NCM (decisão de 26/11/2026): o cadastro de produto do Omie não tem alíquota de
+ * IPI, só o NCM. Vale para o IPI na venda do produto acabado e para o IPI da compra sem nota
+ * (indústria normal sem IPI informado). Começa vazia, "a confirmar pelo fiscal".
+ */
+export interface IpiNcm {
+  /** 8 dígitos, sem pontos. */
+  ncm: string;
+  /** IPI em pontos (12 = 12%); 0 é válido (NCM com IPI zero). */
+  aliquota: number;
+}
+
 export interface TabelaFiscal {
   gerais: ParametrosGerais;
   ufs: IcmsUf[];
   excecoesNcm: ExcecaoNcm[];
+  ipiNcm: IpiNcm[];
 }
 
 /** Status da tabela fiscal: enquanto "PROVISORIO", todo cálculo mostra a tarja azul. Só administrador muda. */
@@ -186,24 +199,38 @@ export function validarUfs(valor: unknown): IcmsUf[] {
   return ufs;
 }
 
-export function validarExcecoesNcm(valor: unknown): ExcecaoNcm[] {
-  if (!Array.isArray(valor)) throw new ErroValidacao('Exceções por NCM deve ser uma lista.');
-  if (valor.length > MAX_EXCECOES_NCM) throw new ErroValidacao(`No máximo ${MAX_EXCECOES_NCM} exceções por NCM.`);
+/** Lista de { ncm, aliquota } (exceções de ICMS de MG ou IPI por NCM): NCM de 8 dígitos, sem repetir. */
+function validarListaNcm(valor: unknown, nomeLista: string, nomeItem: string, nomeAliquota: string): { ncm: string; aliquota: number }[] {
+  if (!Array.isArray(valor)) throw new ErroValidacao(`${nomeLista} deve ser uma lista.`);
+  if (valor.length > MAX_EXCECOES_NCM) throw new ErroValidacao(`No máximo ${MAX_EXCECOES_NCM} NCMs em ${nomeLista}.`);
   const vistos = new Set<string>();
   return valor.map((bruto, i) => {
-    const o = exigirObjetoComChaves(bruto, ['ncm', 'aliquota'], `Exceção na posição ${i + 1}`);
+    const o = exigirObjetoComChaves(bruto, ['ncm', 'aliquota'], `${nomeItem} na posição ${i + 1}`);
     if (typeof o.ncm !== 'string' || !/^\d{8}$/.test(o.ncm)) {
-      throw new ErroValidacao(`NCM na posição ${i + 1} inválido: use os 8 dígitos, sem pontos.`);
+      throw new ErroValidacao(`NCM na posição ${i + 1} de ${nomeLista} inválido: use os 8 dígitos, sem pontos.`);
     }
-    if (vistos.has(o.ncm)) throw new ErroValidacao(`NCM ${o.ncm} repetido.`);
+    if (vistos.has(o.ncm)) throw new ErroValidacao(`NCM ${o.ncm} repetido em ${nomeLista}.`);
     vistos.add(o.ncm);
-    return { ncm: o.ncm, aliquota: exigirPercentual(o.aliquota, `Alíquota do NCM ${o.ncm}`) };
+    return { ncm: o.ncm, aliquota: exigirPercentual(o.aliquota, `${nomeAliquota} do NCM ${o.ncm}`) };
   });
 }
 
+export function validarExcecoesNcm(valor: unknown): ExcecaoNcm[] {
+  return validarListaNcm(valor, 'Exceções por NCM', 'Exceção', 'Alíquota');
+}
+
+export function validarIpiNcm(valor: unknown): IpiNcm[] {
+  return validarListaNcm(valor, 'IPI por NCM', 'IPI por NCM', 'IPI');
+}
+
 export function validarTabelaFiscal(valor: unknown): TabelaFiscal {
-  const o = exigirObjetoComChaves(valor, ['gerais', 'ufs', 'excecoesNcm'], 'Tabela fiscal');
-  return { gerais: validarParametrosGerais(o.gerais), ufs: validarUfs(o.ufs), excecoesNcm: validarExcecoesNcm(o.excecoesNcm) };
+  const o = exigirObjetoComChaves(valor, ['gerais', 'ufs', 'excecoesNcm', 'ipiNcm'], 'Tabela fiscal');
+  return {
+    gerais: validarParametrosGerais(o.gerais),
+    ufs: validarUfs(o.ufs),
+    excecoesNcm: validarExcecoesNcm(o.excecoesNcm),
+    ipiNcm: validarIpiNcm(o.ipiNcm),
+  };
 }
 
 /** Corpo do PUT do status: `{ status, versao }` (só administrador). */
@@ -220,11 +247,11 @@ export function validarAtualizacaoStatus(valor: unknown): { versao: number; stat
 
 /** Corpo do PUT: a tabela inteira mais a `versao` lida (concorrência otimista). */
 export function validarAtualizacaoTabelaFiscal(valor: unknown): { versao: number; tabela: TabelaFiscal } {
-  const o = exigirObjetoComChaves(valor, ['versao', 'gerais', 'ufs', 'excecoesNcm'], 'Tabela fiscal');
+  const o = exigirObjetoComChaves(valor, ['versao', 'gerais', 'ufs', 'excecoesNcm', 'ipiNcm'], 'Tabela fiscal');
   if (typeof o.versao !== 'number' || !Number.isSafeInteger(o.versao) || o.versao < 0) {
     throw new ErroValidacao('Versão da tabela fiscal inválida — recarregue a tela.');
   }
-  return { versao: o.versao, tabela: validarTabelaFiscal({ gerais: o.gerais, ufs: o.ufs, excecoesNcm: o.excecoesNcm }) };
+  return { versao: o.versao, tabela: validarTabelaFiscal({ gerais: o.gerais, ufs: o.ufs, excecoesNcm: o.excecoesNcm, ipiNcm: o.ipiNcm }) };
 }
 
 // ─────────────────────────────── conversão para o cálculo ───────────────────────────────
@@ -286,4 +313,16 @@ export function excecaoIcmsMgDoNcm(tabela: TabelaFiscal, ncm: string | null): nu
   const normalizado = ncm.replace(/\D/g, '');
   const excecao = tabela.excecoesNcm.find((e) => e.ncm === normalizado);
   return excecao === undefined ? null : fracao(excecao.aliquota);
+}
+
+/**
+ * Alíquota de IPI (fração) do NCM na tabela NCM → IPI, ou `null` se o NCM está vazio ou fora da
+ * tabela (compra: sem crédito, tarja amarela; venda: tarja vermelha). Aceita o NCM com pontos.
+ */
+export function aliquotaIpiDoNcm(tabela: Pick<TabelaFiscal, 'ipiNcm'>, ncm: string | null): number | null {
+  if (ncm === null) return null;
+  const normalizado = ncm.replace(/\D/g, '');
+  if (normalizado.length !== 8) return null;
+  const linha = tabela.ipiNcm.find((e) => e.ncm === normalizado);
+  return linha === undefined ? null : fracao(linha.aliquota);
 }

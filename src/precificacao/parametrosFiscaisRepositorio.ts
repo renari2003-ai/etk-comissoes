@@ -10,6 +10,7 @@ import {
   UFS_FORA_DE_MG,
   type ExcecaoNcm,
   type IcmsUf,
+  type IpiNcm,
   type ParametrosGerais,
   type StatusTabelaFiscal,
   type TabelaFiscal,
@@ -20,6 +21,7 @@ import {
   nomeTabelaHistorico,
   nomeTabelaIcmsMgNcm,
   nomeTabelaIcmsUf,
+  nomeTabelaIpiNcm,
   nomeTabelaParametrosFiscais,
   nomeTabelaParametrosFiscaisExtra,
 } from './schema.js';
@@ -126,10 +128,16 @@ async function lerCom(executor: Pick<PoolClient, 'query'>, travar: boolean): Pro
   );
   const excecoesNcm: ExcecaoNcm[] = linhasNcm.map((l) => ({ ncm: l.ncm.trim(), aliquota: numeroDoBanco(l.aliquota, `aliquota NCM ${l.ncm}`) }));
 
+  const { rows: linhasIpi } = await executor.query<{ ncm: string; aliquota: string }>(
+    `SELECT ncm, aliquota FROM ${nomeTabelaIpiNcm()} ORDER BY ncm`,
+  );
+  const ipiNcm: IpiNcm[] = linhasIpi.map((l) => ({ ncm: l.ncm.trim(), aliquota: numeroDoBanco(l.aliquota, `IPI NCM ${l.ncm}`) }));
+
   return {
     gerais: linhaParaGerais(linha, extra),
     ufs,
     excecoesNcm,
+    ipiNcm,
     status: statusDoBanco(extra.status),
     statusAlteradoEm: extra.status_alterado_em === null ? null : extra.status_alterado_em.toISOString(),
     statusAlteradoPor: extra.status_alterado_por,
@@ -186,15 +194,19 @@ export function diferencas(atual: TabelaFiscal, nova: TabelaFiscal): Alteracao[]
       alteracoes.push({ campo: `uf.${u.uf}.aliquotaInterna`, valorAnterior: texto(a.aliquotaInterna), valorNovo: texto(u.aliquotaInterna) });
     }
   }
-  const ncmAtuais = new Map(atual.excecoesNcm.map((e) => [e.ncm, e.aliquota]));
-  const ncmNovos = new Map(nova.excecoesNcm.map((e) => [e.ncm, e.aliquota]));
-  for (const [ncm, aliquota] of ncmNovos) {
-    const anterior = ncmAtuais.get(ncm);
-    if (anterior !== aliquota) alteracoes.push({ campo: `ncm.${ncm}`, valorAnterior: texto(anterior ?? null), valorNovo: texto(aliquota) });
-  }
-  for (const [ncm, aliquota] of ncmAtuais) {
-    if (!ncmNovos.has(ncm)) alteracoes.push({ campo: `ncm.${ncm}`, valorAnterior: texto(aliquota), valorNovo: null });
-  }
+  const compararListaNcm = (atuais: readonly { ncm: string; aliquota: number }[], novas: readonly { ncm: string; aliquota: number }[], prefixo: string): void => {
+    const mapaAtual = new Map(atuais.map((e) => [e.ncm, e.aliquota]));
+    const mapaNovo = new Map(novas.map((e) => [e.ncm, e.aliquota]));
+    for (const [ncm, aliquota] of mapaNovo) {
+      const anterior = mapaAtual.get(ncm);
+      if (anterior !== aliquota) alteracoes.push({ campo: `${prefixo}.${ncm}`, valorAnterior: texto(anterior ?? null), valorNovo: texto(aliquota) });
+    }
+    for (const [ncm, aliquota] of mapaAtual) {
+      if (!mapaNovo.has(ncm)) alteracoes.push({ campo: `${prefixo}.${ncm}`, valorAnterior: texto(aliquota), valorNovo: null });
+    }
+  };
+  compararListaNcm(atual.excecoesNcm, nova.excecoesNcm, 'ncm');
+  compararListaNcm(atual.ipiNcm, nova.ipiNcm, 'ipi');
   return alteracoes;
 }
 
@@ -239,15 +251,21 @@ export async function atualizarTabelaFiscal(nova: TabelaFiscal, versaoLida: numb
           u.uf,
         ]);
       }
-      const ncms = nova.excecoesNcm.map((e) => e.ncm);
-      await cliente.query(`DELETE FROM ${nomeTabelaIcmsMgNcm()} WHERE NOT (ncm = ANY($1::char(8)[]))`, [ncms]);
-      if (ncms.length > 0) {
-        await cliente.query(
-          `INSERT INTO ${nomeTabelaIcmsMgNcm()} (ncm, aliquota)
-           SELECT * FROM UNNEST($1::char(8)[], $2::numeric[])
-           ON CONFLICT (ncm) DO UPDATE SET aliquota = EXCLUDED.aliquota`,
-          [ncms, nova.excecoesNcm.map((e) => e.aliquota)],
-        );
+      // Exceções de ICMS de MG e IPI por NCM: mesma forma de gravar (apaga as que saíram, grava o resto).
+      for (const [nomeTabela, lista] of [
+        [nomeTabelaIcmsMgNcm(), nova.excecoesNcm],
+        [nomeTabelaIpiNcm(), nova.ipiNcm],
+      ] as const) {
+        const ncms = lista.map((e) => e.ncm);
+        await cliente.query(`DELETE FROM ${nomeTabela} WHERE NOT (ncm = ANY($1::char(8)[]))`, [ncms]);
+        if (ncms.length > 0) {
+          await cliente.query(
+            `INSERT INTO ${nomeTabela} (ncm, aliquota)
+             SELECT * FROM UNNEST($1::char(8)[], $2::numeric[])
+             ON CONFLICT (ncm) DO UPDATE SET aliquota = EXCLUDED.aliquota`,
+            [ncms, lista.map((e) => e.aliquota)],
+          );
+        }
       }
       await cliente.query(
         `INSERT INTO ${nomeTabelaHistorico()} (usuario_id, usuario_nome, campo, valor_anterior, valor_novo)

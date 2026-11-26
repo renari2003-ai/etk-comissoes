@@ -9,6 +9,7 @@ import {
   UFS_FORA_DE_MG,
   UFS_INICIAIS,
   avisosDaTabelaFiscal,
+  aliquotaIpiDoNcm,
   excecaoIcmsMgDoNcm,
   paraParametrosDoCalculo,
   validarAtualizacaoStatus,
@@ -19,7 +20,7 @@ import {
 import { diferencas } from '../../src/precificacao/parametrosFiscaisRepositorio.js';
 import { ErroValidacao } from '../../src/validacao.js';
 
-const INICIAL: TabelaFiscal = { gerais: { ...PARAMETROS_GERAIS_INICIAIS }, ufs: UFS_INICIAIS.map((u) => ({ ...u })), excecoesNcm: [] };
+const INICIAL: TabelaFiscal = { gerais: { ...PARAMETROS_GERAIS_INICIAIS }, ufs: UFS_INICIAIS.map((u) => ({ ...u })), excecoesNcm: [], ipiNcm: [] };
 const copia = (): TabelaFiscal => structuredClone(INICIAL);
 
 describe('valores iniciais da tabela fiscal', () => {
@@ -133,6 +134,20 @@ describe('validação estrita do PUT', () => {
     const muitas = Array.from({ length: MAX_EXCECOES_NCM + 1 }, (_, i) => ({ ncm: String(10_000_000 + i), aliquota: 12 }));
     expect(() => validarTabelaFiscal(com(muitas))).toThrow(/No máximo/);
   });
+
+  it('IPI por NCM (26/11/2026): obrigatório no payload, 8 dígitos, sem repetir, 0 é válido', () => {
+    const { ipiNcm: _ignorado, ...semIpi } = copia();
+    expect(() => validarTabelaFiscal(semIpi)).toThrow(/ipiNcm/);
+    const com = (ipiNcm: unknown) => ({ ...copia(), ipiNcm });
+    expect(validarTabelaFiscal(com([{ ncm: '85447000', aliquota: 0 }, { ncm: '73181500', aliquota: 6.5 }])).ipiNcm).toEqual([
+      { ncm: '85447000', aliquota: 0 },
+      { ncm: '73181500', aliquota: 6.5 },
+    ]);
+    expect(() => validarTabelaFiscal(com([{ ncm: '8544.70.00', aliquota: 12 }]))).toThrow(/IPI por NCM inválido/);
+    expect(() => validarTabelaFiscal(com([{ ncm: '85447000', aliquota: 12 }, { ncm: '85447000', aliquota: 5 }]))).toThrow(/repetido em IPI por NCM/);
+    expect(() => validarTabelaFiscal(com([{ ncm: '85447000', aliquota: 100 }]))).toThrow(/IPI do NCM 85447000/);
+    expect(() => validarTabelaFiscal(com([{ ncm: '85447000', aliquota: 12, extra: 1 }]))).toThrow(/extra/);
+  });
 });
 
 describe('conversão para o cálculo', () => {
@@ -151,6 +166,16 @@ describe('conversão para o cálculo', () => {
     expect(determinarCenario(clienteMg, { icmsInternoMgExcecaoNcm: excecaoIcmsMgDoNcm(t, '99999999'), conteudoImportado: false }, p.venda).icmsDestacado).toBe(0.18);
     expect(determinarCenario(clienteMg, { icmsInternoMgExcecaoNcm: excecaoIcmsMgDoNcm(t, '8544.70.00'), conteudoImportado: false }, p.venda).icmsDestacado).toBe(0.12);
     expect(excecaoIcmsMgDoNcm(t, null)).toBeNull();
+  });
+
+  it('IPI do NCM: fração da tabela; NCM vazio, incompleto ou fora da tabela = null', () => {
+    const t = copia();
+    t.ipiNcm = [{ ncm: '85447000', aliquota: 12 }, { ncm: '73181500', aliquota: 0 }];
+    expect(aliquotaIpiDoNcm(t, '8544.70.00')).toBe(0.12);
+    expect(aliquotaIpiDoNcm(t, '73181500')).toBe(0);
+    expect(aliquotaIpiDoNcm(t, '99999999')).toBeNull();
+    expect(aliquotaIpiDoNcm(t, '8544')).toBeNull();
+    expect(aliquotaIpiDoNcm(t, null)).toBeNull();
   });
 
   it('UF sem alíquota interna: tarja vermelha só no cenário D; venda para a mesma UF contribuinte funciona', () => {
@@ -210,6 +235,7 @@ describe('diferenças para o histórico', () => {
     nova.gerais.percentualRecolhimentoIcmsConsumidorFinal = 50;
     nova.ufs.find((u) => u.uf === 'SP')!.aliquotaInterna = 17;
     nova.excecoesNcm = [{ ncm: '11111111', aliquota: 4 }, { ncm: '33333333', aliquota: 12 }];
+    nova.ipiNcm = [{ ncm: '44444444', aliquota: 5 }];
     expect(diferencas(atual, nova)).toEqual([
       { campo: 'gerais.irCs', valorAnterior: '34', valorNovo: '24' },
       { campo: 'gerais.percentualRecolhimentoIcmsConsumidorFinal', valorAnterior: '100', valorNovo: '50' },
@@ -217,6 +243,7 @@ describe('diferenças para o histórico', () => {
       { campo: 'ncm.11111111', valorAnterior: '12', valorNovo: '4' },
       { campo: 'ncm.33333333', valorAnterior: null, valorNovo: '12' },
       { campo: 'ncm.22222222', valorAnterior: '7', valorNovo: null },
+      { campo: 'ipi.44444444', valorAnterior: null, valorNovo: '5' },
     ]);
     expect(diferencas(atual, structuredClone(atual))).toEqual([]);
   });

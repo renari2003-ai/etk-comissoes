@@ -29,7 +29,7 @@ Todas as regras abaixo foram confirmadas pelo Ricardo e pelo fiscal da ETK; cada
 | --- | --- |
 | Regime | Lucro Real |
 | PIS/COFINS | Não cumulativo, 1,65% + 7,6% = 9,25%. Crédito na compra de insumos, débito na venda. ICMS excluído da base do débito (Tema 69 do STF) e da base do crédito (lei de 2023). |
-| IPI | Recuperável na compra (ETK é indústria). Na venda, calculado sobre o preço e somado por fora, pela alíquota do NCM no cadastro. |
+| IPI | Recuperável na compra (ETK é indústria). Na venda, calculado sobre o preço e somado por fora, pela alíquota do NCM do produto na tabela NCM → IPI do app (o cadastro do Omie não tem alíquota de IPI). |
 | ICMS na compra | **Sempre é custo, nunca crédito.** Só é 0% (diferimento) quando o **fornecedor é de MG E tem PTA**. Fornecedor de MG sem PTA: ICMS destacado, alíquota interna (padrão 18%, editável). Fora de MG: 12% de qualquer UF (4% se a mercadoria for importada). O percentual só serve para tirar o ICMS da base do crédito de PIS/COFINS (ver "Impostos na compra"). |
 | IPI na compra | Recuperável. Sai da nota de entrada do Omie quando existe; sem nota, depende do tipo de fornecedor (ver "Impostos na compra"). |
 | ICMS na venda a contribuinte | Pelo regime especial (PTA), a ETK **não recolhe** o ICMS destacado na venda a contribuinte: ele vira resultado. Vale para venda interestadual a contribuinte e para venda dentro de MG a contribuinte (fora do cenário A). |
@@ -45,15 +45,15 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 
 | Dado | Para que serve | Endpoint de referência |
 | --- | --- | --- |
-| Produto acabado: código, descrição, NCM, alíquota de IPI, origem | Alíquota de IPI na venda; origem define o ICMS de 4% para conteúdo importado | `geral/produtos` – ConsultarProduto |
+| Produto acabado: código, descrição, NCM, origem | NCM → alíquota de IPI na venda (tabela NCM → IPI do app); origem define o ICMS de 4% para conteúdo importado | `geral/produtos` – ConsultarProduto (`ncm`, `recomendacoes_fiscais.origem_mercadoria`) |
 | Estrutura do produto: componentes, quantidades, unidade, % de perda | Montar o custo, como no relatório "Imprimir Estrutura". Kits (tipo 03/04) têm estrutura própria e são abertos até as folhas | `geral/malha` – ConsultarEstrutura (endpoint confirmado na documentação em 24/11/2026) |
 | Custo unitário de cada folha | Custo bruto (com impostos) | A estrutura **não traz custo por item**. **Confirmado em 25/11/2026:** custo médio do estoque, `nCMC` da posição de estoque (`estoque/consulta` – ListarPosEstoque), sempre o atual |
-| Última nota de entrada de cada componente: UF do fornecedor, ICMS, IPI, PIS, COFINS | Saber se veio de dentro ou de fora de MG e quanto retirar de crédito | `produtos/recebimentonfe` – ListarRecebimentos |
-| Cliente: UF, inscrição estadual, contribuinte, campo "cliente com PTA (compra para industrialização)" | Escolher o cenário de venda (junto com a finalidade da venda: industrialização, revenda ou uso e consumo) | `geral/clientes` – ConsultarCliente |
+| Última nota de entrada de cada componente (janela de **6 meses**): ICMS, IPI, PIS, COFINS por item; UF do fornecedor pelo cadastro dele | Saber se veio de dentro ou de fora de MG e quanto retirar de crédito | `produtos/recebimentonfe` – ListarRecebimentos (`cExibirDetalhes` = "S"), mais `geral/clientes` – ConsultarCliente do fornecedor (`estado`) |
+| Cliente: UF, inscrição estadual, contribuinte | Escolher o cenário de venda (junto com a finalidade da venda: industrialização, revenda ou uso e consumo). "Cliente com PTA" fica no app (decisão de 26/11/2026) | `geral/clientes` – ConsultarCliente (`estado`, `inscricao_estadual`, `contribuinte`) |
 
 **Regra de fallback:** componente sem nota de entrada no Omie aparece marcado na tela como "estimado", e os créditos saem das regras de "Impostos na compra" (tipo de fornecedor, UF e cadastro do componente), nunca de um percentual médio.
 
-**Cadastro do componente (`geral/produtos` – ConsultarProduto):** NCM e alíquota de IPI de cada componente, usados no IPI da compra sem nota. Componente sem NCM ou sem alíquota de IPI (com fornecedor indústria normal) entra **pelo valor bruto, sem crédito**, e deixa o preço **incompleto** (ver "Relatório de conferência do cadastro").
+**Cadastro do componente (`geral/produtos` – ConsultarProduto):** só o **NCM** (`ncm`). **O cadastro do Omie não tem alíquota de IPI** (documentação conferida em 26/11/2026): a alíquota sai da **tabela NCM → IPI** do app. Componente sem NCM no cadastro, ou com NCM fora da tabela NCM → IPI (com fornecedor indústria normal e sem IPI informado), entra **pelo valor bruto, sem crédito**, e deixa o preço **incompleto** (ver "Relatório de conferência do cadastro").
 
 **Validação da fonte de custo (24/11/2026):** relatório do PA00000001 (CEO SOFS 12/24 FO 4D): "Valor GGF" R$ 59,76; PI10000014 0,192111; MP00000008 17,06279; MO00000013 5,238053; MO00000037 e MP00000045 sem custo unitário. A rota temporária `GET /api/precificacao/diagnostico/:codigo` (só administrador, só leitura, **removida antes de produção**) mostra de qual campo da API sai cada número.
 
@@ -83,6 +83,15 @@ Todo dado vem do Omie pela API que o app já usa; os nomes de endpoint abaixo s�
 
 Implementado em 25/11/2026: `somarFolhas` e `calcularCusto` tratam custo 0 como sem custo (tarja amarela `ITEM_SEM_CUSTO`), e o diagnóstico já usava só custo positivo. `resolverCustoItem` com a escolha "MANUAL" sem valor manual salvo devolve `SEM_CUSTO` com a tarja amarela, avisando que o custo do Omie não foi usado.
 
+### Decisões de 26/11/2026 (fontes do Omie)
+
+8. **Sem 2ª fonte de custo.** Os 5 itens sem custo médio ficam no custo manual, com a sugestão do relatório antigo no formulário.
+9. **IPI por NCM numa tabela do app.** A documentação do Omie mostra que o cadastro de produto não tem alíquota de IPI, só o NCM. Nova tabela **NCM → IPI %**, parte da tabela fiscal (mesma versão, mesmo histórico, mesmo status "Provisório / Validado"; editável só pelo administrador). Vale para o IPI da compra sem nota (indústria normal sem IPI informado) e para o IPI na venda do produto acabado. Começa vazia, "a confirmar pelo fiscal".
+   - Compra: NCM ausente ou fora da tabela → sem crédito, tarja amarela `ITEM_SEM_NCM_IPI`.
+   - Venda: produto acabado sem NCM ou com NCM fora da tabela → tarja **vermelha** `IPI_VENDA_NCM_NAO_CONFIGURADO` (o preço com IPI não pode sair errado).
+10. **"Cliente com PTA (compra para industrialização)" é marcado no app**, por cliente do Omie (código do cliente), só pelo administrador, com histórico e concorrência por versão. Tabela nova `precificacao_clientes_pta` (+ histórico). Nada é gravado no Omie.
+11. **Última nota de entrada: janela de 6 meses.** O Omie não filtra notas por produto, então o app lista os recebimentos concluídos (`infoCadastro.cRecebido` = "S", não cancelados) dos últimos 6 meses com os itens e indexa por produto (`itensCabec.nIdProduto`), ficando com a nota mais recente. Cache de algumas horas, com botão "atualizar custos". Componente sem nota na janela = **estimado** (tarja azul `CUSTO_ESTIMADO`). A nota não traz a UF do fornecedor: ela vem do cadastro do fornecedor (`nIdFornecedor` → ConsultarCliente → `estado`).
+
 ## Custo manual
 
 O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo item da estrutura aceita custo manual (não há GGF separado, pela decisão de 25/11/2026).
@@ -103,7 +112,7 @@ O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo
 | Fornecedor de MG com PTA? | **Só aparece se a UF for MG**. Sim → ICMS 0% (diferimento); Não → ICMS destacado, alíquota interna de MG da tabela fiscal (padrão 18%), que é custo. (No banco e na API o campo continua `diferimento_pta` / `diferimentoPta`.) |
 | Mercadoria importada? | **Só aparece se a UF não for MG**. Sim → ICMS 4%; Não → 12% (entrada em MG vinda de qualquer UF) |
 | Tipo de fornecedor | Indústria normal (Lucro Real/Presumido), Simples Nacional ou comércio/distribuidor |
-| IPI % | **Indústria normal:** já preenchido com a alíquota do NCM no cadastro do componente no Omie, editável; sem NCM/IPI no cadastro, vem vazio e, se ficar vazio, o item entra pelo valor bruto, sem crédito (preço incompleto). **Simples Nacional:** travado em 0, campo desabilitado. **Comércio/distribuidor:** começa em 0, editável, com a dica "só se a nota destacar IPI (ex.: distribuidor de importado equiparado a indústria)" |
+| IPI % | **Indústria normal:** vazio = alíquota da tabela NCM → IPI para o NCM do componente (cadastro do Omie), editável; sem NCM no cadastro ou com NCM fora da tabela, se ficar vazio, o item entra pelo valor bruto, sem crédito (preço incompleto). **Simples Nacional:** travado em 0, campo desabilitado. **Comércio/distribuidor:** começa em 0, editável, com a dica "só se a nota destacar IPI (ex.: distribuidor de importado equiparado a indústria)" |
 
 Os créditos saem pelas regras de "Impostos na compra", as mesmas usadas para item estimado.
 
@@ -137,10 +146,10 @@ Com nota de entrada no Omie, vale o ICMS destacado na nota.
 
 1. **Com nota de entrada no Omie:** o IPI da nota.
 2. **Sem nota** (custo manual ou item estimado): o operador informa o tipo de fornecedor.
-   - **Indústria normal (Lucro Real/Presumido):** alíquota de IPI do NCM no cadastro do componente no Omie.
+   - **Indústria normal (Lucro Real/Presumido):** IPI informado no custo manual; senão, a alíquota da tabela NCM → IPI para o NCM do componente (cadastro do Omie).
    - **Simples Nacional:** IPI = 0, sempre (campo travado).
    - **Comércio/distribuidor:** IPI = 0, salvo se a nota destacar IPI (campo editável).
-   - **Componente sem NCM/IPI no cadastro** (e fornecedor indústria normal, sem IPI informado): o item entra **pelo valor bruto, sem crédito nenhum**, e o preço fica **incompleto** (decisão de 24/11/2026: conservador, o preço sai alto, nunca baixo).
+   - **Componente sem NCM no cadastro ou com NCM fora da tabela NCM → IPI** (e fornecedor indústria normal, sem IPI informado): o item entra **pelo valor bruto, sem crédito nenhum**, e o preço fica **incompleto** (decisão de 24/11/2026: conservador, o preço sai alto, nunca baixo).
 
 **Conta por item** (valor da nota V com impostos, alíquotas de IPI e ICMS da compra):
 
@@ -165,7 +174,7 @@ A regra é a mesma para nota de entrada (com os valores destacados na nota), cus
 
 ## Relatório de conferência do cadastro
 
-Somente leitura. Para um produto (ou para todos os produtos que têm estrutura no Omie), lista os componentes **sem NCM** ou **sem alíquota de IPI** no cadastro do Omie, para a correção ser feita lá. Colunas: produto acabado, código e descrição do componente, NCM, alíquota de IPI, problema ("sem NCM", "sem IPI"). Usa `ListarEstruturas`/`ConsultarEstrutura` e `ConsultarProduto`, com cache e pelo limitador de chamadas. A varredura de todos os produtos roda em lotes, porque cada componente custa uma chamada ao Omie. Rota prevista: `GET /api/precificacao/conferencia-cadastro?produto=` (sem `produto` = todos), só para administrador.
+Somente leitura. Para um produto (ou para todos os produtos que têm estrutura no Omie), lista os componentes **sem NCM** no cadastro do Omie (correção no Omie) ou com **NCM fora da tabela NCM → IPI** (correção na tabela fiscal, pelo administrador), e o próprio produto acabado nas mesmas condições. Colunas: produto acabado, código e descrição do componente, NCM, alíquota de IPI da tabela, problema ("sem NCM", "NCM sem IPI na tabela"). Usa `ListarEstruturas`/`ConsultarEstrutura` e `ConsultarProduto`, com cache e pelo limitador de chamadas. A varredura de todos os produtos roda em lotes, porque cada componente custa uma chamada ao Omie. Rota prevista: `GET /api/precificacao/conferencia-cadastro?produto=` (sem `produto` = todos), só para administrador.
 
 ## Regras de cálculo
 
@@ -233,6 +242,7 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 | ICMS para conteúdo importado | 4% | Usa a origem do produto |
 | ICMS interno de MG na venda (geral) | 18% | Cenário B, quando o NCM não tem exceção |
 | Exceções de ICMS interno de MG por NCM | nenhuma | Cenário B; só os NCMs com alíquota diferente da geral |
+| IPI por NCM | nenhum (**a confirmar pelo fiscal**) | IPI na venda do produto acabado e IPI da compra sem nota (decisão de 26/11/2026). Tabela nova `precificacao_ipi_ncm` |
 | Alíquota interna de cada UF (para DIFAL), sem FCP | Buscador NCM, nov/2026, **a confirmar pelo fiscal**: AC 19; AL 20,5; AM 20; AP 18; BA 20,5; CE 20; DF 20; ES 17; GO 19; MA 23; MS 17; MT 17; PA 19; PB 20; PE 20,5; PI 22,5; PR 19,5; RJ 20; RN 20; RO 19,5; RR 20; RS 17; SC 17; SE 19; SP 18; TO 20 (MG 18 é o ICMS interno de MG na venda) | Cenário D; todas editáveis; UF vazia dá tarja vermelha só no cenário D. Sem FCP por enquanto (depende do produto) |
 | Recolhimento do ICMS na venda a contribuinte | 0% | PTA da ETK; para a transição da Reforma Tributária (2029 a 2033) |
 | Recolhimento do ICMS na venda a não contribuinte / consumidor final | **100%** | O PTA não se aplica (fiscal, 25/11/2026); cenários B (consumidor final em MG) e D |
@@ -243,7 +253,7 @@ Os percentuais vivem numa tabela de parâmetros, editada por uma tela de adminis
 | Despesas fixas padrão | último valor usado | Preenchido na hora de gerar |
 | Comissão | 1% a 4% | Escolhida na tela |
 
-**Campo novo no cadastro de cliente:** "Cliente com PTA (compra para industrialização) (S/N)" (antes "Autorizado diferimento MG"). Pode ser um campo adicional no Omie ou uma tabela própria do app, indexada pelo código do cliente.
+**Cliente com PTA (compra para industrialização):** marcado no app, por cliente do Omie, só pelo administrador, com histórico (decisão de 26/11/2026). Tabela `precificacao_clientes_pta` e `precificacao_clientes_pta_historico`.
 
 **Histórico:** toda alteração na tabela fiscal guarda data, usuário (id e nome), campo, valor anterior e valor novo (tabela `precificacao_parametros_historico`, visível só para o administrador).
 
@@ -267,6 +277,7 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | `PRODUTO_SEM_ESTRUTURA` | Produto sem estrutura no Omie | Cadastrar a estrutura no Omie |
 | `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA` | Cenário D com a alíquota interna da UF vazia | "Peça ao administrador para preencher a UF X na tabela fiscal" |
 | `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO` | Venda interestadual com a UF sem ICMS interestadual | "Peça ao administrador para preencher a UF X na tabela fiscal" |
+| `IPI_VENDA_NCM_NAO_CONFIGURADO` | Produto acabado sem NCM no Omie ou com NCM fora da tabela NCM → IPI | "Peça ao administrador para preencher o NCM X na tabela NCM → IPI" (ou corrigir o NCM no Omie) |
 | `CLIENTE_INCONSISTENTE` | Ex.: cliente com PTA de fora de MG ou não contribuinte; venda "para industrialização" e "para uso e consumo" ao mesmo tempo, ou para industrialização a não contribuinte | Corrigir o cadastro do cliente ou a finalidade da venda |
 | `OMIE_INDISPONIVEL` | Erro ou demora da Omie | "Não foi possível consultar o Omie. Tente de novo em alguns minutos" |
 | `SEM_PRECO_POSSIVEL` | Impostos + comissão + despesas + margem ≥ 100% | Reduzir a margem, a comissão ou as despesas |
@@ -276,7 +287,7 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | Código | Quando | Mensagem / como resolver |
 | --- | --- | --- |
 | `ITEM_SEM_CUSTO` | Item sem custo (entra como zero) | Lista os códigos, com botão para digitar o custo manual |
-| `ITEM_SEM_NCM_IPI` | Componente sem NCM ou sem IPI no cadastro (entra pelo bruto, sem crédito) | "Corrija o cadastro do item X no Omie" |
+| `ITEM_SEM_NCM_IPI` | Componente sem NCM no cadastro ou com NCM fora da tabela NCM → IPI (entra pelo bruto, sem crédito) | "Corrija o NCM do item X no Omie" ou "preencha o NCM na tabela NCM → IPI" |
 | `COMPONENTES_NAO_CONSULTADOS` | Estrutura com mais de 60 componentes | Lista os itens que ficaram de fora da consulta |
 
 **Azul: informativa.**
@@ -345,7 +356,7 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 
 Rotas da tabela fiscal com o prefixo `/api/precificacao/parametros-fiscais` (para não confundir com os parâmetros fiscais do módulo de fretes).
 
-**Dados persistidos:** tabela fiscal, histórico de alterações, custos manuais e seu histórico, simulações salvas (com o custo usado em cada item) e o campo "cliente com PTA (compra para industrialização)". Banco: o Postgres/Supabase que o app já usa (`src/db.ts`); tabelas criadas com `CREATE TABLE IF NOT EXISTS`. **Atenção:** o Preview do Vercel usa o mesmo `DATABASE_URL` da produção — só são criadas tabelas novas da precificação, nunca alteradas ou apagadas tabelas existentes.
+**Dados persistidos:** tabela fiscal, histórico de alterações, custos manuais e seu histórico, simulações salvas (com o custo usado em cada item), tabela NCM → IPI (`precificacao_ipi_ncm`) e "cliente com PTA (compra para industrialização)" (`precificacao_clientes_pta` e histórico). Banco: o Postgres/Supabase que o app já usa (`src/db.ts`); tabelas criadas com `CREATE TABLE IF NOT EXISTS`. **Atenção:** o Preview do Vercel usa o mesmo `DATABASE_URL` da produção — só são criadas tabelas novas da precificação, nunca alteradas ou apagadas tabelas existentes.
 
 **Cache:** estrutura e notas de entrada em cache por algumas horas, para não estourar o limite de chamadas do Omie, com botão "atualizar custos" na tela.
 
@@ -383,7 +394,8 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 - [x] Criar o módulo `precificacao` com os testes do exemplo numérico (etapa 1).
 - [x] Criar a tabela fiscal e a tela de administração (etapa 2).
 - [x] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI): etapa 3. O IPI pré-preenchido pelo cadastro do Omie e o uso no preço entram nas etapas 4 e 5.
-- [ ] Integrar estrutura, notas de entrada, cadastro (NCM/IPI) e cliente do Omie.
-- [ ] Relatório de conferência do cadastro (componentes sem NCM/IPI), só leitura.
+- [ ] Tabela NCM → IPI (parte da tabela fiscal) e "cliente com PTA" no app (decisões de 26/11/2026).
+- [ ] Integrar estrutura, notas de entrada (6 meses), cadastro (NCM) e cliente do Omie.
+- [ ] Relatório de conferência do cadastro (sem NCM no Omie / NCM fora da tabela NCM → IPI), só leitura.
 - [ ] Montar a tela e validar com 3 produtos reais junto com o fiscal.
 - [ ] Publicar em preview no Vercel antes de ir para produção.

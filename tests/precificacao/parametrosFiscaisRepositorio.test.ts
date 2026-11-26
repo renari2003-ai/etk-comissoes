@@ -13,6 +13,7 @@ const VARIAVEIS = [
   'PRECIFICACAO_ICMS_MG_NCM_TABELA',
   'PRECIFICACAO_HISTORICO_TABELA',
   'PRECIFICACAO_PARAMETROS_EXTRA_TABELA',
+  'PRECIFICACAO_IPI_NCM_TABELA',
 ] as const;
 let tabelas: string[] = [];
 
@@ -50,6 +51,8 @@ describe.skipIf(!NO_BANCO_ISOLADO)('repositório da tabela fiscal (PGlite isolad
     expect(tabela.ufs.find((u) => u.uf === 'SP')).toEqual({ uf: 'SP', icmsInterestadualVenda: 12, aliquotaInterna: 18 });
     expect(tabela.ufs.find((u) => u.uf === 'BA')).toEqual({ uf: 'BA', icmsInterestadualVenda: 7, aliquotaInterna: 20.5 });
     expect(tabela.excecoesNcm).toEqual([]);
+    // IPI por NCM (26/11/2026) começa vazio: "a confirmar pelo fiscal".
+    expect(tabela.ipiNcm).toEqual([]);
     expect(tabela.atualizadoEm).toBeNull();
     expect(tabela.status).toBe('PROVISORIO');
     expect(tabela.statusAlteradoEm).toBeNull();
@@ -143,9 +146,10 @@ describe.skipIf(!NO_BANCO_ISOLADO)('repositório da tabela fiscal (PGlite isolad
   it('grava as alterações, devolve a tabela nova e registra cada campo no histórico (com quem e o valor anterior)', async () => {
     const { lerTabelaFiscal, atualizarTabelaFiscal, listarHistorico } = await importarRepositorio();
     const atual = await lerTabelaFiscal();
-    const nova = { gerais: { ...atual.gerais, irCs: 24 }, ufs: atual.ufs.map((u) => (u.uf === 'SP' ? { ...u, aliquotaInterna: 17 } : u)), excecoesNcm: [{ ncm: '85447000', aliquota: 12 }] };
+    const nova = { gerais: { ...atual.gerais, irCs: 24 }, ufs: atual.ufs.map((u) => (u.uf === 'SP' ? { ...u, aliquotaInterna: 17 } : u)), excecoesNcm: [{ ncm: '85447000', aliquota: 12 }], ipiNcm: [{ ncm: '73181500', aliquota: 6.5 }] };
     const { tabela, alteracoes } = await atualizarTabelaFiscal(nova, atual.versao, ADMIN);
-    expect(alteracoes).toHaveLength(3);
+    expect(alteracoes).toHaveLength(4);
+    expect(tabela.ipiNcm).toEqual([{ ncm: '73181500', aliquota: 6.5 }]);
     expect(tabela.gerais.irCs).toBe(24);
     expect(tabela.ufs.find((u) => u.uf === 'SP')!.aliquotaInterna).toBe(17);
     expect(tabela.excecoesNcm).toEqual([{ ncm: '85447000', aliquota: 12 }]);
@@ -155,6 +159,7 @@ describe.skipIf(!NO_BANCO_ISOLADO)('repositório da tabela fiscal (PGlite isolad
     const historico = await listarHistorico(50);
     expect(historico.map((h) => [h.campo, h.valorAnterior, h.valorNovo]).sort()).toEqual([
       ['gerais.irCs', '34', '24'],
+      ['ipi.73181500', null, '6.5'],
       ['ncm.85447000', null, '12'],
       ['uf.SP.aliquotaInterna', '18', '17'],
     ]);
@@ -174,10 +179,34 @@ describe.skipIf(!NO_BANCO_ISOLADO)('repositório da tabela fiscal (PGlite isolad
     expect((await listarHistorico(1))[0]).toMatchObject({ campo: 'ncm.11111111', valorAnterior: '12', valorNovo: null });
   });
 
+  it('IPI por NCM: grava, altera e remove (mesma versão e histórico da tabela fiscal); exceção de ICMS fica intacta', async () => {
+    const { lerTabelaFiscal, atualizarTabelaFiscal, listarHistorico } = await importarRepositorio();
+    const atual = await lerTabelaFiscal();
+    const primeira = await atualizarTabelaFiscal(
+      { ...atual, excecoesNcm: [{ ncm: '11111111', aliquota: 12 }], ipiNcm: [{ ncm: '11111111', aliquota: 5 }, { ncm: '22222222', aliquota: 0 }] },
+      atual.versao,
+      ADMIN,
+    );
+    expect(primeira.tabela.ipiNcm).toEqual([{ ncm: '11111111', aliquota: 5 }, { ncm: '22222222', aliquota: 0 }]);
+    expect(primeira.tabela.versao).toBe(atual.versao + 1);
+    const { tabela, alteracoes } = await atualizarTabelaFiscal(
+      { ...primeira.tabela, ipiNcm: [{ ncm: '11111111', aliquota: 10 }] },
+      primeira.tabela.versao,
+      ADMIN,
+    );
+    expect(tabela.ipiNcm).toEqual([{ ncm: '11111111', aliquota: 10 }]);
+    expect(tabela.excecoesNcm).toEqual([{ ncm: '11111111', aliquota: 12 }]);
+    expect(alteracoes).toEqual([
+      { campo: 'ipi.11111111', valorAnterior: '5', valorNovo: '10' },
+      { campo: 'ipi.22222222', valorAnterior: '0', valorNovo: null },
+    ]);
+    expect((await listarHistorico(2)).map((h) => h.campo).sort()).toEqual(['ipi.11111111', 'ipi.22222222']);
+  });
+
   it('sem alteração: não grava nada nem cria histórico', async () => {
     const { lerTabelaFiscal, atualizarTabelaFiscal, listarHistorico } = await importarRepositorio();
     const atual = await lerTabelaFiscal();
-    const { alteracoes, tabela } = await atualizarTabelaFiscal({ gerais: atual.gerais, ufs: atual.ufs, excecoesNcm: atual.excecoesNcm }, atual.versao, ADMIN);
+    const { alteracoes, tabela } = await atualizarTabelaFiscal({ gerais: atual.gerais, ufs: atual.ufs, excecoesNcm: atual.excecoesNcm, ipiNcm: atual.ipiNcm }, atual.versao, ADMIN);
     expect(alteracoes).toEqual([]);
     expect(tabela.atualizadoEm).toBeNull();
     expect(tabela.versao).toBe(atual.versao);

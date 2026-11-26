@@ -36,6 +36,10 @@ export function nomeTabelaIcmsMgNcm(): string {
 export function nomeTabelaParametrosFiscaisExtra(): string {
   return nomeValidado(process.env.PRECIFICACAO_PARAMETROS_EXTRA_TABELA ?? 'precificacao_parametros_fiscais_extra');
 }
+/** IPI por NCM (26/11/2026): o cadastro do Omie não tem alíquota de IPI. Parte da tabela fiscal (mesma versão e histórico). */
+export function nomeTabelaIpiNcm(): string {
+  return nomeValidado(process.env.PRECIFICACAO_IPI_NCM_TABELA ?? 'precificacao_ipi_ncm');
+}
 export function nomeTabelaHistorico(): string {
   return nomeValidado(process.env.PRECIFICACAO_HISTORICO_TABELA ?? 'precificacao_parametros_historico');
 }
@@ -153,6 +157,14 @@ async function criarEsquema(): Promise<void> {
       status TEXT NOT NULL CHECK (status IN ('PROVISORIO', 'VALIDADO')),
       status_alterado_em TIMESTAMPTZ NULL,
       status_alterado_por TEXT NULL
+    )
+  `);
+
+  // 26/11/2026 — IPI por NCM (tabela nova, começa vazia: "a confirmar pelo fiscal").
+  await executarDdlIdempotente(`
+    CREATE TABLE IF NOT EXISTS ${nomeTabelaIpiNcm()} (
+      ncm CHAR(8) PRIMARY KEY,
+      aliquota NUMERIC(7,4) NOT NULL CHECK (aliquota >= 0 AND aliquota < 100)
     )
   `);
 
