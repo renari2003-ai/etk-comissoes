@@ -13,7 +13,7 @@ import { somarFolhas } from '../../src/precificacao/estrutura.js';
 const HOJE = '2026-11-26';
 
 function nota(idProduto: number, sobrescrever: Partial<ItemNotaEntrada> = {}): ItemNotaEntrada {
-  return { idProduto, idRecebimento: 1, idFornecedor: 77, numeroNfe: '1', data: '2026-10-01', quantidade: 1, precoUnitario: 10, aliquotaIcms: 18, aliquotaIpi: 5, temIcmsSt: false, ...sobrescrever };
+  return { idProduto, idRecebimento: 1, idFornecedor: 77, numeroNfe: '1', data: '2026-10-01', quantidade: 1, precoUnitario: 10, aliquotaIcms: 18, aliquotaIpi: 5, temIcmsSt: false, legivel: true, ...sobrescrever };
 }
 
 /** Produto PA1 (id 1): MP1 (id 10, 2 un, 5% perda), KIT1 (id 20, tipo 03, 1 un) → MP2 (id 30, 0,5 un) e MP3 (id 40, 1 un). */
@@ -144,6 +144,14 @@ describe('coleta do Omie para o custo (etapa 4) — só leitura', () => {
     expect(aviso!.mensagem).toContain(`MP${MAX_COMPONENTES_PRECIFICACAO}, MP${MAX_COMPONENTES_PRECIFICACAO + 1}`);
     expect(dados.folhas).toHaveLength(MAX_COMPONENTES_PRECIFICACAO + 2);
     expect(dados.folhas.at(-1)!.custoUnitario).toBeNull();
+  });
+
+  it('kit em ciclo (contém o próprio produto) ou estrutura funda demais: erro explícito, nunca folha com o próprio custo', async () => {
+    const ciclo = fonteFalsa({ consultarEstrutura: async () => ({ ident: { idProduto: 1 }, itens: [{ codProdMalha: 'PA1', idProdMalha: 1, quantProdMalha: 1, tipoProdMalha: '04' }] }) });
+    await expect(coletarDadosOmie('PA1', ciclo, HOJE)).rejects.toThrow(/ciclo/);
+    let n = 0;
+    const funda = fonteFalsa({ consultarEstrutura: async () => ({ ident: { idProduto: 1 }, itens: [{ codProdMalha: `K${n++}`, idProdMalha: 50 + n, quantProdMalha: 1, tipoProdMalha: '03' }] }) });
+    await expect(coletarDadosOmie('PA1', funda, HOJE)).rejects.toThrow(/mais de 10 níveis/);
   });
 
   it('cadastro: NCM só com 8 dígitos; origem 1, 2, 3 e 8 = conteúdo importado; vazia = não informada', () => {

@@ -16,7 +16,8 @@
 
 import type { EstoqueOmie } from '../calculo/tipos.js';
 import type { ClienteOmie, ProdutoOmie } from '../omie/cliente.js';
-import { OmieError, OmieErroLimiteExcedido, OmieErroMetodoEmExecucao, OmieErroTransitorio } from '../omie/erros.js';
+import { indicaRegistroInexistente } from '../omie/erros.js';
+import { ErroValidacao } from '../validacao.js';
 import { janelaDeMeses, ultimaNotaPorProduto, type ItemNotaEntrada } from '../omie/notasEntrada.js';
 import type { Aviso } from './avisos.js';
 import { abrirEstrutura, MAX_NIVEIS_ESTRUTURA, type FolhaEstrutura, type NoEstrutura } from './estrutura.js';
@@ -98,15 +99,8 @@ function custoMedioDoEstoque(estoque: EstoqueOmie): number | null {
   return n !== null && n > 0 ? n : null;
 }
 
-/** Erro temporário do Omie (rede, limite, método em execução) — nunca vira "não existe". */
-function ehErroTemporario(erro: unknown): boolean {
-  return erro instanceof OmieErroTransitorio || erro instanceof OmieErroLimiteExcedido || erro instanceof OmieErroMetodoEmExecucao || !(erro instanceof OmieError);
-}
-
 /** O Omie responde com falha (não lista vazia) quando o produto não tem estrutura cadastrada. */
-function ehEstruturaInexistente(erro: unknown): boolean {
-  return !ehErroTemporario(erro) && erro instanceof OmieError && /n[ãa]o (existe|h[áa]|encontrad|cadastrad|possui)/i.test(erro.message);
-}
+const ehEstruturaInexistente = indicaRegistroInexistente;
 
 class OmieIndisponivel extends Error {}
 
@@ -189,8 +183,15 @@ export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecifica
         const tipo = textoOuNull(item.tipoProdMalha);
         const ehKit = tipo !== null && TIPOS_COM_ESTRUTURA.has(tipo);
         if (ehKit) kits.add(no);
-        // Kit: abre a estrutura dele (nunca o mesmo código dentro do próprio caminho — o ciclo é erro de `abrirEstrutura`).
-        if (ehKit && caminho.length + 1 < MAX_NIVEIS_ESTRUTURA && !caminho.includes(cod.toUpperCase())) {
+        // Kit: abre a estrutura dele. Ciclo (o kit dentro dele mesmo ou do produto) ou estrutura funda
+        // demais é erro EXPLÍCITO, como em `abrirEstrutura` — nunca vira folha com o próprio custo.
+        if (ehKit) {
+          if (caminho.includes(cod.toUpperCase())) {
+            throw new ErroValidacao(`Estrutura em ciclo: o item ${cod} aparece dentro dele mesmo (${[...caminho, cod.toUpperCase()].join(' → ')}).`);
+          }
+          if (caminho.length >= MAX_NIVEIS_ESTRUTURA) {
+            throw new ErroValidacao(`Estrutura com mais de ${MAX_NIVEIS_ESTRUTURA} níveis (em ${[...caminho, cod.toUpperCase()].join(' → ')}).`);
+          }
           let sub: Record<string, unknown> | null = null;
           try {
             sub = await fonte.consultarEstrutura(cod);
@@ -221,7 +222,8 @@ export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecifica
       return nos;
     };
 
-    dados.arvore = await montar(itensRaiz, []);
+    // O caminho começa no próprio produto: um kit que contém o produto é ciclo logo de cara.
+    dados.arvore = await montar(itensRaiz, [codigo.toUpperCase()]);
     dados.folhas = abrirEstrutura(dados.arvore, { codigoRaiz: codigo, ehKit: (no) => kits.has(no) });
 
     if (naoConsultados.length > 0) {

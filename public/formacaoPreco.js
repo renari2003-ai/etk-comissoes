@@ -58,7 +58,7 @@ function rotuloCampoHistorico(campo) {
     const ncm = /^ncm\.(\d{8})$/.exec(campo);
     if (ncm !== null)
         return `Exceção MG — NCM ${ncm[1]}`;
-    const ipi = /^ipi.(d{8})$/.exec(campo);
+    const ipi = /^ipi\.(\d{8})$/.exec(campo);
     if (ipi !== null)
         return `IPI — NCM ${ipi[1]}`;
     return campo;

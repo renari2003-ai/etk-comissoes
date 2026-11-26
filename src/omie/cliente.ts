@@ -13,6 +13,7 @@ import {
   OmieErroMetodoEmExecucao,
   OmieErroTransitorio,
   indicaLimiteExcedido,
+  indicaRegistroInexistente,
   indicaMetodoEmExecucao,
   verificarFalhaNoCorpo,
 } from './erros.js';
@@ -797,7 +798,7 @@ export class ClienteOmie {
    * ao que a precificação usa (`notasEntrada.ts`).
    */
   async listarItensNotasEntrada(deIso: string, ateIso: string): Promise<ItemNotaEntrada[]> {
-    return this.cacheNotasEntrada.obterOuBuscar(`itens-v1:${deIso}:${ateIso}`, async () => {
+    return this.cacheNotasEntrada.obterOuBuscar(`itens-v2:${deIso}:${ateIso}`, async () => {
       const itens: ItemNotaEntrada[] = [];
       let pagina = 1;
       let totalDePaginas = 1;
@@ -843,18 +844,18 @@ export class ClienteOmie {
    * falha de rede ou limite de chamadas é LANÇADA (nunca vira "cliente não encontrado").
    */
   async consultarClienteFiscal(codigoCliente: number): Promise<ClienteFiscalOmie | null> {
-    return this.cacheClientesFiscal.obterOuBuscar(`cliente-fiscal-v1:${codigoCliente}`, async () => {
-      let resposta: Record<string, unknown>;
-      try {
-        resposta = await this.chamar<Record<string, unknown>>('/geral/clientes/', 'ConsultarCliente', { codigo_cliente_omie: codigoCliente });
-      } catch (erro) {
-        if (erro instanceof OmieError && !(erro instanceof OmieErroTransitorio) && !(erro instanceof OmieErroLimiteExcedido) && !(erro instanceof OmieErroMetodoEmExecucao)) {
-          return null;
-        }
-        throw erro;
-      }
-      return interpretarClienteFiscal(resposta, codigoCliente);
-    });
+    try {
+      // Só o cliente ENCONTRADO vai para o cache: "não existe" nunca fica guardado (revisão de 26/11/2026).
+      return await this.cacheClientesFiscal.obterOuBuscar(`cliente-fiscal-v1:${codigoCliente}`, async () =>
+        interpretarClienteFiscal(
+          await this.chamar<Record<string, unknown>>('/geral/clientes/', 'ConsultarCliente', { codigo_cliente_omie: codigoCliente }),
+          codigoCliente,
+        ),
+      );
+    } catch (erro) {
+      if (indicaRegistroInexistente(erro)) return null;
+      throw erro;
+    }
   }
 
   async consultarProduto(codigoProduto: number): Promise<ProdutoOmie> {

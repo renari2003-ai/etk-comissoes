@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { exigirAutenticacao, exigirPermissao } from '../auth/middleware.js';
 import { ErroSemPermissao } from '../auth/erros.js';
 import type { ClienteOmie } from '../omie/cliente.js';
-import { validarBuscaCliente, validarCodigoCliente, validarGravacaoClientePta } from '../precificacao/clientesPta.js';
+import { nomeParaGravar, validarBuscaCliente, validarCodigoCliente, validarGravacaoClientePta } from '../precificacao/clientesPta.js';
 import { listarClientesComPta, listarHistoricoClientesPta, obterClientePta, obterClientesPta, salvarClientePta } from '../precificacao/clientesPtaRepositorio.js';
 import { ErroValidacao } from '../validacao.js';
 import { assincrono } from './erroHttp.js';
@@ -33,7 +33,7 @@ function exigirAdministradorClientesPta(req: Request, _res: Response, next: Next
  * - marcar/desmarcar e histórico: só administrador.
  * Nada é gravado no Omie.
  */
-export function criarRotasClientesPta(omie: Pick<ClienteOmie, 'buscarClientes'>): Router {
+export function criarRotasClientesPta(omie: Pick<ClienteOmie, 'buscarClientes' | 'consultarClienteFiscal'>): Router {
   const rotas = Router();
 
   rotas.get(
@@ -70,7 +70,11 @@ export function criarRotasClientesPta(omie: Pick<ClienteOmie, 'buscarClientes'>)
     exigirAutenticacao,
     exigirAdministradorClientesPta,
     assincrono(async (req, res) => {
-      const { versao, cliente } = validarGravacaoClientePta(req.params.codigo, req.body);
+      const { versao, codigoCliente, comPta } = validarGravacaoClientePta(req.params.codigo, req.body);
+      // Confere no Omie (só leitura) que o cliente existe; nome e CNPJ/CPF vêm de lá, nunca do navegador.
+      const fiscal = await omie.consultarClienteFiscal(codigoCliente);
+      if (fiscal === null) throw new ErroValidacao(`Cliente ${codigoCliente} não encontrado no Omie.`);
+      const cliente = { codigoCliente, comPta, nomeCliente: nomeParaGravar(codigoCliente, fiscal.razaoSocial), cnpjCpf: fiscal.cnpjCpf };
       const usuario = req.usuario!;
       res.json(await salvarClientePta(cliente, versao, { id: usuario.id, nome: usuario.nome }));
     }),

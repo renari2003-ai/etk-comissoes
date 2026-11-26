@@ -9,14 +9,15 @@
  */
 
 import type { ClienteOmie } from '../omie/cliente.js';
-import { OmieError, OmieErroLimiteExcedido, OmieErroMetodoEmExecucao, OmieErroTransitorio } from '../omie/erros.js';
+import { indicaRegistroInexistente } from '../omie/erros.js';
 import { ncmDoCadastro } from './coletaOmie.js';
 import { MAX_NIVEIS_ESTRUTURA } from './estrutura.js';
 import { aliquotaIpiDoNcm, type TabelaFiscal } from './parametrosFiscais.js';
 
 export type FonteConferencia = Pick<ClienteOmie, 'consultarEstrutura' | 'consultarProduto' | 'listarEstruturas'>;
 
-export type ProblemaCadastro = 'SEM_NCM' | 'NCM_SEM_IPI_NA_TABELA' | 'SEM_ESTRUTURA' | 'OMIE_INDISPONIVEL';
+/** `NAO_CONFERIDO`: o item não pôde ser conferido (sem código/id, acima do teto, ciclo ou nível demais) — nunca some em silêncio. */
+export type ProblemaCadastro = 'SEM_NCM' | 'NCM_SEM_IPI_NA_TABELA' | 'SEM_ESTRUTURA' | 'OMIE_INDISPONIVEL' | 'NAO_CONFERIDO';
 
 export interface LinhaConferencia {
   produto: string;
@@ -36,15 +37,13 @@ const MAX_COMPONENTES = 150;
 const TIPOS_COM_ESTRUTURA = new Set(['03', '04']);
 
 const texto = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
-const id = (v: unknown): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? v : null);
+/** Id do Omie: número ou texto numérico (o mesmo critério da coleta do cálculo). */
+const id = (v: unknown): number | null => {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d{1,15}$/.test(v.trim()) ? Number(v.trim()) : null;
+  return n !== null && Number.isSafeInteger(n) && n > 0 ? n : null;
+};
 
-function inexistente(erro: unknown): boolean {
-  return (
-    erro instanceof OmieError &&
-    !(erro instanceof OmieErroTransitorio || erro instanceof OmieErroLimiteExcedido || erro instanceof OmieErroMetodoEmExecucao) &&
-    /n[ãa]o (existe|h[áa]|encontrad|cadastrad|possui)/i.test(erro.message)
-  );
-}
+const inexistente = indicaRegistroInexistente;
 
 function linhaNcm(produto: string, codigo: string, descricao: string | null, ehProdutoAcabado: boolean, ncm: string | null, tabela: TabelaFiscal): LinhaConferencia | null {
   if (ncm === null) {
@@ -68,13 +67,28 @@ async function conferirEstrutura(estrutura: Record<string, unknown>, codigoProdu
   }
   const vistos = new Set<string>();
   let consultados = 0;
+  const naoConferido = (codigo: string, descricao: string | null, detalhe: string): void => {
+    linhas.push({ produto: codigoProduto, codigo, descricao, ehProdutoAcabado: false, ncm: null, problema: 'NAO_CONFERIDO', detalhe });
+  };
   const visitar = async (itens: Record<string, unknown>[], caminho: string[]): Promise<void> => {
     for (const item of itens) {
       const cod = texto(item.codProdMalha);
       const idItem = id(item.idProdMalha);
-      if (cod === null || idItem === null || consultados >= MAX_COMPONENTES) continue;
+      const descricao = texto(item.descrProdMalha);
+      if (cod === null || idItem === null) {
+        naoConferido(cod ?? `id ${String(item.idProdMalha)}`, descricao, 'Item da estrutura sem código ou id no Omie — confira a estrutura no Omie.');
+        continue;
+      }
+      if (consultados >= MAX_COMPONENTES) {
+        naoConferido(cod, descricao, `Acima do teto de ${MAX_COMPONENTES} componentes por produto — não conferido.`);
+        continue;
+      }
       const tipo = texto(item.tipoProdMalha);
-      if (tipo !== null && TIPOS_COM_ESTRUTURA.has(tipo) && caminho.length + 1 < MAX_NIVEIS_ESTRUTURA && !caminho.includes(cod.toUpperCase())) {
+      if (tipo !== null && TIPOS_COM_ESTRUTURA.has(tipo)) {
+        if (caminho.includes(cod.toUpperCase()) || caminho.length >= MAX_NIVEIS_ESTRUTURA) {
+          naoConferido(cod, descricao, caminho.includes(cod.toUpperCase()) ? 'Estrutura em ciclo (o kit aparece dentro dele mesmo) — corrija no Omie.' : `Estrutura com mais de ${MAX_NIVEIS_ESTRUTURA} níveis — não conferido.`);
+          continue;
+        }
         let sub: Record<string, unknown> | null = null;
         try {
           sub = await fonte.consultarEstrutura(cod);
@@ -112,12 +126,18 @@ function linhaErro(produto: string, problema: 'SEM_ESTRUTURA' | 'OMIE_INDISPONIV
 
 /** Um produto pelo código. */
 export async function conferirProduto(codigo: string, fonte: FonteConferencia, tabela: TabelaFiscal): Promise<LinhaConferencia[]> {
+  let estrutura: Record<string, unknown>;
   try {
-    const estrutura = await fonte.consultarEstrutura(codigo);
-    if (!Array.isArray(estrutura.itens) || estrutura.itens.length === 0) return [linhaErro(codigo, 'SEM_ESTRUTURA')];
-    return await conferirEstrutura(estrutura, codigo, fonte, tabela);
+    estrutura = await fonte.consultarEstrutura(codigo);
   } catch (erro) {
     return [linhaErro(codigo, inexistente(erro) ? 'SEM_ESTRUTURA' : 'OMIE_INDISPONIVEL')];
+  }
+  if (!Array.isArray(estrutura.itens) || estrutura.itens.length === 0) return [linhaErro(codigo, 'SEM_ESTRUTURA')];
+  // Falha ao ler um componente (inclusive "não cadastrado") nunca vira "produto sem estrutura".
+  try {
+    return await conferirEstrutura(estrutura, codigo, fonte, tabela);
+  } catch {
+    return [linhaErro(codigo, 'OMIE_INDISPONIVEL')];
   }
 }
 
@@ -128,6 +148,11 @@ export async function conferirLote(pagina: number, fonte: FonteConferencia, tabe
   for (const p of produtos) {
     const ident = (p.ident ?? {}) as Record<string, unknown>;
     const codigo = texto(ident.codProduto) ?? `id ${String(ident.idProduto)}`;
+    // Produto do lote sem itens: "sem estrutura", nunca "nenhum problema".
+    if (!Array.isArray(p.itens) || p.itens.length === 0) {
+      linhas.push(linhaErro(codigo, 'SEM_ESTRUTURA'));
+      continue;
+    }
     try {
       linhas.push(...(await conferirEstrutura(p, codigo, fonte, tabela)));
     } catch {

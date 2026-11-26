@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { validarBuscaCliente, validarCodigoCliente, validarGravacaoClientePta } from '../../src/precificacao/clientesPta.js';
+import { nomeParaGravar, validarBuscaCliente, validarCodigoCliente, validarGravacaoClientePta } from '../../src/precificacao/clientesPta.js';
 import { diferencasClientePta } from '../../src/precificacao/clientesPtaRepositorio.js';
 
-const corpo = (sobrescrever: Record<string, unknown> = {}) => ({ versao: null, comPta: true, nomeCliente: 'Cliente Teste Ltda', cnpjCpf: '12345678000199', ...sobrescrever });
+const corpo = (sobrescrever: Record<string, unknown> = {}) => ({ versao: null, comPta: true, ...sobrescrever });
 
 describe('cliente com PTA (decisão de 26/11/2026) — validação estrita', () => {
   it('código do cliente: inteiro positivo, na URL como dígitos', () => {
@@ -13,19 +13,19 @@ describe('cliente com PTA (decisão de 26/11/2026) — validação estrita', () 
     }
   });
 
-  it('gravação: só as 4 chaves, comPta booleano, nome obrigatório, CNPJ/CPF só dígitos (ou null)', () => {
-    expect(validarGravacaoClientePta('10', corpo({ nomeCliente: '  Cliente  ' }))).toEqual({
-      versao: null,
-      cliente: { codigoCliente: 10, comPta: true, nomeCliente: 'Cliente', cnpjCpf: '12345678000199' },
-    });
-    expect(validarGravacaoClientePta('10', corpo({ versao: 3, comPta: false, cnpjCpf: null })).versao).toBe(3);
-    expect(() => validarGravacaoClientePta('10', { ...corpo(), extra: 1 })).toThrow(/desconhecido/);
-    const { cnpjCpf: _x, ...semCnpj } = corpo();
-    expect(() => validarGravacaoClientePta('10', semCnpj)).toThrow(/faltam/);
+  it('gravação: só { versao, comPta } — nome e CNPJ do navegador são recusados (vêm do Omie)', () => {
+    expect(validarGravacaoClientePta('10', corpo())).toEqual({ versao: null, codigoCliente: 10, comPta: true });
+    expect(validarGravacaoClientePta('10', corpo({ versao: 3, comPta: false })).versao).toBe(3);
+    expect(() => validarGravacaoClientePta('10', { ...corpo(), nomeCliente: 'X' })).toThrow(/desconhecido/);
+    expect(() => validarGravacaoClientePta('10', { versao: null })).toThrow(/faltam/);
     expect(() => validarGravacaoClientePta('10', corpo({ comPta: 'S' }))).toThrow(/verdadeiro ou falso/);
-    expect(() => validarGravacaoClientePta('10', corpo({ nomeCliente: '  ' }))).toThrow(/Nome do cliente/);
-    expect(() => validarGravacaoClientePta('10', corpo({ cnpjCpf: '12.345.678/0001-99' }))).toThrow(/CNPJ/);
     expect(() => validarGravacaoClientePta('10', corpo({ versao: 0 }))).toThrow(/Versão/);
+  });
+
+  it('nome gravado: razão social do Omie; vazia vira "Cliente <código>"; longa é cortada', () => {
+    expect(nomeParaGravar(10, ' Acme ')).toBe('Acme');
+    expect(nomeParaGravar(10, '')).toBe('Cliente 10');
+    expect(nomeParaGravar(10, 'x'.repeat(300))).toHaveLength(200);
   });
 
   it('busca no Omie: CNPJ/CPF (11 ou 14 dígitos) OU nome (3+ letras), nunca os dois nem vazio', () => {

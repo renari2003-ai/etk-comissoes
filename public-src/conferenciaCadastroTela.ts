@@ -10,7 +10,7 @@ interface LinhaConferencia {
   descricao: string | null;
   ehProdutoAcabado: boolean;
   ncm: string | null;
-  problema: 'SEM_NCM' | 'NCM_SEM_IPI_NA_TABELA' | 'SEM_ESTRUTURA' | 'OMIE_INDISPONIVEL';
+  problema: 'SEM_NCM' | 'NCM_SEM_IPI_NA_TABELA' | 'SEM_ESTRUTURA' | 'OMIE_INDISPONIVEL' | 'NAO_CONFERIDO';
   detalhe: string;
 }
 
@@ -26,6 +26,7 @@ const NOME_PROBLEMA: Record<LinhaConferencia['problema'], string> = {
   NCM_SEM_IPI_NA_TABELA: 'NCM sem IPI na tabela',
   SEM_ESTRUTURA: 'Sem estrutura',
   OMIE_INDISPONIVEL: 'Omie indisponível',
+  NAO_CONFERIDO: 'Não conferido',
 };
 
 function el<T extends HTMLElement>(id: string): T {

@@ -46,20 +46,22 @@ function validarVersao(valor: unknown): number | null {
   return valor;
 }
 
-/** Corpo do PUT: `{ versao, comPta, nomeCliente, cnpjCpf }` (`versao = null` = cliente ainda não marcado no app). */
-export function validarGravacaoClientePta(codigo: unknown, valor: unknown): { versao: number | null; cliente: ClientePta } {
+/**
+ * Corpo do PUT: só `{ versao, comPta }` (`versao = null` = cliente ainda não marcado no app). Nome e
+ * CNPJ/CPF NÃO vêm do navegador: a rota confere o cliente no Omie (só leitura) e usa o cadastro de
+ * lá (revisão de 26/11/2026).
+ */
+export function validarGravacaoClientePta(codigo: unknown, valor: unknown): { versao: number | null; codigoCliente: number; comPta: boolean } {
   const codigoCliente = validarCodigoCliente(codigo);
-  const o = exigirObjetoComChaves(valor, ['versao', 'comPta', 'nomeCliente', 'cnpjCpf'], 'Cliente com PTA');
+  const o = exigirObjetoComChaves(valor, ['versao', 'comPta'], 'Cliente com PTA');
   if (typeof o.comPta !== 'boolean') throw new ErroValidacao('"Cliente com PTA" deve ser verdadeiro ou falso.');
-  if (typeof o.nomeCliente !== 'string' || o.nomeCliente.trim() === '' || o.nomeCliente.trim().length > TAMANHO_MAXIMO_NOME_CLIENTE) {
-    throw new ErroValidacao(`Nome do cliente obrigatório (até ${TAMANHO_MAXIMO_NOME_CLIENTE} caracteres).`);
-  }
-  let cnpjCpf: string | null = null;
-  if (o.cnpjCpf !== null) {
-    if (typeof o.cnpjCpf !== 'string' || !/^(\d{11}|\d{14})$/.test(o.cnpjCpf)) throw new ErroValidacao('CNPJ/CPF do cliente inválido (só os 11 ou 14 dígitos, ou vazio).');
-    cnpjCpf = o.cnpjCpf;
-  }
-  return { versao: validarVersao(o.versao), cliente: { codigoCliente, comPta: o.comPta, nomeCliente: o.nomeCliente.trim(), cnpjCpf } };
+  return { versao: validarVersao(o.versao), codigoCliente, comPta: o.comPta };
+}
+
+/** Nome para a lista e o histórico: a razão social do Omie (vazia → "Cliente <código>"), até o tamanho máximo. */
+export function nomeParaGravar(codigoCliente: number, razaoSocial: string): string {
+  const nome = razaoSocial.trim() === '' ? `Cliente ${codigoCliente}` : razaoSocial.trim();
+  return nome.slice(0, TAMANHO_MAXIMO_NOME_CLIENTE);
 }
 
 /** Busca de cliente no Omie (só leitura): CNPJ/CPF OU parte do nome — nunca os dois, nunca vazio. */

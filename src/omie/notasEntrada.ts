@@ -12,8 +12,8 @@
  * A nota NÃO traz a UF do fornecedor (vem do cadastro dele: `nIdFornecedor` → ConsultarCliente).
  *
  * Regra (decisão de 26/11/2026): fica a nota MAIS RECENTE de cada produto dentro da janela
- * consultada (6 meses). Item ilegível de uma nota é ignorado (nunca vira imposto 0 em silêncio):
- * o produto fica sem nota e entra como "estimado".
+ * consultada (6 meses). Se o item dessa nota mais recente tem alíquota ilegível, o produto fica SEM
+ * nota ("estimado") — nunca vira imposto 0 em silêncio nem volta para uma nota mais antiga.
  */
 
 /** Item de nota de entrada, já reduzido ao que a precificação usa (é o que vai para o cache). */
@@ -32,6 +32,8 @@ export interface ItemNotaEntrada {
   aliquotaIpi: number;
   /** Há ICMS-ST no item? (só informativo: a ST não entra na regra de créditos da spec). */
   temIcmsSt: boolean;
+  /** Alíquotas legíveis? `false` = o item conta como nota mais recente, mas tira o produto do mapa (fica "estimado"). */
+  legivel: boolean;
 }
 
 function numero(valor: unknown): number | null {
@@ -112,8 +114,8 @@ export function itensDosRecebimentos(recebimentos: unknown): ItemNotaEntrada[] {
       const aliqIcms = aliquota(icms, 'nAliq');
       const aliqIcmsSn = aliquota(icmsSn, 'nAliqSN');
       const aliqIpi = aliquota(ipi, 'nAliqIPI');
-      // Alíquota ilegível: o item fica de fora (o produto entra como estimado), nunca como 0.
-      if (aliqIcms === null || aliqIcmsSn === null || aliqIpi === null) continue;
+      // Alíquota ilegível: o item fica marcado (se for a nota mais recente, o produto entra como estimado), nunca como 0.
+      const legivel = aliqIcms !== null && aliqIcmsSn !== null && aliqIpi !== null;
       const st = objeto(item.itensICMSST);
       saida.push({
         idProduto,
@@ -123,16 +125,20 @@ export function itensDosRecebimentos(recebimentos: unknown): ItemNotaEntrada[] {
         data,
         quantidade,
         precoUnitario,
-        aliquotaIcms: aliqIcms > 0 ? aliqIcms : aliqIcmsSn,
-        aliquotaIpi: aliqIpi,
+        aliquotaIcms: !legivel ? 0 : aliqIcms! > 0 ? aliqIcms! : aliqIcmsSn!,
+        aliquotaIpi: !legivel ? 0 : aliqIpi!,
         temIcmsSt: (numero(st?.nValorST) ?? 0) > 0,
+        legivel,
       });
     }
   }
   return saida;
 }
 
-/** A nota mais recente de cada produto (empate de data: o maior id de recebimento). */
+/**
+ * A nota mais recente de cada produto (empate de data: o maior id de recebimento). Se ela está
+ * ilegível, o produto sai do mapa (fica "estimado") — nunca usa uma nota mais antiga no lugar.
+ */
 export function ultimaNotaPorProduto(itens: readonly ItemNotaEntrada[]): Map<number, ItemNotaEntrada> {
   const mapa = new Map<number, ItemNotaEntrada>();
   for (const item of itens) {
@@ -141,6 +147,7 @@ export function ultimaNotaPorProduto(itens: readonly ItemNotaEntrada[]): Map<num
       mapa.set(item.idProduto, item);
     }
   }
+  for (const [id, item] of mapa) if (item.legivel === false) mapa.delete(id);
   return mapa;
 }
 

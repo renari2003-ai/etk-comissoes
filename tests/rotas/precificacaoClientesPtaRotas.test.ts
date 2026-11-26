@@ -44,8 +44,8 @@ const { tratadorDeErros } = await import('../../src/rotas/erroHttp.js');
 const { NOME_COOKIE_SESSAO } = await import('../../src/auth/cookies.js');
 const { ErroConflito } = await import('../../src/validacao.js');
 
-const omie = { buscarClientes: vi.fn() };
-const corpoValido = () => ({ versao: null, comPta: true, nomeCliente: 'Cliente Teste Ltda', cnpjCpf: '12345678000199' });
+const omie = { buscarClientes: vi.fn(), consultarClienteFiscal: vi.fn() };
+const corpoValido = () => ({ versao: null, comPta: true });
 
 describe('rotas "cliente com PTA" — proteção, validação e Omie só leitura', () => {
   const app = express();
@@ -71,6 +71,7 @@ describe('rotas "cliente com PTA" — proteção, validação e Omie só leitura
     repositorio.obterClientesPta.mockReset().mockResolvedValue(new Map());
     repositorio.salvarClientePta.mockReset().mockImplementation(async (c: object) => ({ cliente: { ...c, versao: 1 }, alteracoes: 3 }));
     omie.buscarClientes.mockReset().mockResolvedValue([]);
+    omie.consultarClienteFiscal.mockReset().mockResolvedValue({ codigo: 10, razaoSocial: 'Cliente Teste Ltda', cnpjCpf: '12345678000199', uf: 'MG', contribuinte: true, inscricaoEstadual: '1' });
   });
 
   const como = (token: string | null, caminho: string, init: RequestInit = {}) =>
@@ -114,8 +115,14 @@ describe('rotas "cliente com PTA" — proteção, validação e Omie só leitura
       null,
       { id: 'id-administrador-false', nome: 'Nome administrador' },
     );
+    expect(omie.consultarClienteFiscal).toHaveBeenCalledWith(10);
     repositorio.salvarClientePta.mockClear();
-    for (const [codigo, corpo] of [['10', { ...corpoValido(), extra: 1 }], ['10', { ...corpoValido(), comPta: 'S' }], ['0', corpoValido()]] as const) {
+    // Cliente que o Omie diz não existir: 400, nada gravado.
+    omie.consultarClienteFiscal.mockResolvedValueOnce(null);
+    const inexistente = await put('admin', '10', corpoValido());
+    expect(inexistente.status).toBe(400);
+    expect(((await inexistente.json()) as { erro: string }).erro).toContain('não encontrado no Omie');
+    for (const [codigo, corpo] of [['10', { ...corpoValido(), extra: 1 }], ['10', { ...corpoValido(), nomeCliente: 'X' }], ['10', { ...corpoValido(), comPta: 'S' }], ['0', corpoValido()]] as const) {
       expect((await put('admin', codigo, corpo)).status).toBe(400);
     }
     expect(repositorio.salvarClientePta).not.toHaveBeenCalled();

@@ -103,7 +103,7 @@ function rotuloCampoHistorico(campo: string): string {
   if (uf !== null) return `${uf[1]} — ${uf[2] === 'aliquotaInterna' ? 'alíquota interna' : 'ICMS interestadual de venda'}`;
   const ncm = /^ncm\.(\d{8})$/.exec(campo);
   if (ncm !== null) return `Exceção MG — NCM ${ncm[1]}`;
-  const ipi = /^ipi.(d{8})$/.exec(campo);
+  const ipi = /^ipi\.(\d{8})$/.exec(campo);
   if (ipi !== null) return `IPI — NCM ${ipi[1]}`;
   return campo;
 }

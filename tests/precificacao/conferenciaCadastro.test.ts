@@ -69,6 +69,36 @@ describe('relatório de conferência do cadastro (só leitura)', () => {
     expect(r.linhas.map((l) => l.codigo)).toEqual(['MP2', 'MP3']);
   });
 
+  it('lote: produto sem itens vira SEM_ESTRUTURA (nunca "nenhum problema")', async () => {
+    const r = await conferirLote(1, fonte({ listarEstruturas: async () => ({ totalPaginas: 1, produtos: [{ ident: { codProduto: 'PA9' } }] }) }), TABELA);
+    expect(r.linhas).toEqual([expect.objectContaining({ codigo: 'PA9', problema: 'SEM_ESTRUTURA' })]);
+  });
+
+  it('item sem id, acima do teto de 150 ou kit em ciclo: NAO_CONFERIDO; id em texto numérico é aceito', async () => {
+    const itens = [
+      { codProdMalha: 'SEMID', tipoProdMalha: '01' },
+      { codProdMalha: 'TXT', idProdMalha: '10', tipoProdMalha: '01' },
+      { codProdMalha: 'PA1', idProdMalha: 1, tipoProdMalha: '04' },
+      ...Array.from({ length: 151 }, (_, i) => ({ codProdMalha: `X${i}`, idProdMalha: 1000 + i, tipoProdMalha: '01' })),
+    ];
+    const linhas = await conferirProduto('PA1', fonte({
+      consultarEstrutura: async () => ({ ident: { idProduto: 1 }, itens }),
+      consultarProduto: async (id) => ({ codigo_produto: id, ncm: '85447000' }) as never,
+    }), TABELA);
+    expect(linhas.map((l) => [l.codigo, l.problema])).toEqual([
+      ['SEMID', 'NAO_CONFERIDO'],
+      ['PA1', 'NAO_CONFERIDO'],
+      ['X149', 'NAO_CONFERIDO'],
+      ['X150', 'NAO_CONFERIDO'],
+    ]);
+    expect(linhas[1]!.detalhe).toContain('ciclo');
+  });
+
+  it('componente "não cadastrado" no meio da estrutura: OMIE_INDISPONIVEL, nunca "produto sem estrutura"', async () => {
+    const linhas = await conferirProduto('PA1', fonte({ consultarProduto: async () => { throw new OmieError('Produto não cadastrado'); } }), TABELA);
+    expect(linhas).toEqual([expect.objectContaining({ codigo: 'PA1', problema: 'OMIE_INDISPONIVEL' })]);
+  });
+
   it('consulta da rota: produto OU página, validados', () => {
     expect(validarConsultaConferencia({ produto: ' pa1 ' })).toEqual({ produto: 'PA1' });
     expect(validarConsultaConferencia({})).toEqual({ pagina: 1 });

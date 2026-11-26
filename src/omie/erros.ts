@@ -81,3 +81,14 @@ export function verificarFalhaNoCorpo(corpo: unknown): { faultcode?: string; fau
 export function indicaLimiteExcedido(faultcode?: string, faultstring?: string): boolean {
   return /425|redundan/i.test(`${faultcode ?? ''} ${faultstring ?? ''}`);
 }
+
+/**
+ * O Omie disse que o registro NÃO EXISTE (produto sem estrutura, cliente não cadastrado...)? Só
+ * `OmieError` de negócio com texto de inexistência — erro de rede, limite, método em execução ou
+ * HTTP 5xx sem texto NUNCA conta como "não existe" (vira "Omie indisponível").
+ */
+export function indicaRegistroInexistente(erro: unknown): boolean {
+  if (!(erro instanceof OmieError)) return false;
+  if (erro instanceof OmieErroTransitorio || erro instanceof OmieErroLimiteExcedido || erro instanceof OmieErroMetodoEmExecucao) return false;
+  return /n[ãa]o (existe|h[áa] registro|encontrad|cadastrad|possui)/i.test(erro.message);
+}

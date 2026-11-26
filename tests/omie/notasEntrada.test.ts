@@ -22,7 +22,7 @@ function itemNota(sobrescrever: Record<string, unknown> = {}) {
 describe('notas de entrada do Omie (ListarRecebimentos) — interpretação', () => {
   it('lê o item com as alíquotas destacadas e a data de entrada', () => {
     expect(itensDosRecebimentos([recebimento()])).toEqual([
-      { idProduto: 20, idRecebimento: 500, idFornecedor: 77, numeroNfe: '1234', data: '2026-11-12', quantidade: 10, precoUnitario: 12.86, aliquotaIcms: 18, aliquotaIpi: 5, temIcmsSt: false },
+      { idProduto: 20, idRecebimento: 500, idFornecedor: 77, numeroNfe: '1234', data: '2026-11-12', quantidade: 10, precoUnitario: 12.86, aliquotaIcms: 18, aliquotaIpi: 5, temIcmsSt: false, legivel: true },
     ]);
   });
 
@@ -34,10 +34,12 @@ describe('notas de entrada do Omie (ListarRecebimentos) — interpretação', ()
     expect(itensDosRecebimentos(undefined)).toEqual([]);
   });
 
-  it('sem bloco de IPI/ICMS = 0; alíquota ilegível tira o item (nunca vira 0 em silêncio); Simples usa nAliqSN', () => {
+  it('sem bloco de IPI/ICMS = 0; alíquota ilegível marca o item (nunca vira 0 em silêncio); Simples usa nAliqSN', () => {
     const [semIpi] = itensDosRecebimentos([recebimento({}, [itemNota({ itensIPI: undefined })])]);
     expect(semIpi!.aliquotaIpi).toBe(0);
-    expect(itensDosRecebimentos([recebimento({}, [itemNota({ itensIPI: { nAliqIPI: 'x' } })])])).toEqual([]);
+    const [ilegivel] = itensDosRecebimentos([recebimento({}, [itemNota({ itensIPI: { nAliqIPI: 'x' } })])]);
+    expect(ilegivel).toMatchObject({ legivel: false });
+    expect(ultimaNotaPorProduto([ilegivel!]).size).toBe(0);
     const [simples] = itensDosRecebimentos([recebimento({}, [itemNota({ itensICMS: undefined, itensICMSSN: { nAliqSN: 1.25 } })])]);
     expect(simples!.aliquotaIcms).toBe(1.25);
     const [comSt] = itensDosRecebimentos([recebimento({}, [itemNota({ itensICMSST: { nValorST: 3 } })])]);
@@ -58,6 +60,15 @@ describe('notas de entrada do Omie (ListarRecebimentos) — interpretação', ()
     ];
     const mapa = ultimaNotaPorProduto(itens);
     expect(mapa.get(20)).toMatchObject({ idRecebimento: 600, aliquotaIpi: 0 });
+  });
+
+  it('nota mais recente ilegível: o produto fica sem nota ("estimado"), nunca volta para a nota mais antiga', () => {
+    const antiga = itensDosRecebimentos([recebimento({ cabec: { nIdReceb: 400, dEmissaoNFe: '01/10/2026' }, infoAdicionais: { dRegistro: '02/10/2026' } })]);
+    const nova = itensDosRecebimentos([recebimento({}, [itemNota({ itensIPI: { nAliqIPI: 'x' } })])]);
+    expect(ultimaNotaPorProduto([...antiga, ...nova]).has(20)).toBe(false);
+    // Ilegível mais ANTIGA não atrapalha a nota nova legível.
+    const velhaIlegivel = itensDosRecebimentos([recebimento({ cabec: { nIdReceb: 400, dEmissaoNFe: '01/10/2026' }, infoAdicionais: { dRegistro: '02/10/2026' } }, [itemNota({ itensIPI: { nAliqIPI: 'x' } })])]);
+    expect(ultimaNotaPorProduto([...velhaIlegivel, ...itensDosRecebimentos([recebimento()])]).get(20)).toMatchObject({ idRecebimento: 500, legivel: true });
   });
 
   it('datas: conversão nos dois sentidos e janela de 6 meses (fim de mês recua para o último dia)', () => {

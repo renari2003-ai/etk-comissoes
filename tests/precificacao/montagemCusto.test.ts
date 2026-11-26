@@ -17,7 +17,7 @@ const TABELA: TabelaFiscal = {
 };
 
 function nota(sobrescrever: Partial<ItemNotaEntrada> = {}): ItemNotaEntrada {
-  return { idProduto: 10, idRecebimento: 1, idFornecedor: 77, numeroNfe: '555', data: '2026-11-01', quantidade: 1, precoUnitario: 100, aliquotaIcms: 12, aliquotaIpi: 12, temIcmsSt: false, ...sobrescrever };
+  return { idProduto: 10, idRecebimento: 1, idFornecedor: 77, numeroNfe: '555', data: '2026-11-01', quantidade: 1, precoUnitario: 100, aliquotaIcms: 12, aliquotaIpi: 12, temIcmsSt: false, legivel: true, ...sobrescrever };
 }
 
 function dados(componentes: Record<string, Partial<ComponenteOmie>>, ncmProduto: string | null = '85447000'): DadosOmieProduto {

@@ -8,6 +8,7 @@ const NOME_PROBLEMA = {
     NCM_SEM_IPI_NA_TABELA: 'NCM sem IPI na tabela',
     SEM_ESTRUTURA: 'Sem estrutura',
     OMIE_INDISPONIVEL: 'Omie indisponível',
+    NAO_CONFERIDO: 'Não conferido',
 };
 function el(id) {
     const elemento = document.getElementById(id);

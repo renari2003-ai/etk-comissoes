@@ -83,7 +83,7 @@ export function inicializarClientesPta() {
                     const resposta = await fetch(`/api/precificacao/clientes-pta/${cliente.codigoCliente}`, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ versao: salvo?.versao ?? null, comPta: !comPta, nomeCliente: cliente.nome, cnpjCpf: cliente.cnpjCpf }),
+                        body: JSON.stringify({ versao: salvo?.versao ?? null, comPta: !comPta }),
                     });
                     if (!resposta.ok) {
                         mostrarErro(await lerMensagemDeErro(resposta));
