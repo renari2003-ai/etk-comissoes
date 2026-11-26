@@ -1220,7 +1220,7 @@ OBSERVACOES: Entrega em horário comercial.</pre>
       <p class="filtro-data-legenda">
         Para item sem custo no Omie ou com custo errado. Digite o valor unitário como na nota de compra, <strong>com impostos</strong>:
         os créditos (IPI e PIS/COFINS) saem sozinhos. Salvo aqui, vale nos próximos cálculos, na frente do custo do Omie. Nunca é gravado no Omie.
-        Valor vazio guarda só os dados fiscais de um item que tem custo no Omie mas não tem nota de entrada.
+        O custo do Omie já vem sem os impostos recuperáveis e entra como está, sem crédito.
       </p>
       <form id="precificacao-form-custo-manual" autocomplete="off" novalidate>
         <p id="precificacao-custo-modo" class="filtro-data-legenda"></p>
@@ -1231,7 +1231,7 @@ OBSERVACOES: Entrega em horário comercial.</pre>
           </div>
           <div class="campo-filtro">
             <label for="precificacao-custo-valor">Valor da nota (unitário, com impostos)</label>
-            <input id="precificacao-custo-valor" type="text" inputmode="decimal" placeholder="ex.: 12,86" />
+            <input id="precificacao-custo-valor" type="text" inputmode="decimal" required placeholder="ex.: 12,86" />
             <div id="precificacao-custo-sugestao" hidden>
               <small id="precificacao-custo-sugestao-texto" class="filtro-data-legenda"></small>
               <button type="button" id="precificacao-custo-sugestao-usar" class="botao-secundario">Usar sugestão</button>

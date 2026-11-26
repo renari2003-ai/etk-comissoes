@@ -243,7 +243,7 @@ export function inicializarCustosManuais(): { ativar: () => void } {
     for (const c of custos) {
       const tr = document.createElement('tr');
       celula(tr, c.codigo);
-      celula(tr, c.valorNota === null ? '— (só dados fiscais)' : `R$ ${numeroBr(c.valorNota)}`);
+      celula(tr, c.valorNota === null ? '— (registro antigo, sem valor: não vale)' : `R$ ${numeroBr(c.valorNota)}`);
       celula(tr, c.ufFornecedor);
       celula(tr, c.ufFornecedor === 'MG' ? `PTA: ${c.diferimentoPta ? 'Sim' : 'Não'}` : `Importada: ${c.mercadoriaImportada ? 'Sim' : 'Não'}`);
       celula(tr, ROTULO_TIPO[c.tipoFornecedor] ?? c.tipoFornecedor);
@@ -366,6 +366,7 @@ export function inicializarCustosManuais(): { ativar: () => void } {
       const valorNota = lerNumero(inputValor.value);
       const ipiPercentual = lerNumero(inputIpi.value);
       if (codigo === '') return mostrarErro('Informe o código do componente.');
+      if (valorNota === null) return mostrarErro('Informe o valor da nota (unitário, com impostos).');
       if (Number.isNaN(valorNota)) return mostrarErro('Valor da nota não entendido (ex.: 12,86).');
       if (Number.isNaN(ipiPercentual)) return mostrarErro('IPI % não entendido (ex.: 12 ou 6,5).');
       if (selectUf.value === '') return mostrarErro('Escolha a UF do fornecedor.');

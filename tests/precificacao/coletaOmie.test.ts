@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { OmieError, OmieErroTransitorio } from '../../src/omie/erros.js';
-import type { ItemNotaEntrada } from '../../src/omie/notasEntrada.js';
 import {
   coletarDadosOmie,
   conteudoImportadoDoCadastro,
@@ -11,10 +10,6 @@ import {
 import { somarFolhas } from '../../src/precificacao/estrutura.js';
 
 const HOJE = '2026-11-26';
-
-function nota(idProduto: number, sobrescrever: Partial<ItemNotaEntrada> = {}): ItemNotaEntrada {
-  return { idProduto, idRecebimento: 1, idFornecedor: 77, numeroNfe: '1', data: '2026-10-01', quantidade: 1, precoUnitario: 10, aliquotaIcms: 18, aliquotaIpi: 5, temIcmsSt: false, legivel: true, ...sobrescrever };
-}
 
 /** Produto PA1 (id 1): MP1 (id 10, 2 un, 5% perda), KIT1 (id 20, tipo 03, 1 un) → MP2 (id 30, 0,5 un) e MP3 (id 40, 1 un). */
 function fonteFalsa(sobrescrever: Partial<FonteOmiePrecificacao> = {}): FonteOmiePrecificacao & { chamadas: string[] } {
@@ -58,39 +53,28 @@ function fonteFalsa(sobrescrever: Partial<FonteOmiePrecificacao> = {}): FonteOmi
       chamadas.push(`estoque:${id}`);
       return { listaEstoque: id in cmc ? [{ nCodProd: id, nCMC: cmc[id] }] : [] };
     },
-    async listarItensNotasEntrada(de, ate) {
-      chamadas.push(`notas:${de}:${ate}`);
-      return [nota(10, { data: '2026-09-01', aliquotaIpi: 10 }), nota(10, { data: '2026-11-01', aliquotaIpi: 0 })];
-    },
     ...sobrescrever,
   };
 }
 
 describe('coleta do Omie para o custo (etapa 4) — só leitura', () => {
-  it('abre o kit até as folhas, com custo médio, NCM, última nota e perda; o kit não entra com o próprio custo', async () => {
+  it('abre o kit até as folhas, com custo médio, NCM e perda; o kit não entra com o próprio custo', async () => {
     const fonte = fonteFalsa();
     const dados = await coletarDadosOmie('PA1', fonte, HOJE);
     expect(dados.produto).toEqual({ idProduto: 1, descricao: 'Produto 1', ncm: '85447000', conteudoImportado: false });
-    expect(dados.janelaNotas).toEqual({ de: '2026-05-26', ate: HOJE });
     expect(dados.folhas.map((f) => [f.codigo, f.quantidadeNoProduto, f.custoUnitario])).toEqual([
       ['MP1', 2 * 1.05, 4],
       ['MP2', 0.5, 10],
       ['MP3', 1, null], // custo médio 0 = sem custo
     ]);
     expect(somarFolhas(dados.folhas).total).toBeCloseTo(2.1 * 4 + 0.5 * 10, 10);
-    expect(dados.componentes.MP1).toMatchObject({ ncm: '73181500', custoMedio: 4, ultimaNota: { data: '2026-11-01', aliquotaIpi: 0 } });
-    expect(dados.componentes.MP2).toMatchObject({ ncm: null, ultimaNota: null });
+    expect(dados.componentes.MP1).toEqual({ codigo: 'MP1', idProduto: 10, descricao: null, ncm: '73181500', custoMedio: 4 });
+    expect(dados.componentes.MP2).toMatchObject({ ncm: null, custoMedio: 10 });
     expect(dados.componentes.KIT1).toBeUndefined();
     expect(fonte.chamadas).not.toContain('estoque:20');
-    // Só consultas: nenhuma chamada fora das 4 de leitura.
-    expect(fonte.chamadas.every((c) => /^(estrutura|produto|estoque|notas):/.test(c))).toBe(true);
-  });
-
-  it('CUSTO_ESTIMADO (azul) lista as folhas com custo e sem nota na janela; sem custo não é "estimado"', async () => {
-    const dados = await coletarDadosOmie('PA1', fonteFalsa(), HOJE);
-    expect(dados.avisos).toEqual([
-      expect.objectContaining({ nivel: 'AZUL', codigo: 'CUSTO_ESTIMADO', mensagem: expect.stringContaining('desde 26/05/2026): MP2.') }),
-    ]);
+    // Só consultas: nenhuma chamada fora das 3 de leitura — as notas de entrada não são lidas (o nCMC já vem líquido).
+    expect(fonte.chamadas.every((c) => /^(estrutura|produto|estoque):/.test(c))).toBe(true);
+    expect(dados.avisos).toEqual([]);
   });
 
   it('PRODUTO_SEM_ESTRUTURA (vermelho): Omie diz que não existe, ou estrutura sem itens', async () => {
@@ -100,13 +84,12 @@ describe('coleta do Omie para o custo (etapa 4) — só leitura', () => {
     expect(vazia.avisos.map((a) => a.codigo)).toEqual(['PRODUTO_SEM_ESTRUTURA']);
   });
 
-  it('OMIE_INDISPONIVEL (vermelho): erro temporário em qualquer consulta para tudo — nunca vira "sem custo" ou "sem nota"', async () => {
+  it('OMIE_INDISPONIVEL (vermelho): erro temporário em qualquer consulta para tudo — nunca vira "sem custo"', async () => {
     const erro = async () => {
       throw new OmieErroTransitorio('Falha de rede');
     };
     for (const sobrescrever of [
       { consultarEstrutura: erro },
-      { listarItensNotasEntrada: erro },
       { obterEstoqueProduto: erro },
       { consultarProduto: erro },
     ] as Partial<FonteOmiePrecificacao>[]) {

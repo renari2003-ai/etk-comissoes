@@ -4,8 +4,8 @@
  *
  * - O custo é digitado como na nota de compra, COM impostos, junto dos dados fiscais da compra
  *   (UF do fornecedor, fornecedor de MG com PTA, mercadoria importada, tipo de fornecedor e IPI %).
- * - Um registro com `valorNota = null` guarda só os dados fiscais de um item ESTIMADO (tem custo no
- *   Omie, mas não tem nota de entrada) — nunca troca o custo do Omie.
+ * - O valor da nota é obrigatório na gravação (decisão de 26/11/2026: não há mais item "estimado";
+ *   o custo do Omie já vem líquido). Registro antigo com `valorNota = null` vale como "sem custo manual".
  * - Prioridade: manual desta simulação > manual salvo > Omie > sem custo. Manual salvo diferente do
  *   Omie: valem os dois na tela (aviso azul) e, até o operador escolher, vale o manual.
  * - Não há mais custo manual de GGF (decisão de 2026-11-25: sem GGF separado).
@@ -31,7 +31,7 @@ import {
 
 export const TIPOS_FORNECEDOR_VALIDOS: readonly TipoFornecedor[] = ['INDUSTRIA_NORMAL', 'SIMPLES_NACIONAL', 'COMERCIO'];
 
-/** Dados fiscais da compra informados pelo operador (os mesmos para custo manual e item estimado). */
+/** Dados fiscais da compra informados pelo operador com o custo manual. */
 export interface DadosFiscaisCompra {
   ufFornecedor: Uf;
   /** Só MG; fora de MG é sempre `false`. */
@@ -49,7 +49,7 @@ export interface DadosFiscaisCompra {
 export interface CustoManual extends DadosFiscaisCompra {
   /** Código do componente (maiúsculas). */
   codigo: string;
-  /** Valor unitário da nota, COM impostos. `null` = só dados fiscais de item estimado. */
+  /** Valor unitário da nota, COM impostos. `null` só em registro antigo (= sem custo manual). */
   valorNota: number | null;
 }
 
@@ -89,10 +89,10 @@ function exigirBooleano(valor: unknown, nome: string): boolean {
   return valor;
 }
 
-function validarValorNota(valor: unknown): number | null {
-  if (valor === null) return null;
+function validarValorNota(valor: unknown): number {
+  if (valor === null) throw new ErroValidacao('Valor da nota é obrigatório.');
   if (typeof valor !== 'number' || !Number.isFinite(valor) || valor <= 0) {
-    throw new ErroValidacao('Valor da nota deve ser um número maior que zero (ou vazio, para guardar só os dados fiscais).');
+    throw new ErroValidacao('Valor da nota deve ser um número maior que zero.');
   }
   if (valor > VALOR_NOTA_MAXIMO) throw new ErroValidacao(`Valor da nota acima do limite (R$ ${VALOR_NOTA_MAXIMO.toLocaleString('pt-BR')}).`);
   if (casasDecimais(valor) > 6) throw new ErroValidacao('Valor da nota com mais de 6 casas decimais.');
@@ -172,8 +172,8 @@ export interface CustoDoItem extends Pick<ItemCusto, 'custoBrutoUnitario' | 'cus
 }
 
 /**
- * Custo unitário bruto e líquido de uma compra SEM nota de entrada (valor da nota digitado, ou
- * custo do Omie de um item estimado), pelas regras de "Impostos na compra".
+ * Custo unitário bruto e líquido do valor da nota digitado no custo manual (com impostos), pelas
+ * regras de "Impostos na compra". Nunca é aplicado ao custo do Omie, que já vem líquido.
  * `ipiCadastroFracao` = alíquota de IPI do NCM no cadastro do componente no Omie (`null` = sem).
  */
 export function custoDaCompraSemNota(
@@ -210,7 +210,7 @@ export type OrigemCusto = 'MANUAL_SIMULACAO' | 'MANUAL_SALVO' | 'OMIE' | 'SEM_CU
 
 export interface EntradaResolucaoCusto {
   codigo: string;
-  /** Custo médio do estoque no Omie (com impostos). `null` ou ≤ 0 = sem custo no Omie. */
+  /** Custo médio do estoque no Omie (já líquido dos impostos recuperáveis). `null` ou ≤ 0 = sem custo no Omie. */
   custoOmie: number | null;
   manualSalvo: CustoManual | null;
   /** "Só nesta simulação" — não grava nada, vale só para este cálculo. */

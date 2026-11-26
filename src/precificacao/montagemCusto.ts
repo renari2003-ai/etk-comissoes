@@ -1,41 +1,44 @@
 /**
- * Etapa 4 — junta os dados do Omie (custo médio, última nota, NCM), o custo manual e a tabela
- * fiscal e devolve, para cada FOLHA da estrutura, o custo bruto e o líquido que entram em
- * `calcularCusto`. FUNÇÃO PURA (sem Omie, sem banco). Spec: "Impostos na compra" e decisões de
- * 24 a 26/11/2026.
+ * Etapa 4 — junta os dados do Omie (custo médio, NCM), o custo manual e a tabela fiscal e devolve,
+ * para cada FOLHA da estrutura, o custo bruto e o líquido que entram em `calcularCusto`.
+ * FUNÇÃO PURA (sem Omie, sem banco). Spec: "Impostos na compra" e decisões de 24 a 26/11/2026.
  *
  * Por folha:
  * 1. Valor: `resolverCustoItem` (manual desta simulação > manual salvo > Omie > sem custo).
- * 2. Créditos (IPI e PIS/COFINS; o ICMS fica no custo):
- *    - custo MANUAL: pelos dados fiscais digitados com ele (`custoDaCompraSemNota`);
- *    - custo do OMIE com nota de entrada na janela: pelas alíquotas de IPI e ICMS destacadas na
- *      nota mais recente, aplicadas ao custo médio;
- *    - custo do OMIE sem nota ("estimado"): pelos dados fiscais guardados no custo manual com valor
- *      vazio; sem esses dados, entra pelo valor BRUTO, sem crédito, com tarja amarela
- *      `ITEM_SEM_DADOS_FISCAIS` (conservador: o preço sai alto, nunca baixo).
- * 3. Indústria normal sem IPI informado usa a tabela NCM → IPI; NCM vazio ou fora da tabela =
- *    sem crédito (tarja amarela `ITEM_SEM_NCM_IPI`, gerada por `calcularCusto`).
+ * 2. Créditos:
+ *    - custo do OMIE (`nCMC`): JÁ VEM LÍQUIDO dos impostos recuperáveis (aba "Custo de Estoque" do
+ *      recebimento de NF-e — decisão de 26/11/2026). Entra como está, SEM crédito nenhum;
+ *    - custo MANUAL (valor da nota, com impostos): tira IPI e PIS/COFINS pelos dados fiscais
+ *      digitados com ele (`custoDaCompraSemNota`); o ICMS fica no custo. Indústria normal sem IPI
+ *      informado usa a tabela NCM → IPI; NCM vazio ou fora da tabela = sem crédito (tarja amarela
+ *      `ITEM_SEM_NCM_IPI`, gerada por `calcularCusto`);
+ *    - custo manual sem UF/tipo de fornecedor (a gravação exige os dois; é só defesa): pelo valor
+ *      BRUTO, sem crédito, com tarja amarela `ITEM_SEM_DADOS_FISCAIS` (o preço sai alto, nunca baixo).
  */
 
 import type { Aviso } from './avisos.js';
-import { creditosDaCompra, decomporValorNota, type ItemCusto } from './calculo.js';
+import type { ItemCusto } from './calculo.js';
 import type { DadosOmieProduto } from './coletaOmie.js';
 import { custoDaCompraSemNota, resolverCustoItem, type CustoManual, type OrigemCusto } from './custoManual.js';
 import { aliquotaIpiDoNcm, paraParametrosDoCalculo, type TabelaFiscal } from './parametrosFiscais.js';
 
-/** De onde saíram as alíquotas dos créditos do item. */
-export type FonteCreditos = 'NOTA_ENTRADA' | 'DADOS_MANUAIS' | 'SEM_DADOS_FISCAIS' | 'SEM_CUSTO';
+/**
+ * Como saiu o custo líquido do item:
+ * - `OMIE_LIQUIDO`: custo médio do Omie, já sem os impostos recuperáveis (sem crédito aplicado);
+ * - `DADOS_MANUAIS`: custo manual com os créditos pelos dados fiscais digitados;
+ * - `SEM_DADOS_FISCAIS`: custo manual sem UF/tipo de fornecedor (bruto, sem crédito);
+ * - `SEM_CUSTO`: sem custo.
+ */
+export type FonteCreditos = 'OMIE_LIQUIDO' | 'DADOS_MANUAIS' | 'SEM_DADOS_FISCAIS' | 'SEM_CUSTO';
 
 export interface ItemCustoMontado extends ItemCusto {
   descricao: string | null;
   ncm: string | null;
   origem: OrigemCusto;
   fonteCreditos: FonteCreditos;
-  /** Alíquotas usadas (fração): `aliquotaIpi = null` = sem NCM/IPI (sem crédito). */
+  /** Alíquotas usadas nos créditos do custo manual (fração); `null` = sem crédito calculado. */
   aliquotaIpi: number | null;
   aliquotaIcms: number | null;
-  /** Nota usada nos créditos (número e data de entrada). */
-  nota: { numeroNfe: string | null; data: string } | null;
   conflito: { valorManual: number; valorOmie: number; escolhido: 'MANUAL' | 'OMIE' } | null;
 }
 
@@ -84,42 +87,31 @@ export function montarCusto(entrada: EntradaMontagem): ResultadoMontagem {
     };
 
     if (r.valorUnitario === null) {
-      itens.push({ ...base, custoBrutoUnitario: null, custoLiquidoUnitario: null, fonteCreditos: 'SEM_CUSTO', aliquotaIpi: null, aliquotaIcms: null, nota: null });
+      itens.push({ ...base, custoBrutoUnitario: null, custoLiquidoUnitario: null, fonteCreditos: 'SEM_CUSTO', aliquotaIpi: null, aliquotaIcms: null });
       continue;
     }
 
-    const nota = r.origem === 'OMIE' ? (comp?.ultimaNota ?? null) : null;
-    if (nota !== null) {
-      const aliquotaIpi = nota.aliquotaIpi / 100;
-      const aliquotaIcms = nota.aliquotaIcms / 100;
-      const compra = creditosDaCompra(decomporValorNota(r.valorUnitario, aliquotaIpi, aliquotaIcms), parametros.pisCofins);
-      itens.push({
-        ...base,
-        custoBrutoUnitario: compra.valorBruto,
-        custoLiquidoUnitario: compra.custoLiquido,
-        fonteCreditos: 'NOTA_ENTRADA',
-        aliquotaIpi,
-        aliquotaIcms,
-        nota: { numeroNfe: nota.numeroNfe, data: nota.data },
-      });
+    if (r.origem === 'OMIE') {
+      // nCMC já líquido dos impostos recuperáveis: entra como está, sem crédito nenhum.
+      itens.push({ ...base, custoBrutoUnitario: r.valorUnitario, custoLiquidoUnitario: r.valorUnitario, fonteCreditos: 'OMIE_LIQUIDO', aliquotaIpi: null, aliquotaIcms: null });
       continue;
     }
 
     if (r.dadosFiscais !== null) {
       const c = custoDaCompraSemNota(r.valorUnitario, r.dadosFiscais, aliquotaIpiDoNcm(tabela, ncm), parametros.compra, parametros.pisCofins);
-      itens.push({ ...base, custoBrutoUnitario: c.custoBrutoUnitario, custoLiquidoUnitario: c.custoLiquidoUnitario, fonteCreditos: 'DADOS_MANUAIS', aliquotaIpi: c.aliquotaIpi, aliquotaIcms: c.aliquotaIcms, nota: null });
+      itens.push({ ...base, custoBrutoUnitario: c.custoBrutoUnitario, custoLiquidoUnitario: c.custoLiquidoUnitario, fonteCreditos: 'DADOS_MANUAIS', aliquotaIpi: c.aliquotaIpi, aliquotaIcms: c.aliquotaIcms });
       continue;
     }
 
-    // Custo do Omie sem nota e sem dados fiscais: pelo bruto, sem crédito (explícito, nunca adivinhado).
-    itens.push({ ...base, custoBrutoUnitario: r.valorUnitario, custoLiquidoUnitario: r.valorUnitario, fonteCreditos: 'SEM_DADOS_FISCAIS', aliquotaIpi: null, aliquotaIcms: null, nota: null });
+    // Custo manual sem UF/tipo de fornecedor: pelo bruto, sem crédito (explícito, nunca adivinhado).
+    itens.push({ ...base, custoBrutoUnitario: r.valorUnitario, custoLiquidoUnitario: r.valorUnitario, fonteCreditos: 'SEM_DADOS_FISCAIS', aliquotaIpi: null, aliquotaIcms: null });
     if (!semDadosAvisados.has(chave)) {
       semDadosAvisados.add(chave);
       avisos.push({
         nivel: 'AMARELO',
         codigo: 'ITEM_SEM_DADOS_FISCAIS',
         item: folha.codigo,
-        mensagem: `Item ${folha.codigo} sem nota de entrada nos últimos meses e sem dados fiscais — entrou pelo valor bruto, sem crédito. Informe UF, tipo de fornecedor e IPI no custo manual do item ${folha.codigo} (o valor pode ficar vazio).`,
+        mensagem: `Custo manual do item ${folha.codigo} sem UF ou tipo de fornecedor — entrou pelo valor da nota, sem crédito. Informe UF e tipo de fornecedor no custo manual do item ${folha.codigo}.`,
       });
     }
   }

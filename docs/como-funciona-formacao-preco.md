@@ -41,37 +41,35 @@ Enquanto houver um desses avisos, trate o preço como provisório.
    - Um kit aberto **nunca** entra com o próprio custo junto com o dos itens de dentro dele, para não contar duas vezes. Se o kit não tem estrutura no Omie, entra com o custo médio do próprio kit.
    - Não existe GGF separado: o custo de fabricação já está dentro das **despesas fixas %** que você informa na tela.
 2. Cada item recebe um custo, e a linha mostra de onde ele veio:
-   - **Omie:** custo cadastrado no Omie.
+   - **Omie:** custo médio do estoque no Omie. **O custo do Omie já vem líquido dos impostos recuperáveis**, conforme a configuração "Custo de Estoque" do recebimento de NF-e. A ETK deve manter "ICMS é custo = SIM" (PTA) nessa configuração. Por isso o sistema não tira crédito nenhum desse custo.
    - **Manual:** custo digitado por alguém da ETK.
    - **Sem custo:** nem o Omie nem o cadastro manual têm valor. A linha aparece destacada.
-3. Do custo de cada item o sistema retira os impostos que a ETK recupera na compra: PIS/COFINS e IPI.
+3. Só no **custo manual** (valor da nota, com impostos) o sistema retira os impostos que a ETK recupera na compra: PIS/COFINS e IPI.
    - **ICMS da compra:** é sempre custo, nunca crédito. Só é 0% quando o **fornecedor é de MG e tem PTA** (diferimento). Fornecedor de MG sem PTA: o ICMS vem destacado (18%, alíquota interna) e fica no custo. Fornecedor de qualquer outra UF: 12% (4% se a mercadoria for importada).
-   - **IPI da compra:** se o Omie tem nota de entrada do item nos **últimos 6 meses**, vale o IPI da mais recente (e o ICMS e PIS/COFINS dela). Sem nota nesse período, o item aparece como **estimado**. Se não tem, vale o tipo de fornecedor. Indústria normal (Lucro Real/Presumido) usa a alíquota da **tabela NCM → IPI** para o NCM do componente (o cadastro do Omie só tem o NCM, não a alíquota). NCM vazio no Omie ou fora da tabela: o item entra sem crédito e o preço fica incompleto. Simples Nacional nunca dá crédito de IPI. Comércio/distribuidor também não, a não ser que a nota destaque IPI.
+   - **IPI da compra:** vale o IPI informado ou o tipo de fornecedor. Indústria normal (Lucro Real/Presumido) sem IPI informado usa a alíquota da **tabela NCM → IPI** para o NCM do componente (o cadastro do Omie só tem o NCM, não a alíquota). NCM vazio no Omie ou fora da tabela: o item entra sem crédito e o preço fica incompleto. Simples Nacional nunca dá crédito de IPI. Comércio/distribuidor também não, a não ser que a nota destaque IPI.
 
 ## Quando um item vem sem custo ou com custo errado
 
 No modo **💲 Precificação**, use a seção **"Custos manuais"** (ou, quando a tela de preço estiver pronta, o campo de custo do próprio item) e preencha:
 
-- **Valor da nota:** o valor unitário como aparece na nota de compra, **com impostos**.
+- **Valor da nota (obrigatório):** o valor unitário como aparece na nota de compra, **com impostos**.
 - **UF do fornecedor.**
 - **Fornecedor de MG com PTA?** Só aparece quando a UF é MG. "Sim" = ICMS 0% (diferimento); "Não" = ICMS destacado de 18%, que é custo.
 - **Mercadoria importada?** Só aparece quando a UF não é MG. Se for importada, o ICMS da compra é 4%.
 - **Tipo de fornecedor:** indústria normal, Simples Nacional ou comércio/distribuidor.
 - **IPI %:**
-  - Indústria normal: vem preenchido pelo cadastro do componente no Omie, e você pode corrigir.
+  - Indústria normal: vazio = alíquota da tabela NCM → IPI para o NCM do componente; você pode informar outro valor.
   - Simples Nacional: fica travado em 0.
   - Comércio/distribuidor: começa em 0. Só mude se a nota destacar IPI (por exemplo, distribuidor de importado equiparado a indústria).
 
 O sistema retira os créditos sozinho. Exemplo: nota de R$ 112,00 com IPI de 12%, de fornecedor de MG com PTA. O IPI é R$ 12,00 e o PIS/COFINS é R$ 9,25, então o custo líquido fica R$ 90,75.
 
-Se o componente não tem NCM ou alíquota de IPI no cadastro do Omie e o fornecedor é indústria normal, o item entra **pelo valor cheio da nota, sem descontar crédito nenhum**. O preço sai um pouco alto, nunca baixo, e fica marcado como incompleto até alguém informar o IPI. O jeito certo de resolver é corrigir o cadastro no Omie. O **relatório de conferência do cadastro** lista esses componentes.
+No custo manual, se o componente não tem NCM no Omie (ou o NCM não está na tabela NCM → IPI), o fornecedor é indústria normal e o IPI ficou vazio, o item entra **pelo valor cheio da nota, sem descontar crédito nenhum**. O preço sai um pouco alto, nunca baixo, e fica marcado como incompleto até alguém informar o IPI. O jeito certo de resolver é corrigir o cadastro no Omie. O **relatório de conferência do cadastro** lista esses componentes.
 
 Depois escolha:
 
 - **Só nesta simulação:** o valor vale só para este cálculo.
 - **Salvar para próximos cálculos:** o valor fica guardado e passa a valer em todos os próximos cálculos, **na frente do custo do Omie**. Toda mudança fica registrada (quem mudou, quando e qual era o valor anterior) no "Histórico dos custos manuais". Para voltar a usar o custo do Omie, clique em **Remover**.
-
-Se o item tem custo no Omie mas não tem nota de entrada, deixe o **valor da nota vazio** e preencha só UF, "fornecedor de MG com PTA" ou importada, tipo de fornecedor e IPI. O custo do Omie continua valendo, e esses dados ficam guardados para você não ter de informá-los a cada cálculo.
 
 Para alguns itens sem custo médio no Omie (MO00000037, MO00000067, MP00000045, MP00000042 e MO00000038), o formulário mostra, embaixo do valor da nota, uma **sugestão (relatório antigo do Omie)**. É o valor por unidade que o relatório antigo usava. É só sugestão: o botão **Usar sugestão** copia o valor para o campo, mas nada é gravado até você conferir e clicar em **Salvar**.
 
@@ -84,8 +82,8 @@ Se um item tem custo manual salvo e o Omie passar a ter custo para ele, a tela m
 Tudo o que estiver errado ou faltando aparece numa tarja no topo do resultado, dizendo o que é, em qual item e como resolver. A simulação salva e o PDF levam as mesmas tarjas.
 
 - **Vermelha:** o preço não aparece até o problema ser resolvido. Exemplos: produto sem estrutura no Omie; UF do cliente sem alíquota na tabela fiscal ("peça ao administrador para preencher a UF X"); cadastro do cliente inconsistente; Omie fora do ar ("tente de novo em alguns minutos").
-- **Amarela:** o preço aparece, mas marcado **"INCOMPLETO – não usar em cotação"**. Exemplos: item sem custo (com botão para digitar o custo), componente sem NCM ou IPI no cadastro ("corrija o cadastro do item X no Omie"), estrutura com mais de 60 componentes.
-- **Azul:** informativa. Exemplos: parâmetros fiscais ainda não validados pelo fiscal (tabela fiscal "Provisório"), item com custo estimado (sem nota de entrada), custo manual diferente do custo do Omie, DIFAL na base simples.
+- **Amarela:** o preço aparece, mas marcado **"INCOMPLETO – não usar em cotação"**. Exemplos: item sem custo (com botão para digitar o custo), componente sem NCM ou IPI no cadastro ("corrija o cadastro do item X no Omie"), estrutura com mais de 150 componentes.
+- **Azul:** informativa. Exemplos: parâmetros fiscais ainda não validados pelo fiscal (tabela fiscal "Provisório"), custo manual diferente do custo do Omie, DIFAL na base simples.
 
 No modo reverso, um preço-alvo abaixo do piso aparece numa tarja vermelha no próprio bloco do modo reverso.
 

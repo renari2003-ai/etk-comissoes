@@ -42,8 +42,8 @@ describe('validação estrita do custo manual (PUT)', () => {
     expect(custo).toEqual(manual());
   });
 
-  it('valor da nota vazio (null) = só dados fiscais de item estimado', () => {
-    expect(validarGravacaoCustoManual('MP1', corpo({ valorNota: null })).custo.valorNota).toBeNull();
+  it('valor da nota é obrigatório (não há mais registro só com dados fiscais)', () => {
+    expect(() => validarGravacaoCustoManual('MP1', corpo({ valorNota: null }))).toThrow(/obrigatório/);
   });
 
   it('recusa valor ≤ 0, texto, mais de 6 casas e acima do teto', () => {
@@ -163,7 +163,7 @@ describe('prioridade do custo: manual da simulação > manual salvo > Omie > sem
     expect(r.dadosFiscais!.ufFornecedor).toBe('SP');
   });
 
-  it('item estimado: registro só com dados fiscais (valor vazio) mantém o custo do Omie e leva os dados fiscais', () => {
+  it('registro antigo sem valor (null) não é custo manual: vale o custo do Omie', () => {
     const r = resolverCustoItem({ codigo: 'MP1', custoOmie: 12.86, manualSalvo: manual({ codigo: 'MP1', valorNota: null, ufFornecedor: 'SP', diferimentoPta: false }), manualSimulacao: null });
     expect(r).toMatchObject({ origem: 'OMIE', valorUnitario: 12.86, conflito: null });
     expect(r.dadosFiscais!.ufFornecedor).toBe('SP');

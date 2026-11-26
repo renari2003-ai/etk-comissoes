@@ -1,7 +1,8 @@
 /**
  * Etapa 4 — leitura do Omie para o custo de UM produto (SOMENTE LEITURA): estrutura aberta até as
- * folhas, custo médio atual (`nCMC`) de cada folha, NCM do cadastro (do produto e das folhas) e a
- * última nota de entrada de cada folha numa janela de 6 meses (decisões de 25 e 26/11/2026).
+ * folhas, custo médio atual (`nCMC`) de cada folha e NCM do cadastro (do produto e das folhas).
+ * O `nCMC` já vem líquido dos impostos recuperáveis (decisão de 26/11/2026): as notas de entrada
+ * NÃO são lidas para o custo.
  *
  * Nunca calcula preço: devolve os dados e os avisos do Omie para o cálculo (`calculo.ts`,
  * `custoManual.ts`). Falha do Omie nunca vira "custo zero" nem "sem nota" em silêncio — vira a
@@ -11,21 +12,16 @@
  * - VERMELHO `PRODUTO_SEM_ESTRUTURA`: o produto não tem estrutura no Omie.
  * - VERMELHO `OMIE_INDISPONIVEL`: erro ou demora do Omie em qualquer consulta necessária.
  * - AMARELO `COMPONENTES_NAO_CONSULTADOS`: estrutura acima do teto de componentes.
- * - AZUL `CUSTO_ESTIMADO`: folhas com custo, mas sem nota de entrada na janela.
  */
 
 import type { EstoqueOmie } from '../calculo/tipos.js';
 import type { ClienteOmie, ProdutoOmie } from '../omie/cliente.js';
 import { indicaRegistroInexistente } from '../omie/erros.js';
 import { ErroValidacao } from '../validacao.js';
-import { janelaDeMeses, ultimaNotaPorProduto, type ItemNotaEntrada } from '../omie/notasEntrada.js';
 import type { Aviso } from './avisos.js';
 import { abrirEstrutura, MAX_NIVEIS_ESTRUTURA, type FolhaEstrutura, type NoEstrutura } from './estrutura.js';
 
-export type FonteOmiePrecificacao = Pick<ClienteOmie, 'consultarEstrutura' | 'consultarProduto' | 'obterEstoqueProduto' | 'listarItensNotasEntrada'>;
-
-/** Janela das notas de entrada (decisão de 26/11/2026). */
-export const MESES_NOTAS_ENTRADA = 6;
+export type FonteOmiePrecificacao = Pick<ClienteOmie, 'consultarEstrutura' | 'consultarProduto' | 'obterEstoqueProduto'>;
 
 /**
  * Teto de componentes consultados (todos os níveis). A spec previa 60, mas o PA00000001 já tem 69
@@ -45,10 +41,11 @@ export interface ComponenteOmie {
   descricao: string | null;
   /** NCM do cadastro (8 dígitos) — `null` se vazio. */
   ncm: string | null;
-  /** Custo médio ATUAL do estoque (`nCMC`); `null` = sem custo (0 também é sem custo). */
+  /**
+   * Custo médio ATUAL do estoque (`nCMC`), já líquido dos impostos recuperáveis;
+   * `null` = sem custo (0 também é sem custo).
+   */
   custoMedio: number | null;
-  /** Última nota de entrada na janela; `null` = estimado. */
-  ultimaNota: ItemNotaEntrada | null;
 }
 
 export interface DadosOmieProduto {
@@ -65,7 +62,6 @@ export interface DadosOmieProduto {
   folhas: FolhaEstrutura[];
   /** Dados de cada folha, por código (maiúsculas). */
   componentes: Record<string, ComponenteOmie>;
-  janelaNotas: { de: string; ate: string };
   avisos: Aviso[];
 }
 
@@ -112,12 +108,11 @@ const AVISO_OMIE_INDISPONIVEL = (detalhe: string): Aviso => ({
 });
 
 /**
- * Lê do Omie tudo o que o custo do produto precisa. `hojeIso` (aaaa-mm-dd) define a janela das notas.
+ * Lê do Omie tudo o que o custo do produto precisa. `hojeIso` (aaaa-mm-dd) é a data do estoque.
  * Aviso vermelho na lista = o resto dos dados não deve ser usado para preço.
  */
 export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecificacao, hojeIso: string): Promise<DadosOmieProduto> {
-  const janelaNotas = janelaDeMeses(hojeIso, MESES_NOTAS_ENTRADA);
-  const dados: DadosOmieProduto = { codigo, produto: null, arvore: [], folhas: [], componentes: {}, janelaNotas, avisos: [] };
+  const dados: DadosOmieProduto = { codigo, produto: null, arvore: [], folhas: [], componentes: {}, avisos: [] };
 
   const chamar = async <T>(oQue: string, fn: () => Promise<T>): Promise<T> => {
     try {
@@ -154,8 +149,6 @@ export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecifica
     } else {
       dados.produto = { idProduto: null, descricao: textoOuNull(ident.descrProduto), ncm: null, conteudoImportado: null };
     }
-
-    const notas = await chamar('notas de entrada', async () => ultimaNotaPorProduto(await fonte.listarItensNotasEntrada(janelaNotas.de, janelaNotas.ate)));
 
     let consultados = 0;
     const naoConsultados: string[] = [];
@@ -207,14 +200,13 @@ export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecifica
             continue;
           }
         }
-        // Folha (ou kit sem estrutura): custo médio, NCM e última nota.
-        const componente: ComponenteOmie = { codigo: cod, idProduto: id, descricao: no.descricao ?? null, ncm: null, custoMedio: null, ultimaNota: null };
+        // Folha (ou kit sem estrutura): custo médio e NCM.
+        const componente: ComponenteOmie = { codigo: cod, idProduto: id, descricao: no.descricao ?? null, ncm: null, custoMedio: null };
         if (id !== null) {
           const estoque = await chamar(`estoque de ${cod}`, () => fonte.obterEstoqueProduto(id, hojeIso));
           componente.custoMedio = custoMedioDoEstoque(estoque);
           const cadastro = await chamar(`cadastro de ${cod}`, () => fonte.consultarProduto(id));
           componente.ncm = ncmDoCadastro(cadastro);
-          componente.ultimaNota = notas.get(id) ?? null;
         }
         no.custoUnitario = componente.custoMedio;
         dados.componentes[cod.toUpperCase()] = componente;
@@ -234,18 +226,6 @@ export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecifica
         mensagem: `A estrutura tem mais de ${MAX_COMPONENTES_PRECIFICACAO} componentes: ${naoConsultados.length} ficaram de fora da consulta e entraram sem custo (${naoConsultados.slice(0, 20).join(', ')}${naoConsultados.length > 20 ? '…' : ''}).`,
       });
     }
-    const estimados = [...new Set(dados.folhas.map((f) => f.codigo.toUpperCase()))].filter((c) => {
-      const comp = dados.componentes[c];
-      return comp !== undefined && comp.custoMedio !== null && comp.ultimaNota === null;
-    });
-    if (estimados.length > 0) {
-      dados.avisos.push({
-        nivel: 'AZUL',
-        codigo: 'CUSTO_ESTIMADO',
-        item: null,
-        mensagem: `Custo estimado (sem nota de entrada desde ${dataBr(janelaNotas.de)}): ${estimados.join(', ')}. Os créditos saem dos dados fiscais do custo manual de cada item.`,
-      });
-    }
     return dados;
   } catch (erro) {
     if (erro instanceof OmieIndisponivel) return dados;
@@ -260,8 +240,4 @@ function semEstrutura(codigo: string): Aviso {
     item: codigo,
     mensagem: `O produto ${codigo} não tem estrutura no Omie. Cadastre a estrutura no Omie para calcular o custo.`,
   };
-}
-
-function dataBr(iso: string): string {
-  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 }
