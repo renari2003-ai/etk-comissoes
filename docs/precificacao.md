@@ -353,6 +353,10 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 | `POST /api/simulacoes` | Salva uma simulação |
 | `GET /api/precificacao/custos-manuais` / `PUT` e `DELETE /api/precificacao/custos-manuais/:codigo` | Lê, grava e remove custo manual salvo, com `versao` (409 se outro usuário mudou antes) e validação estrita (400) |
 | `GET /api/precificacao/custos-manuais/historico?codigo=&limite=` | Histórico dos custos manuais |
+| `GET /api/precificacao/clientes-pta` / `GET /api/precificacao/clientes-pta/:codigo` | Clientes com PTA (permissão `precificacao`) |
+| `PUT /api/precificacao/clientes-pta/:codigo` | Marca ou desmarca "cliente com PTA" (`{ versao, comPta, nomeCliente, cnpjCpf }`, só administrador, 409 se outro admin mudou antes, histórico) |
+| `GET /api/precificacao/clientes-pta/historico?codigo=&limite=` | Histórico dos clientes com PTA (só administrador) |
+| `GET /api/precificacao/clientes/busca?cnpj=` ou `?nome=` | Busca de cliente no Omie (só leitura, `ListarClientes`), com a situação no app |
 
 Rotas da tabela fiscal com o prefixo `/api/precificacao/parametros-fiscais` (para não confundir com os parâmetros fiscais do módulo de fretes).
 
@@ -394,7 +398,7 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 - [x] Criar o módulo `precificacao` com os testes do exemplo numérico (etapa 1).
 - [x] Criar a tabela fiscal e a tela de administração (etapa 2).
 - [x] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI): etapa 3. O IPI pré-preenchido pelo cadastro do Omie e o uso no preço entram nas etapas 4 e 5.
-- [ ] Tabela NCM → IPI (parte da tabela fiscal) e "cliente com PTA" no app (decisões de 26/11/2026).
+- [x] Tabela NCM → IPI (parte da tabela fiscal) e "cliente com PTA" no app (decisões de 26/11/2026).
 - [ ] Integrar estrutura, notas de entrada (6 meses), cadastro (NCM) e cliente do Omie.
 - [ ] Relatório de conferência do cadastro (sem NCM no Omie / NCM fora da tabela NCM → IPI), só leitura.
 - [ ] Montar a tela e validar com 3 produtos reais junto com o fiscal.

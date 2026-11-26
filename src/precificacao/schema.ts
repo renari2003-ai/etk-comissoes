@@ -40,6 +40,13 @@ export function nomeTabelaParametrosFiscaisExtra(): string {
 export function nomeTabelaIpiNcm(): string {
   return nomeValidado(process.env.PRECIFICACAO_IPI_NCM_TABELA ?? 'precificacao_ipi_ncm');
 }
+/** "Cliente com PTA (compra para industrialização)" (26/11/2026): marcado no app, por cliente do Omie. */
+export function nomeTabelaClientesPta(): string {
+  return nomeValidado(process.env.PRECIFICACAO_CLIENTES_PTA_TABELA ?? 'precificacao_clientes_pta');
+}
+export function nomeTabelaClientesPtaHistorico(): string {
+  return nomeValidado(process.env.PRECIFICACAO_CLIENTES_PTA_HISTORICO_TABELA ?? 'precificacao_clientes_pta_historico');
+}
 export function nomeTabelaHistorico(): string {
   return nomeValidado(process.env.PRECIFICACAO_HISTORICO_TABELA ?? 'precificacao_parametros_historico');
 }
@@ -167,6 +174,35 @@ async function criarEsquema(): Promise<void> {
       aliquota NUMERIC(7,4) NOT NULL CHECK (aliquota >= 0 AND aliquota < 100)
     )
   `);
+
+  // 26/11/2026 — "cliente com PTA" marcado no app (tabelas novas; nunca grava no Omie).
+  const clientesPta = nomeTabelaClientesPta();
+  const clientesPtaHistorico = nomeTabelaClientesPtaHistorico();
+  await executarDdlIdempotente(`
+    CREATE TABLE IF NOT EXISTS ${clientesPta} (
+      codigo_cliente BIGINT PRIMARY KEY CHECK (codigo_cliente > 0),
+      com_pta BOOLEAN NOT NULL,
+      nome_cliente TEXT NOT NULL,
+      cnpj_cpf TEXT NULL,
+      versao INTEGER NOT NULL DEFAULT 1,
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      atualizado_por_id TEXT NOT NULL,
+      atualizado_por_nome TEXT NOT NULL
+    )
+  `);
+  await executarDdlIdempotente(`
+    CREATE TABLE IF NOT EXISTS ${clientesPtaHistorico} (
+      id BIGSERIAL PRIMARY KEY,
+      alterado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      usuario_id TEXT NOT NULL,
+      usuario_nome TEXT NOT NULL,
+      codigo_cliente BIGINT NOT NULL,
+      campo TEXT NOT NULL,
+      valor_anterior TEXT NULL,
+      valor_novo TEXT NULL
+    )
+  `);
+  await executarDdlIdempotente(`CREATE INDEX IF NOT EXISTS ${clientesPtaHistorico}_alterado_em_idx ON ${clientesPtaHistorico} (alterado_em DESC)`);
 
   const pool = obterPool();
   const g = PARAMETROS_GERAIS_INICIAIS;

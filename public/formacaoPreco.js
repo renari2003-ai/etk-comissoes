@@ -5,6 +5,7 @@
  * Percentuais em pontos (9,25 = 9,25%), como na API.
  */
 import { obterUsuarioLogado } from './auth.js';
+import { inicializarClientesPta } from './clientesPtaTela.js';
 import { inicializarCustosManuais } from './custosManuaisTela.js';
 // TEMPORÁRIO: diagnóstico do custo — remover junto com a rota antes de produção.
 import { inicializarDiagnosticoCusto } from './diagnosticoCustoTela.js';
@@ -94,6 +95,7 @@ export function inicializarFormacaoPreco() {
     let statusAtual = 'PROVISORIO';
     const diagnostico = inicializarDiagnosticoCusto();
     const custosManuais = inicializarCustosManuais();
+    const clientesPta = inicializarClientesPta();
     let ehAdmin = false;
     /** Versão lida do servidor — volta no PUT (concorrência otimista: 409 se outro admin salvou antes). */
     let versaoLida = null;
@@ -419,6 +421,7 @@ export function inicializarFormacaoPreco() {
         ativar: () => {
             diagnostico.ativar(obterUsuarioLogado()?.papel === 'administrador');
             custosManuais.ativar();
+            clientesPta.ativar(obterUsuarioLogado()?.papel === 'administrador');
             // Edição não salva: não recarrega por cima (o admin pode ter só trocado de aba).
             if (sujo)
                 return;

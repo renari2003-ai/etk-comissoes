@@ -25,6 +25,8 @@ Os dois preços aparecem sem e com IPI, por unidade e no total, com a margem ant
 
 O cenário A precisa das **duas** coisas: o cliente ter PTA e a venda ser para industrialização. Se faltar uma, não é A.
 
+**Onde se marca o "cliente com PTA":** o Omie não tem esse campo, então ele fica no app. No modo **💲 Precificação**, seção "Clientes com PTA (compra para industrialização)", busque o cliente no Omie pelo CNPJ/CPF ou por parte da razão social. Só o **administrador** marca ou desmarca, e toda mudança fica no histórico. Nada é gravado no Omie.
+
 Junto do resultado podem aparecer avisos para confirmar com o fiscal:
 
 - **"Parâmetros fiscais ainda não validados pelo fiscal":** aparece em todo cálculo enquanto a tabela fiscal estiver como **"Provisório"**. Só o administrador marca "Validado pelo fiscal".
@@ -44,7 +46,7 @@ Enquanto houver um desses avisos, trate o preço como provisório.
    - **Sem custo:** nem o Omie nem o cadastro manual têm valor. A linha aparece destacada.
 3. Do custo de cada item o sistema retira os impostos que a ETK recupera na compra: PIS/COFINS e IPI.
    - **ICMS da compra:** é sempre custo, nunca crédito. Só é 0% quando o **fornecedor é de MG e tem PTA** (diferimento). Fornecedor de MG sem PTA: o ICMS vem destacado (18%, alíquota interna) e fica no custo. Fornecedor de qualquer outra UF: 12% (4% se a mercadoria for importada).
-   - **IPI da compra:** se o Omie tem a nota de entrada do item, vale o IPI da nota. Se não tem, vale o tipo de fornecedor. Indústria normal (Lucro Real/Presumido) usa a alíquota do NCM no cadastro do componente. Simples Nacional nunca dá crédito de IPI. Comércio/distribuidor também não, a não ser que a nota destaque IPI.
+   - **IPI da compra:** se o Omie tem nota de entrada do item nos **últimos 6 meses**, vale o IPI da mais recente (e o ICMS e PIS/COFINS dela). Sem nota nesse período, o item aparece como **estimado**. Se não tem, vale o tipo de fornecedor. Indústria normal (Lucro Real/Presumido) usa a alíquota da **tabela NCM → IPI** para o NCM do componente (o cadastro do Omie só tem o NCM, não a alíquota). NCM vazio no Omie ou fora da tabela: o item entra sem crédito e o preço fica incompleto. Simples Nacional nunca dá crédito de IPI. Comércio/distribuidor também não, a não ser que a nota destaque IPI.
 
 ## Quando um item vem sem custo ou com custo errado
 
@@ -96,6 +98,8 @@ Se ainda sobrar item sem custo, a tela calcula o preço assim mesmo, contando es
 No modo **💲 Precificação**, a "Tabela fiscal da formação de preço" mostra o **status**: **Provisório** ou **Validado pelo fiscal**. Ela começa como "Provisório". Só o administrador muda o status, e cada mudança fica no histórico (quem mudou e quando).
 
 As alíquotas internas de cada UF (usadas no DIFAL) começam com os valores do Buscador NCM de nov/2026, sem FCP, e estão marcadas **"a confirmar pelo fiscal"**. Todas são editáveis. O percentual de recolhimento do ICMS na venda a não contribuinte / consumidor final começa em 100% e também é editável.
+
+**IPI por NCM:** o cadastro de produto do Omie não tem alíquota de IPI, só o NCM. A tabela "IPI por NCM" diz a alíquota de cada NCM e vale para o IPI na venda do produto acabado e para o IPI da compra sem nota. Ela começa vazia (a confirmar pelo fiscal). Produto acabado com NCM fora da tabela não tem preço (tarja vermelha) até o administrador preencher o NCM.
 
 ## Salvar e exportar
 

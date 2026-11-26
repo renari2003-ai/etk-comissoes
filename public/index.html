@@ -1312,6 +1312,71 @@ OBSERVACOES: Entrega em horário comercial.</pre>
         </table>
       </div>
     </section>
+    <section class="painel-usuarios">
+      <h2 class="titulo-secao">Clientes com PTA (compra para industrialização)</h2>
+      <p class="filtro-data-legenda">
+        O Omie não tem este campo: a marcação fica no app, por cliente do Omie. Vale para o cenário A (venda com diferimento),
+        que só se aplica quando a venda é para industrialização. Só o administrador marca ou desmarca; toda mudança fica no histórico.
+        Nada é gravado no Omie.
+      </p>
+      <form id="precificacao-pta-form-busca" autocomplete="off" novalidate>
+        <div class="filtros-relatorio">
+          <div class="campo-filtro">
+            <label for="precificacao-pta-busca">Buscar cliente no Omie (CNPJ/CPF ou parte da razão social)</label>
+            <input id="precificacao-pta-busca" type="text" maxlength="100" required />
+          </div>
+        </div>
+        <button type="submit" id="precificacao-pta-buscar" class="botao-secundario">Buscar</button>
+      </form>
+      <p id="precificacao-pta-erro" class="painel-login-erro" role="alert" hidden></p>
+      <p id="precificacao-pta-ok" class="filtro-data-legenda" role="status" hidden></p>
+      <div class="tabela-rolagem">
+        <table>
+          <caption>Resultado da busca</caption>
+          <thead>
+            <tr>
+              <th scope="col">Cliente</th>
+              <th scope="col">CNPJ/CPF</th>
+              <th scope="col">No app</th>
+              <th scope="col" aria-label="Ações"></th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-pta-tbody-busca"></tbody>
+        </table>
+      </div>
+      <div class="tabela-rolagem">
+        <table>
+          <caption>Clientes marcados com PTA</caption>
+          <thead>
+            <tr>
+              <th scope="col">Cliente</th>
+              <th scope="col">CNPJ/CPF</th>
+              <th scope="col">Marcado em / por</th>
+              <th scope="col" aria-label="Ações"></th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-pta-tbody-lista"></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="precificacao-pta-secao-historico" class="painel-usuarios" hidden>
+      <h2 class="titulo-secao">Histórico dos clientes com PTA</h2>
+      <div class="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Quando</th>
+              <th scope="col">Quem</th>
+              <th scope="col">Cliente (código Omie)</th>
+              <th scope="col">Campo</th>
+              <th scope="col">Antes</th>
+              <th scope="col">Depois</th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-pta-tbody-historico"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <main class="conteudo" id="modo-consulta">
