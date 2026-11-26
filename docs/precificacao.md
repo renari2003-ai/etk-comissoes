@@ -92,6 +92,15 @@ Implementado em 25/11/2026: `somarFolhas` e `calcularCusto` tratam custo 0 como 
 10. **"Cliente com PTA (compra para industrialização)" é marcado no app**, por cliente do Omie (código do cliente), só pelo administrador, com histórico e concorrência por versão. Tabela nova `precificacao_clientes_pta` (+ histórico). Nada é gravado no Omie.
 11. **Última nota de entrada: janela de 6 meses.** O Omie não filtra notas por produto, então o app lista os recebimentos concluídos (`infoCadastro.cRecebido` = "S", não cancelados) dos últimos 6 meses com os itens e indexa por produto (`itensCabec.nIdProduto`), ficando com a nota mais recente. Cache de algumas horas, com botão "atualizar custos". Componente sem nota na janela = **estimado** (tarja azul `CUSTO_ESTIMADO`). A nota não traz a UF do fornecedor: ela vem do cadastro do fornecedor (`nIdFornecedor` → ConsultarCliente → `estado`).
 
+### Etapa 4 — como foi implementada (26/11/2026)
+
+- **Leitura do Omie** (`precificacao/coletaOmie.ts`, só consultas): estrutura aberta até as folhas (kits tipo 03/04), `nCMC` atual de cada folha (0 = sem custo), NCM do cadastro (produto e folhas), origem da mercadoria do produto (1, 2, 3 e 8 = conteúdo importado) e a última nota de entrada de cada folha nos últimos 6 meses. Erro temporário do Omie em qualquer consulta → `OMIE_INDISPONIVEL` (vermelha); nunca vira "sem custo" ou "sem nota". Kit sem estrutura no Omie entra como folha, com o próprio custo médio.
+- **Notas de entrada** (`omie/notasEntrada.ts`): só recebimentos concluídos e não cancelados, modelo 55. Alíquota ilegível tira o item (o produto fica "estimado"); bloco de imposto ausente = 0. ICMS do Simples (`nAliqSN`) conta como ICMS da nota. A lista da janela fica em cache por 3 horas.
+- **Custo por folha** (`precificacao/montagemCusto.ts`): valor por `resolverCustoItem`; créditos pela nota (alíquotas de IPI e ICMS da nota sobre o custo médio) quando o valor é do Omie e há nota; pelos dados digitados quando o valor é manual; pelos dados fiscais do custo manual com valor vazio quando é estimado. **Estimado sem dados fiscais entra pelo bruto, sem crédito, com a tarja amarela `ITEM_SEM_DADOS_FISCAIS`** (conservador, mesma lógica da decisão de 24/11/2026). IPI da venda = tabela NCM → IPI do NCM do produto; sem NCM ou fora da tabela = `IPI_VENDA_NCM_NAO_CONFIGURADO` (vermelha).
+- **Cliente** (`precificacao/clienteVenda.ts`): UF, contribuinte ("S"/"N") e IE do `ConsultarCliente`; "cliente com PTA" do app; finalidade (industrialização, revenda, uso e consumo) escolhida na tela. Cliente não encontrado, sem UF, do exterior ou sem "contribuinte" no cadastro → `CLIENTE_INCONSISTENTE` (vermelha), sem adivinhar.
+- **Relatório de conferência** (`precificacao/conferenciaCadastro.ts`, `GET /api/precificacao/conferencia-cadastro?produto=` ou `?pagina=`, só administrador): um produto, ou todos em lotes de 10 produtos (`ListarEstruturas`); tela no modo Precificação.
+- **Fica para a etapa 5 (tela de cálculo):** a rota do cálculo que junta tudo isso, o botão "atualizar custos" (limpa o cache das notas), a escolha da finalidade da venda e os avisos da tabela fiscal em todo cálculo.
+
 ## Custo manual
 
 O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo item da estrutura aceita custo manual (não há GGF separado, pela decisão de 25/11/2026).
@@ -288,7 +297,8 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | --- | --- | --- |
 | `ITEM_SEM_CUSTO` | Item sem custo (entra como zero) | Lista os códigos, com botão para digitar o custo manual |
 | `ITEM_SEM_NCM_IPI` | Componente sem NCM no cadastro ou com NCM fora da tabela NCM → IPI (entra pelo bruto, sem crédito) | "Corrija o NCM do item X no Omie" ou "preencha o NCM na tabela NCM → IPI" |
-| `COMPONENTES_NAO_CONSULTADOS` | Estrutura com mais de 60 componentes | Lista os itens que ficaram de fora da consulta |
+| `COMPONENTES_NAO_CONSULTADOS` | Estrutura com mais de **150** componentes (a spec previa 60, mas o PA00000001 já tem 69) | Lista os itens que ficaram de fora da consulta; eles entram sem custo |
+| `ITEM_SEM_DADOS_FISCAIS` | Custo do Omie sem nota de entrada na janela e sem dados fiscais no custo manual (entra pelo bruto, sem crédito) | "Informe UF, tipo de fornecedor e IPI no custo manual do item X (o valor pode ficar vazio)" |
 
 **Azul: informativa.**
 
@@ -302,7 +312,7 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 
 **Modo reverso:** preço-alvo abaixo do piso dá tarja **vermelha no bloco do resultado do modo reverso** (`ALVO_ABAIXO_DO_PISO`), sem bloquear o preço principal.
 
-**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `DIFAL_BASE_SIMPLES`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Na etapa 3: `CUSTO_MANUAL_DIFERENTE_OMIE`. Em 25/11/2026: `PARAMETROS_FISCAIS_PROVISORIOS` entrou e `MG_CONSUMIDOR_FINAL_ICMS` saiu (o fiscal respondeu). Os que dependem do Omie (`PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`) entram na etapa 4. `GGF_AUSENTE` foi retirado em 25/11/2026 (sem GGF separado).
+**Testes:** um teste por aviso. Implementados na etapa 1: `ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA`, `ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO`, `CLIENTE_INCONSISTENTE`, `SEM_PRECO_POSSIVEL`, `ITEM_SEM_CUSTO`, `ITEM_SEM_NCM_IPI`, `DIFAL_BASE_SIMPLES`, `PRECO_CHEIO_INDISPONIVEL` e `ALVO_ABAIXO_DO_PISO`. Na etapa 3: `CUSTO_MANUAL_DIFERENTE_OMIE`. Em 25/11/2026: `PARAMETROS_FISCAIS_PROVISORIOS` entrou e `MG_CONSUMIDOR_FINAL_ICMS` saiu (o fiscal respondeu). Na etapa 4 (26/11/2026): `PRODUTO_SEM_ESTRUTURA`, `OMIE_INDISPONIVEL`, `COMPONENTES_NAO_CONSULTADOS`, `CUSTO_ESTIMADO`, `ITEM_SEM_DADOS_FISCAIS`, `IPI_VENDA_NCM_NAO_CONFIGURADO` e `CLIENTE_INCONSISTENTE` do cadastro do cliente. `GGF_AUSENTE` foi retirado em 25/11/2026 (sem GGF separado).
 
 ## Tela
 
@@ -356,6 +366,7 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 | `GET /api/precificacao/clientes-pta` / `GET /api/precificacao/clientes-pta/:codigo` | Clientes com PTA (permissão `precificacao`) |
 | `PUT /api/precificacao/clientes-pta/:codigo` | Marca ou desmarca "cliente com PTA" (`{ versao, comPta, nomeCliente, cnpjCpf }`, só administrador, 409 se outro admin mudou antes, histórico) |
 | `GET /api/precificacao/clientes-pta/historico?codigo=&limite=` | Histórico dos clientes com PTA (só administrador) |
+| `GET /api/precificacao/conferencia-cadastro?produto=` ou `?pagina=` | Relatório de conferência do cadastro (só administrador; Omie só leitura; lotes de 10 produtos) |
 | `GET /api/precificacao/clientes/busca?cnpj=` ou `?nome=` | Busca de cliente no Omie (só leitura, `ListarClientes`), com a situação no app |
 
 Rotas da tabela fiscal com o prefixo `/api/precificacao/parametros-fiscais` (para não confundir com os parâmetros fiscais do módulo de fretes).
@@ -399,7 +410,7 @@ No caso C cheio, os 12 pontos de margem a mais são o ICMS destacado e não reco
 - [x] Criar a tabela fiscal e a tela de administração (etapa 2).
 - [x] Custo manual (tabela própria, histórico, prioridade sobre o Omie, preço incompleto, formulário com UF, PTA, tipo de fornecedor e IPI): etapa 3. O IPI pré-preenchido pelo cadastro do Omie e o uso no preço entram nas etapas 4 e 5.
 - [x] Tabela NCM → IPI (parte da tabela fiscal) e "cliente com PTA" no app (decisões de 26/11/2026).
-- [ ] Integrar estrutura, notas de entrada (6 meses), cadastro (NCM) e cliente do Omie.
-- [ ] Relatório de conferência do cadastro (sem NCM no Omie / NCM fora da tabela NCM → IPI), só leitura.
+- [x] Integrar estrutura, notas de entrada (6 meses), cadastro (NCM) e cliente do Omie (etapa 4, 26/11/2026; ver "Etapa 4 — como foi implementada").
+- [x] Relatório de conferência do cadastro (sem NCM no Omie / NCM fora da tabela NCM → IPI), só leitura.
 - [ ] Montar a tela e validar com 3 produtos reais junto com o fiscal.
 - [ ] Publicar em preview no Vercel antes de ir para produção.

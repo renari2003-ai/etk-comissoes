@@ -1377,6 +1377,41 @@ OBSERVACOES: Entrega em horário comercial.</pre>
         </table>
       </div>
     </section>
+    <section id="precificacao-secao-conferencia" class="painel-usuarios" hidden>
+      <h2 class="titulo-secao">Conferência do cadastro (administrador)</h2>
+      <p class="filtro-data-legenda">
+        Lista o produto acabado e os componentes sem NCM no cadastro do Omie (corrigir no Omie) ou com NCM fora da tabela
+        "IPI por NCM" (preencher na tabela fiscal). Só consultas ao Omie.
+      </p>
+      <form id="precificacao-conferencia-form" autocomplete="off" novalidate>
+        <div class="filtros-relatorio">
+          <div class="campo-filtro">
+            <label for="precificacao-conferencia-produto">Código do produto</label>
+            <input id="precificacao-conferencia-produto" type="text" maxlength="60" placeholder="ex.: PA00000001" />
+          </div>
+        </div>
+        <button type="submit" id="precificacao-conferencia-um" class="botao-secundario">Conferir este produto</button>
+        <button type="button" id="precificacao-conferencia-todos" class="botao-secundario">Conferir todos os produtos</button>
+        <button type="button" id="precificacao-conferencia-parar" class="botao-secundario" hidden>Parar</button>
+      </form>
+      <p id="precificacao-conferencia-status" class="filtro-data-legenda" role="status"></p>
+      <p id="precificacao-conferencia-erro" class="painel-login-erro" role="alert" hidden></p>
+      <div class="tabela-rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Produto</th>
+              <th scope="col">Item</th>
+              <th scope="col">Descrição</th>
+              <th scope="col">NCM</th>
+              <th scope="col">Problema</th>
+              <th scope="col">Como resolver</th>
+            </tr>
+          </thead>
+          <tbody id="precificacao-conferencia-tbody"></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <main class="conteudo" id="modo-consulta">

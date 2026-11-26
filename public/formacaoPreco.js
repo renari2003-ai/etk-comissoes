@@ -6,6 +6,7 @@
  */
 import { obterUsuarioLogado } from './auth.js';
 import { inicializarClientesPta } from './clientesPtaTela.js';
+import { inicializarConferenciaCadastro } from './conferenciaCadastroTela.js';
 import { inicializarCustosManuais } from './custosManuaisTela.js';
 // TEMPORÁRIO: diagnóstico do custo — remover junto com a rota antes de produção.
 import { inicializarDiagnosticoCusto } from './diagnosticoCustoTela.js';
@@ -96,6 +97,7 @@ export function inicializarFormacaoPreco() {
     const diagnostico = inicializarDiagnosticoCusto();
     const custosManuais = inicializarCustosManuais();
     const clientesPta = inicializarClientesPta();
+    const conferencia = inicializarConferenciaCadastro();
     let ehAdmin = false;
     /** Versão lida do servidor — volta no PUT (concorrência otimista: 409 se outro admin salvou antes). */
     let versaoLida = null;
@@ -422,6 +424,7 @@ export function inicializarFormacaoPreco() {
             diagnostico.ativar(obterUsuarioLogado()?.papel === 'administrador');
             custosManuais.ativar();
             clientesPta.ativar(obterUsuarioLogado()?.papel === 'administrador');
+            conferencia.ativar(obterUsuarioLogado()?.papel === 'administrador');
             // Edição não salva: não recarrega por cima (o admin pode ter só trocado de aba).
             if (sujo)
                 return;

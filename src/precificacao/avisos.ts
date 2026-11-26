@@ -16,6 +16,7 @@ export type NivelAviso = 'VERMELHO' | 'AMARELO' | 'AZUL';
 export type CodigoAviso =
   // Vermelhos (bloqueiam)
   | 'PRODUTO_SEM_ESTRUTURA'
+  | 'IPI_VENDA_NCM_NAO_CONFIGURADO'
   | 'ALIQUOTA_INTERNA_UF_NAO_CONFIGURADA'
   | 'ICMS_INTERESTADUAL_UF_NAO_CONFIGURADO'
   | 'CLIENTE_INCONSISTENTE'
@@ -25,6 +26,7 @@ export type CodigoAviso =
   | 'ITEM_SEM_CUSTO'
   | 'ITEM_SEM_NCM_IPI'
   | 'COMPONENTES_NAO_CONSULTADOS'
+  | 'ITEM_SEM_DADOS_FISCAIS'
   // Azuis (informativos)
   | 'CUSTO_ESTIMADO'
   | 'CUSTO_MANUAL_DIFERENTE_OMIE'

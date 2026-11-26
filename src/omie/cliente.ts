@@ -17,6 +17,7 @@ import {
   verificarFalhaNoCorpo,
 } from './erros.js';
 import { Limitador } from './limitador.js';
+import { dataIsoParaOmie, itensDosRecebimentos, type ItemNotaEntrada } from './notasEntrada.js';
 import { normalizarBaixas, type BaixaRecebimento, type MovimentoFinanceiroOmie } from './recebimentos.js';
 import {
   normalizarItemTabela,
@@ -179,6 +180,23 @@ export interface ProdutoOmie {
    * (`custoEstimado.ts`), nunca o preço do pedido.
    */
   valor_unitario?: number;
+  /** NCM (string, pode vir com pontos). O cadastro NÃO tem alíquota de IPI (doc conferida em 26/11/2026). */
+  ncm?: string;
+  /** `origem_mercadoria`: 0 nacional; 1, 2, 3, 8 = importado/conteúdo importado (tabela de origem da NF-e). */
+  recomendacoes_fiscais?: { origem_mercadoria?: string };
+}
+
+/** Dados fiscais do cliente para a precificação (`ConsultarCliente`, só leitura). */
+export interface ClienteFiscalOmie {
+  codigo: number;
+  razaoSocial: string;
+  cnpjCpf: string | null;
+  /** Sigla da UF (`estado`); "EX" = exterior; `null` se vazio. */
+  uf: string | null;
+  /** `contribuinte`: "S" → true, "N" → false; vazio → `null` (não informado: o operador confirma). */
+  contribuinte: boolean | null;
+  /** `inscricao_estadual` como está no Omie (pode ser "ISENTO"); `null` se vazio. */
+  inscricaoEstadual: string | null;
 }
 
 export interface TituloContaReceber {
@@ -249,6 +267,10 @@ export class ClienteOmie {
   private readonly cachePedidos = new CachePostgres('pedido-consulta', 5 * MINUTOS);
   // Preço da Tabela define a comissão: TTL curto, para uma alteração de preço aparecer logo.
   private readonly cacheTabelasPreco = new CachePostgres('tabelas-preco', 10 * MINUTOS);
+  // Precificação (26/11/2026): notas de entrada mudam pouco ao longo do dia — cache de 3 horas, com
+  // botão "atualizar custos" (limparCacheNotasEntrada). Dados fiscais do cliente: 60 minutos.
+  private readonly cacheNotasEntrada = new CachePostgres('notas-entrada', 180 * MINUTOS);
+  private readonly cacheClientesFiscal = new CachePostgres('clientes-fiscal', 60 * MINUTOS);
 
   constructor(intervaloMinimoMs: number = config.intervaloMinimoMs) {
     this.limitador = new Limitador(intervaloMinimoMs);
@@ -266,6 +288,8 @@ export class ClienteOmie {
       this.cacheBaixasReceber.limpar(),
       this.cachePedidos.limpar(),
       this.cacheTabelasPreco.limpar(),
+      this.cacheNotasEntrada.limpar(),
+      this.cacheClientesFiscal.limpar(),
     ]);
   }
 
@@ -766,6 +790,73 @@ export class ClienteOmie {
     await this.cacheTabelasPreco.limpar();
   }
 
+  /**
+   * Itens das notas de entrada concluídas emitidas entre `deIso` e `ateIso` (aaaa-mm-dd), SOMENTE
+   * LEITURA (`produtos/recebimentonfe` → `ListarRecebimentos`, `cExibirDetalhes = "S"`). O Omie não
+   * filtra por produto: a janela inteira é lida (paginada, com teto) e guardada no cache já reduzida
+   * ao que a precificação usa (`notasEntrada.ts`).
+   */
+  async listarItensNotasEntrada(deIso: string, ateIso: string): Promise<ItemNotaEntrada[]> {
+    return this.cacheNotasEntrada.obterOuBuscar(`itens-v1:${deIso}:${ateIso}`, async () => {
+      const itens: ItemNotaEntrada[] = [];
+      let pagina = 1;
+      let totalDePaginas = 1;
+      do {
+        const resposta = await this.chamar<{ nTotalPaginas?: unknown; recebimentos?: unknown }>('/produtos/recebimentonfe/', 'ListarRecebimentos', {
+          nPagina: pagina,
+          nRegistrosPorPagina: 100,
+          dtEmissaoDe: dataIsoParaOmie(deIso),
+          dtEmissaoAte: dataIsoParaOmie(ateIso),
+          cExibirDetalhes: 'S',
+        });
+        itens.push(...itensDosRecebimentos(resposta.recebimentos));
+        totalDePaginas = validarTotalPaginasNotasEntrada(resposta.nTotalPaginas);
+        pagina += 1;
+      } while (pagina <= totalDePaginas);
+      return itens;
+    });
+  }
+
+  /**
+   * Uma página das estruturas de produto (`geral/malha` → `ListarEstruturas`), SOMENTE LEITURA, sem
+   * cache — usada pelo relatório de conferência do cadastro, que varre em lotes. Cada item de
+   * `produtosEncontrados` tem `ident` e `itens`, como o `ConsultarEstrutura`.
+   */
+  async listarEstruturas(pagina: number, porPagina: number): Promise<{ totalPaginas: number; produtos: Record<string, unknown>[] }> {
+    const resposta = await this.chamar<{ nTotPaginas?: unknown; produtosEncontrados?: unknown }>('/geral/malha/', 'ListarEstruturas', {
+      nPagina: pagina,
+      nRegPorPagina: porPagina,
+    });
+    const totalPaginas = typeof resposta.nTotPaginas === 'number' && Number.isSafeInteger(resposta.nTotPaginas) && resposta.nTotPaginas >= 0 ? resposta.nTotPaginas : null;
+    if (totalPaginas === null) throw new OmieError('ListarEstruturas devolveu nTotPaginas inválido.');
+    return { totalPaginas, produtos: Array.isArray(resposta.produtosEncontrados) ? (resposta.produtosEncontrados as Record<string, unknown>[]) : [] };
+  }
+
+  /** Botão "atualizar custos" da precificação: relê as notas de entrada no próximo cálculo. */
+  async limparCacheNotasEntrada(): Promise<void> {
+    await this.cacheNotasEntrada.limpar();
+  }
+
+  /**
+   * Dados fiscais do cliente (UF, contribuinte, inscrição estadual) — SOMENTE LEITURA
+   * (`geral/clientes` → `ConsultarCliente`). `null` só quando o Omie diz que o cliente não existe;
+   * falha de rede ou limite de chamadas é LANÇADA (nunca vira "cliente não encontrado").
+   */
+  async consultarClienteFiscal(codigoCliente: number): Promise<ClienteFiscalOmie | null> {
+    return this.cacheClientesFiscal.obterOuBuscar(`cliente-fiscal-v1:${codigoCliente}`, async () => {
+      let resposta: Record<string, unknown>;
+      try {
+        resposta = await this.chamar<Record<string, unknown>>('/geral/clientes/', 'ConsultarCliente', { codigo_cliente_omie: codigoCliente });
+      } catch (erro) {
+        if (erro instanceof OmieError && !(erro instanceof OmieErroTransitorio) && !(erro instanceof OmieErroLimiteExcedido) && !(erro instanceof OmieErroMetodoEmExecucao)) {
+          return null;
+        }
+        throw erro;
+      }
+      return interpretarClienteFiscal(resposta, codigoCliente);
+    });
+  }
+
   async consultarProduto(codigoProduto: number): Promise<ProdutoOmie> {
     return this.cacheProduto.obterOuBuscar(`produto:${codigoProduto}`, () =>
       this.chamar<ProdutoOmie>('/geral/produtos/', 'ConsultarProduto', { codigo_produto: codigoProduto }),
@@ -867,4 +958,34 @@ export function indexarPosicaoEstoque(registros: unknown): Map<number, Record<st
     if (Number.isFinite(codigo)) porProduto.set(codigo, registro);
   }
   return porProduto;
+}
+
+/** Teto de páginas de `ListarRecebimentos` (100 notas cada → até 5.000 notas na janela). */
+export const MAX_PAGINAS_NOTAS_ENTRADA = 50;
+
+export function validarTotalPaginasNotasEntrada(nTotalPaginas: unknown): number {
+  if (typeof nTotalPaginas !== 'number' || !Number.isSafeInteger(nTotalPaginas) || nTotalPaginas < 0) {
+    throw new OmieError('ListarRecebimentos devolveu nTotalPaginas inválido.');
+  }
+  if (nTotalPaginas > MAX_PAGINAS_NOTAS_ENTRADA) {
+    throw new OmieError(`ListarRecebimentos tem ${nTotalPaginas} páginas — acima do teto de ${MAX_PAGINAS_NOTAS_ENTRADA}.`);
+  }
+  return nTotalPaginas;
+}
+
+/** Resposta de `ConsultarCliente` → dados fiscais. Campo vazio vira `null`, nunca um valor inventado. */
+export function interpretarClienteFiscal(resposta: Record<string, unknown>, codigoPedido: number): ClienteFiscalOmie {
+  const textoOuNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+  const codigo = typeof resposta.codigo_cliente_omie === 'number' ? resposta.codigo_cliente_omie : codigoPedido;
+  const contribuinte = textoOuNull(resposta.contribuinte)?.toUpperCase() ?? null;
+  const uf = textoOuNull(resposta.estado)?.toUpperCase() ?? null;
+  const cnpj = (typeof resposta.cnpj_cpf === 'string' ? resposta.cnpj_cpf : '').replace(/\D/g, '');
+  return {
+    codigo,
+    razaoSocial: textoOuNull(resposta.razao_social) ?? '',
+    cnpjCpf: cnpj === '' ? null : cnpj,
+    uf,
+    contribuinte: contribuinte === 'S' ? true : contribuinte === 'N' ? false : null,
+    inscricaoEstadual: textoOuNull(resposta.inscricao_estadual),
+  };
 }

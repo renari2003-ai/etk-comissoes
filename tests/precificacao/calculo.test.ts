@@ -642,7 +642,7 @@ describe('custo do produto (folhas da estrutura, sem GGF separado)', () => {
     expect(r.completo).toBe(false);
     expect(r.avisos).toHaveLength(1);
     expect(r.avisos[0]).toMatchObject({ nivel: 'AMARELO', codigo: 'ITEM_SEM_NCM_IPI', item: 'MP00000045' });
-    expect(r.avisos[0]!.mensagem).toContain('Corrija o cadastro do item MP00000045 no Omie');
+    expect(r.avisos[0]!.mensagem).toContain('Corrija o NCM do item MP00000045 no Omie ou peça ao administrador para preencher o NCM na tabela NCM → IPI');
   });
 
   it('o mesmo item em vários ramos (folhas repetidas): soma todas as quantidades, mas um aviso só por código', () => {

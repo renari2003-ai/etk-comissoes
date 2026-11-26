@@ -273,7 +273,7 @@ export function calcularCusto(itens: ItemCusto[], opcoes: OpcoesCusto = {}): Res
           nivel: 'AMARELO',
           codigo: 'ITEM_SEM_NCM_IPI',
           item: item.codigo,
-          mensagem: `Item ${item.codigo} sem NCM ou alíquota de IPI no cadastro — entrou pelo valor bruto, sem crédito. Corrija o cadastro do item ${item.codigo} no Omie.`,
+          mensagem: `Item ${item.codigo} sem NCM no cadastro do Omie ou com NCM fora da tabela NCM → IPI — entrou pelo valor bruto, sem crédito. Corrija o NCM do item ${item.codigo} no Omie ou peça ao administrador para preencher o NCM na tabela NCM → IPI.`,
         });
       }
     } else {
