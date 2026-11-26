@@ -114,7 +114,8 @@ Implementado em 25/11/2026: `somarFolhas` e `calcularCusto` tratam custo 0 como 
 - **Cálculo completo** (`precificacao/calculoProduto.ts`, função pura): coleta do Omie → `montarCusto` → `calcularCusto` → `determinarCenario` → `calcularPrecos` → modo reverso. Junta os avisos de todas as partes, **inclusive os da tabela fiscal em todo resultado** (teste obrigatório), sem repetir (mesmo código e item = uma tarja), em ordem vermelho → amarelo → azul. Erro de regra (`ErroPrecificacao`: UF sem alíquota, soma ≥ 100%, cliente inconsistente) vira tarja vermelha, nunca preço. A tarja do modo reverso fica no bloco do reverso.
 - **Rota** `POST /api/precificacao/calculo` (`rotas/precificacaoCalculo.ts`): cliente do Omie (`ConsultarCliente` + "cliente com PTA" do app) ou simulação rápida (UF, contribuinte, PTA). Omie fora na consulta do cliente = tarja vermelha `OMIE_INDISPONIVEL`. A data da posição de estoque vai no formato do Omie (dd/mm/aaaa).
 - **Conflito manual × Omie** compara **líquido com líquido** (o manual já sem os créditos), porque o `nCMC` é líquido.
-- **Origem da mercadoria não informada** no cadastro do produto = nacional (sem os 4% de importado).
+- **Origem da mercadoria não informada** no cadastro do produto = nacional (sem os 4% de importado), com a tarja azul `ORIGEM_NAO_INFORMADA`.
+- **Revisão da parte 1 (26/11/2026):** escolha "Omie" que não se aplica mais (o item ficou sem custo no Omie) é ignorada, nunca 400; qualquer vermelho antes do cenário impede o preço; margem líquida que passa de 100% vira tarja vermelha `SEM_PRECO_POSSIVEL`; comissão validada de 1% a 4% também no servidor; data do estoque em Brasília; tela com total sem IPI, "Preço incompleto: X itens sem custo", números com milhar ("1.500") e respostas fora de ordem descartadas. **Risco não medido:** a leitura do Omie é sequencial (estoque e cadastro por folha); um produto grande sem cache pode passar do tempo da função na Vercel — a tela avisa e a nova tentativa aproveita o cache.
 - **Tela** (modo Precificação → "Formação de preço"): produto, quantidade, cliente (busca no Omie ou simulação rápida), finalidade, despesas % (lembra o último valor no navegador), comissão 1% a 4%, margem antes do IR/CS ou líquida, preço-alvo. Mostra as tarjas, "INCOMPLETO – não usar em cotação", preço piso e cheio (sem e com IPI, unitário e total, margens), modo reverso, cascata e componentes (origem, créditos, escolha manual × Omie e atalho para o custo manual).
 - **Fica para a parte 2:** custo "só nesta simulação" digitado na própria tela (a API já aceita), salvar a simulação e exportar em PDF, cache da estrutura e botão "atualizar custos".
 
@@ -318,6 +319,7 @@ Toda inconsistência do cálculo aparece como uma **tarja no topo do resultado**
 | Código | Quando |
 | --- | --- |
 | `CUSTO_MANUAL_DIFERENTE_OMIE` | Custo manual diferente do custo do Omie (mostra os dois) |
+| `ORIGEM_NAO_INFORMADA` | Produto sem origem da mercadoria no cadastro do Omie: considerado nacional (sem os 4% de importado) |
 | `DIFAL_BASE_SIMPLES` | Cenário D: "validar com o fiscal" |
 | `PARAMETROS_FISCAIS_PROVISORIOS` | Tabela fiscal com status "Provisório": "Parâmetros fiscais ainda não validados pelo fiscal" (em todo cálculo) |
 | `PRECO_CHEIO_INDISPONIVEL` | Só o preço cheio passa de 100% no divisor; vale o piso |

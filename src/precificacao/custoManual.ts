@@ -253,10 +253,13 @@ export function resolverCustoItem(entrada: EntradaResolucaoCusto): CustoResolvid
   if (entrada.custoOmie !== null && (typeof entrada.custoOmie !== 'number' || !Number.isFinite(entrada.custoOmie) || entrada.custoOmie < 0)) {
     throw new ErroValidacao(`Custo do Omie do item ${codigo} inválido.`);
   }
-  const escolha = entrada.escolhaConflito ?? null;
-  if (escolha !== null && escolha !== 'MANUAL' && escolha !== 'OMIE') throw new ErroValidacao('Escolha de custo inválida (MANUAL ou OMIE).');
+  const escolhaPedida = entrada.escolhaConflito ?? null;
+  if (escolhaPedida !== null && escolhaPedida !== 'MANUAL' && escolhaPedida !== 'OMIE') throw new ErroValidacao('Escolha de custo inválida (MANUAL ou OMIE).');
 
   const omie = entrada.custoOmie !== null && entrada.custoOmie > 0 ? entrada.custoOmie : null;
+  // Escolha "OMIE" que não se aplica mais (o item ficou sem custo no Omie, ex.: cache renovado):
+  // é ignorada e vale a prioridade normal — nunca um erro que trava a tela.
+  const escolha = escolhaPedida === 'OMIE' && omie === null ? null : escolhaPedida;
   const salvo = entrada.manualSalvo;
   const simulacao = entrada.manualSimulacao;
   const dadosFiscais = simulacao ?? salvo;
@@ -291,7 +294,6 @@ export function resolverCustoItem(entrada: EntradaResolucaoCusto): CustoResolvid
       ],
     };
   }
-  if (escolha === 'OMIE' && omie === null) throw new ErroValidacao(`Item ${codigo} não tem custo no Omie para escolher.`);
   // Decisão de 25/11/2026: "manual" escolhido sem custo manual salvo = SEM CUSTO, com tarja amarela
   // (código do item + campo para digitar). Nunca 0 e nunca volta sozinho para o custo do Omie.
   if (escolha === 'MANUAL' && manual === null) {

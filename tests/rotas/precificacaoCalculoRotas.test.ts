@@ -38,7 +38,7 @@ vi.mock('../../src/precificacao/parametrosFiscaisRepositorio.js', () => ({ lerTa
 vi.mock('../../src/precificacao/custosManuaisRepositorio.js', () => ({ obterCustosManuais: banco.obterCustosManuais }));
 vi.mock('../../src/precificacao/clientesPtaRepositorio.js', () => ({ obterClientePta: banco.obterClientePta }));
 
-const { criarRotasCalculo } = await import('../../src/rotas/precificacaoCalculo.js');
+const { criarRotasCalculo, hojeEmBrasiliaFormatoOmie } = await import('../../src/rotas/precificacaoCalculo.js');
 const { tratadorDeErros } = await import('../../src/rotas/erroHttp.js');
 const { NOME_COOKIE_SESSAO } = await import('../../src/auth/cookies.js');
 const { OmieErroTransitorio } = await import('../../src/omie/erros.js');
@@ -143,6 +143,21 @@ describe('POST /api/precificacao/calculo — proteção, validação e Omie só 
     expect(chamadas.every((c) => /^(estrutura|produto|estoque):/.test(c))).toBe(true);
     expect(omie.consultarClienteFiscal).not.toHaveBeenCalled();
     expect(banco.obterCustosManuais).toHaveBeenCalledWith(['MP1']);
+  });
+
+  it('estrutura em ciclo: 400 com a mensagem; cliente que o Omie diz não existir: CLIENTE_INCONSISTENTE', async () => {
+    omie.consultarEstrutura.mockImplementationOnce(async () => ({ ident: { idProduto: 1 }, itens: [{ codProdMalha: 'PA1', idProdMalha: 1, quantProdMalha: 1, tipoProdMalha: '04' }] }));
+    const ciclo = await post('comPermissao', corpo());
+    expect(ciclo.status).toBe(400);
+    expect(((await ciclo.json()) as { erro: string }).erro).toContain('ciclo');
+    omie.consultarClienteFiscal.mockResolvedValueOnce(null);
+    const inexistente = (await (await post('comPermissao', corpo({ cliente: { codigo: 99 } }))).json()) as object;
+    expect(inexistente).toMatchObject({ bloqueado: true, avisos: expect.arrayContaining([expect.objectContaining({ codigo: 'CLIENTE_INCONSISTENTE', item: '99' })]) });
+  });
+
+  it('data do estoque: hoje em Brasília (no Vercel o relógio é UTC)', () => {
+    expect(hojeEmBrasiliaFormatoOmie(new Date('2026-11-27T01:30:00Z'))).toBe('26/11/2026');
+    expect(hojeEmBrasiliaFormatoOmie(new Date('2026-11-27T03:30:00Z'))).toBe('27/11/2026');
   });
 
   it('cliente do Omie: lê o cadastro e o "cliente com PTA" do app; Omie fora vira tarja vermelha, nunca 500', async () => {

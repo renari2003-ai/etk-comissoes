@@ -187,9 +187,10 @@ describe('prioridade do custo: manual da simulação > manual salvo > Omie > sem
     expect(resolverCustoItem({ codigo: 'MP1', custoOmie: 0, manualSalvo: null, manualSimulacao: null }).origem).toBe('SEM_CUSTO');
   });
 
-  it('erros explícitos: manual de outro item, custo do Omie inválido, escolha "OMIE" sem custo no Omie', () => {
+  it('erros explícitos: manual de outro item, custo do Omie inválido; escolha "OMIE" sem custo no Omie é ignorada', () => {
     expect(() => resolverCustoItem({ codigo: 'MP2', custoOmie: null, manualSalvo: manual(), manualSimulacao: null })).toThrow(/não pertence/);
     expect(() => resolverCustoItem({ codigo: 'MP1', custoOmie: -1, manualSalvo: null, manualSimulacao: null })).toThrow(ErroValidacao);
-    expect(() => resolverCustoItem({ codigo: 'MP1', custoOmie: null, manualSalvo: null, manualSimulacao: null, escolhaConflito: 'OMIE' })).toThrow(/não tem custo no Omie/);
+    expect(resolverCustoItem({ codigo: 'MP1', custoOmie: null, manualSalvo: null, manualSimulacao: null, escolhaConflito: 'OMIE' }).origem).toBe('SEM_CUSTO');
+    expect(resolverCustoItem({ codigo: 'MP1', custoOmie: null, manualSalvo: manual({ codigo: 'MP1' }), manualSimulacao: null, escolhaConflito: 'OMIE' }).origem).toBe('MANUAL_SALVO');
   });
 });

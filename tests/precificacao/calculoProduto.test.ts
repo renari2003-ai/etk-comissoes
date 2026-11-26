@@ -88,6 +88,11 @@ describe('cálculo completo do produto (etapa 5)', () => {
     expect(r.precos!.cheio!.preco).toBeCloseTo(165.42, 2);
     expect(r.precos!.piso.lucro.lucroAntesIrCs).toBeCloseTo(16.29, 2);
     expect(r.precos!.piso.lucro.lucroDepoisIrCs).toBeCloseTo(10.75, 2);
+    expect(r.precos!.piso.divisor).toBeCloseTo(0.6686, 4);
+    expect(r.precos!.cheio!.divisor).toBeCloseTo(0.5486, 4);
+    expect(r.precos!.cheio!.lucro.lucroAntesIrCs).toBeCloseTo(39.7, 2);
+    expect(r.precos!.cheio!.lucro.lucroDepoisIrCs).toBeCloseTo(26.2, 2);
+    expect(r.precos!.cheio!.lucro.icmsNoLucro).toBeCloseTo(19.85, 2);
     expect(r.precos!.piso.precoComIpi).toBeCloseTo(r.precos!.piso.preco * 1.05, 10);
     expect(r).toMatchObject({ bloqueado: false, incompleto: false, aliquotaIpiVenda: 0.05, cliente: 'Simulação: SP contribuinte' });
   });
@@ -101,6 +106,49 @@ describe('cálculo completo do produto (etapa 5)', () => {
     expect(r.custo!.custoLiquido).toBeCloseTo(90.75, 10);
     expect(r.cenario!.cenario).toBe('A');
     expect(r.precos!.piso.preco).toBeCloseTo(138.02, 2);
+    expect(r.precos!.piso.divisor).toBeCloseTo(0.6575, 4);
+    expect(r.precos!.piso.lucro.lucroAntesIrCs).toBeCloseTo(16.56, 2);
+    expect(r.precos!.piso.lucro.lucroDepoisIrCs).toBeCloseTo(10.93, 2);
+  });
+
+  it('avisos de cada parte chegam ao resultado: DIFAL_BASE_SIMPLES (cenário D), PRECO_CHEIO_INDISPONIVEL, CUSTO_MANUAL_DIFERENTE_OMIE', () => {
+    const d = calcular(entrada({ cliente: { uf: 'BA', contribuinte: false, comPta: false } }), dados({ MP1: { custoMedio: 10 } }));
+    expect(d.cenario!.cenario).toBe('D');
+    expect(codigos(d)).toContain('DIFAL_BASE_SIMPLES');
+    const semCheio = calcular(entrada({ despesas: 50, margem: 30, comissao: 4 }), dados({ MP1: { custoMedio: 10 } }));
+    expect(semCheio.precos!.cheio).toBeNull();
+    expect(codigos(semCheio)).toContain('PRECO_CHEIO_INDISPONIVEL');
+    expect(semCheio.bloqueado).toBe(false);
+    const conflito = calcular(entrada(), dados({ MP1: { custoMedio: 50 } }), { manuaisSalvos: new Map([['MP1', manual('MP1')]]) });
+    expect(codigos(conflito)).toContain('CUSTO_MANUAL_DIFERENTE_OMIE');
+  });
+
+  it('amarelos não bloqueiam: COMPONENTES_NAO_CONSULTADOS (da coleta) e ITEM_SEM_NCM_IPI (custo manual sem IPI e sem NCM) → preço sai INCOMPLETO', () => {
+    const r = calcular(
+      entrada({ custosSimulacao: [manual('MP2', { ipiPercentual: null })] }),
+      dados({ MP1: { custoMedio: 10 }, MP2: { custoMedio: null } }, { avisos: [{ nivel: 'AMARELO', codigo: 'COMPONENTES_NAO_CONSULTADOS', item: null, mensagem: 'x' }] }),
+    );
+    expect(codigos(r)).toEqual(expect.arrayContaining(['COMPONENTES_NAO_CONSULTADOS', 'ITEM_SEM_NCM_IPI']));
+    expect(r).toMatchObject({ bloqueado: false, incompleto: true });
+    expect(r.precos).not.toBeNull();
+  });
+
+  it('ORIGEM_NAO_INFORMADA (azul): origem vazia no cadastro = nacional, com tarja', () => {
+    const r = calcular(entrada(), dados({ MP1: { custoMedio: 10 } }, { produto: { idProduto: 1, descricao: null, ncm: '85447000', conteudoImportado: null } }));
+    expect(r.avisos).toContainEqual(expect.objectContaining({ nivel: 'AZUL', codigo: 'ORIGEM_NAO_INFORMADA', item: 'PA1' }));
+    expect(r.cenario!.icmsDestacado).toBe(0.12);
+  });
+
+  it('margem líquida que passa de 100% antes do IR/CS: tarja vermelha SEM_PRECO_POSSIVEL, sem preço', () => {
+    const r = calcular(entrada({ margem: 70, margemLiquida: true }), dados({ MP1: { custoMedio: 10 } }));
+    expect(r).toMatchObject({ bloqueado: true, precos: null });
+    expect(r.avisos[0]).toMatchObject({ nivel: 'VERMELHO', codigo: 'SEM_PRECO_POSSIVEL' });
+  });
+
+  it('qualquer vermelho antes do cenário impede o preço, mesmo vindo cliente junto', () => {
+    const s = clienteSimulado({ uf: 'SP', contribuinte: true, comPta: false }, 'REVENDA');
+    const r = calcular(entrada(), dados({ MP1: { custoMedio: 10 } }), { cliente: s.cliente, avisosCliente: [{ nivel: 'VERMELHO', codigo: 'CLIENTE_INCONSISTENTE', item: '1', mensagem: 'x' }] });
+    expect(r).toMatchObject({ bloqueado: true, precos: null, cenario: null });
   });
 
   it('item obrigatório: TODO resultado leva os avisos da tabela fiscal (Provisório) — com preço, bloqueado ou sem estrutura', () => {
@@ -195,6 +243,8 @@ describe('validação estrita da entrada do cálculo (POST)', () => {
       { finalidade: 'X' },
       { despesas: 100 },
       { comissao: -1 },
+      { comissao: 0.5 },
+      { comissao: 5 },
       { margem: '12' },
       { margemLiquida: 'S' },
       { precoAlvo: 0 },

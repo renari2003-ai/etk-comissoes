@@ -98,6 +98,15 @@ function pontos(valor: unknown, nome: string): number {
   return valor;
 }
 
+/** Comissão: de 1% a 4% (spec, "Tela"). */
+export const COMISSAO_MINIMA = 1;
+export const COMISSAO_MAXIMA = 4;
+function comissao(valor: unknown): number {
+  const c = pontos(valor, 'Comissão %');
+  if (c < COMISSAO_MINIMA || c > COMISSAO_MAXIMA) throw new ErroValidacao(`Comissão % deve ficar entre ${COMISSAO_MINIMA} e ${COMISSAO_MAXIMA}.`);
+  return c;
+}
+
 function validarCliente(valor: unknown): ClienteDaEntrada {
   if (typeof valor === 'object' && valor !== null && !Array.isArray(valor) && Object.hasOwn(valor, 'codigo')) {
     const o = objetoComChaves(valor, ['codigo'], 'Cliente');
@@ -168,7 +177,7 @@ export function validarEntradaCalculo(valor: unknown): EntradaCalculo {
     cliente: validarCliente(o.cliente),
     finalidade: o.finalidade as FinalidadeVenda,
     despesas: pontos(o.despesas, 'Despesas fixas %'),
-    comissao: pontos(o.comissao, 'Comissão %'),
+    comissao: comissao(o.comissao),
     margem: pontos(o.margem, 'Margem %'),
     margemLiquida: booleano(o.margemLiquida, 'Margem líquida'),
     precoAlvo,
@@ -294,19 +303,39 @@ export function calcularProduto(d: DadosDoCalculo): ResultadoCalculoProduto {
   juntar(avisos, custo.avisos);
   resultado.custo = custo;
 
-  if (d.cliente === null || montagem.aliquotaIpiVenda === null) return fechar();
+  // Qualquer vermelho até aqui (cliente, IPI da venda...) = sem preço, mesmo que venha cliente junto.
+  if (d.cliente === null || montagem.aliquotaIpiVenda === null || precoBloqueado(avisos)) return fechar();
 
+  // Origem não informada no cadastro = nacional (sem a alíquota de 4% de importado), com tarja azul.
+  const origemInformada = dados.produto?.conteudoImportado ?? null;
+  if (origemInformada === null) {
+    juntar(avisos, [
+      {
+        nivel: 'AZUL',
+        codigo: 'ORIGEM_NAO_INFORMADA',
+        item: entrada.produto,
+        mensagem: `O produto ${entrada.produto} está sem a origem da mercadoria no cadastro do Omie: foi considerado nacional (sem o ICMS de 4% de importado). Corrija o cadastro se for importado.`,
+      },
+    ]);
+  }
   const produtoVenda = {
     icmsInternoMgExcecaoNcm: excecaoIcmsMgDoNcm(tabela, dados.produto?.ncm ?? null),
-    // Origem não informada no cadastro = nacional (sem a alíquota de 4% de importado).
-    conteudoImportado: dados.produto?.conteudoImportado ?? false,
+    conteudoImportado: origemInformada ?? false,
   };
   const cenario = ouTarja(avisos, () => determinarCenario(d.cliente!, produtoVenda, parametros.venda));
   if (cenario === null) return fechar();
   juntar(avisos, cenario.avisos);
   resultado.cenario = cenario;
 
-  const margem = entrada.margemLiquida ? margemAntesDoIrCs(entrada.margem / 100, parametros.irCs) : entrada.margem / 100;
+  // Margem líquida que passa de 100% antes do IR/CS: tarja vermelha como os outros erros de regra.
+  let margem: number;
+  try {
+    margem = entrada.margemLiquida ? margemAntesDoIrCs(entrada.margem / 100, parametros.irCs) : entrada.margem / 100;
+  } catch (erro) {
+    if (!(erro instanceof ErroValidacao)) throw erro;
+    juntar(avisos, [{ nivel: 'VERMELHO', codigo: 'SEM_PRECO_POSSIVEL', item: null, mensagem: erro.message }]);
+    return fechar();
+  }
   resultado.margemAntesIrCs = margem;
   const entradaPreco: EntradaPreco = {
     custoLiquido: custo.custoLiquido,

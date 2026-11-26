@@ -49,7 +49,7 @@ interface Resultado {
   quantidade: number;
   cliente: string;
   itens: ItemCusto[];
-  custo: { custoBruto: number; creditos: number; custoLiquido: number } | null;
+  custo: { custoBruto: number; creditos: number; custoLiquido: number; itensSemCusto: string[] } | null;
   cenario: { cenario: string; motivo: string } | null;
   aliquotaIpiVenda: number | null;
   precos: { cheio: PrecoFormado | null; piso: PrecoFormado } | null;
@@ -89,10 +89,15 @@ async function lerMensagemDeErro(resposta: Response): Promise<string> {
   }
 }
 
-/** Número digitado (aceita vírgula); vazio = `null`; texto inválido = NaN. */
+/**
+ * Número digitado em pt-BR; vazio = `null`; texto inválido = NaN.
+ * Ponto com grupos de 3 dígitos é milhar ("1.500" = 1500; "1.500,25" = 1500,25); vírgula é decimal.
+ * Sem vírgula, um ponto só seguido de 1, 2 ou 4+ dígitos é decimal ("12.86" = 12,86).
+ */
 function lerNumero(texto: string): number | null {
   const t = texto.trim();
   if (t === '') return null;
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) return Number(t.replace(/\./g, '').replace(',', '.'));
   if (!/^\d+([.,]\d+)?$/.test(t)) return Number.NaN;
   return Number(t.replace(',', '.'));
 }
@@ -156,6 +161,8 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
   /** Escolhas manual × Omie feitas nesta tela (vão no próximo cálculo). */
   let escolhas: Record<string, 'MANUAL' | 'OMIE'> = {};
   let ultimoProduto = '';
+  /** Só a resposta do cálculo mais recente é desenhada (respostas fora de ordem são descartadas). */
+  let numeroCalculo = 0;
 
   function mostrarErro(mensagem: string | null): void {
     textoErro.textContent = mensagem ?? '';
@@ -208,9 +215,10 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
       th.textContent = nome;
       tr.appendChild(th);
       if (p === null) {
-        celula(tr, 'indisponível').colSpan = 6;
+        celula(tr, 'indisponível').colSpan = 7;
       } else {
         celula(tr, reais(p.preco));
+        celula(tr, reais(p.preco * r.quantidade));
         celula(tr, reais(p.ipi));
         celula(tr, reais(p.precoComIpi));
         celula(tr, reais(p.precoComIpi * r.quantidade));
@@ -285,18 +293,24 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
         select.value = item.conflito.escolhido;
         select.addEventListener('change', () => {
           escolhas[item.codigo.toUpperCase()] = select.value as 'MANUAL' | 'OMIE';
-          form.requestSubmit();
+          if (!botaoCalcular.disabled) form.requestSubmit();
         });
         acoes.appendChild(select);
       }
-      if (item.origem === 'SEM_CUSTO' || item.origem === 'OMIE') {
+      // Atalho só para item SEM custo manual salvo (com manual salvo, edita-se na lista de custos manuais).
+      if ((item.origem === 'SEM_CUSTO' || item.origem === 'OMIE') && item.conflito === null) {
         const botao = document.createElement('button');
         botao.type = 'button';
         botao.className = 'botao-secundario';
         botao.textContent = item.origem === 'SEM_CUSTO' ? 'Digitar custo' : 'Custo manual';
         botao.addEventListener('click', () => {
           const campo = document.getElementById('precificacao-custo-codigo') as HTMLInputElement | null;
-          if (campo === null || campo.readOnly) return;
+          if (campo === null) return;
+          if (campo.readOnly) {
+            mostrarErro(`O formulário de custo manual está editando o item ${campo.value}. Cancele ou salve essa edição antes.`);
+            campo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+          }
           campo.value = item.codigo;
           campo.dispatchEvent(new Event('input'));
           campo.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -312,6 +326,11 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
     areaResultado.hidden = false;
     desenharTarjas(areaAvisos, r.avisos);
     tarjaIncompleto.hidden = !(r.incompleto && !r.bloqueado);
+    const semCusto = r.custo?.itensSemCusto.length ?? 0;
+    tarjaIncompleto.replaceChildren();
+    const forte = document.createElement('strong');
+    forte.textContent = 'INCOMPLETO – não usar em cotação.';
+    tarjaIncompleto.append(forte, semCusto > 0 ? ` Preço incompleto: ${semCusto} ${semCusto === 1 ? 'item' : 'itens'} sem custo.` : '');
     const ncm = r.produto.ncm === null ? 'sem NCM' : `NCM ${r.produto.ncm}`;
     const ipi = r.aliquotaIpiVenda === null ? '' : `, IPI ${pct(r.aliquotaIpiVenda)}`;
     const cenario = r.cenario === null ? '' : ` · Cenário ${r.cenario.cenario}: ${r.cenario.motivo}`;
@@ -364,6 +383,7 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
         custosSimulacao: [],
         escolhas,
       };
+      const meu = ++numeroCalculo;
       botaoCalcular.disabled = true;
       textoStatus.textContent = 'Calculando… (a primeira consulta de um produto pode demorar: o Omie é lido item a item)';
       try {
@@ -373,8 +393,14 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(corpo),
         });
+        if (meu !== numeroCalculo) return;
         if (!resposta.ok) {
           areaResultado.hidden = true;
+          // Escolhas manual × Omie nunca ficam presas a um cálculo que falhou.
+          escolhas = {};
+          if (resposta.status === 504 || resposta.status === 502) {
+            return mostrarErro('O Omie demorou demais para responder. Tente de novo: as consultas já feitas ficam guardadas e a próxima tentativa vai mais longe.');
+          }
           return mostrarErro(await lerMensagemDeErro(resposta));
         }
         try {
@@ -382,12 +408,15 @@ export function inicializarCalculoPreco(): { ativar: () => void } {
         } catch {
           // Sem localStorage: só não lembra as despesas.
         }
-        desenhar((await resposta.json()) as Resultado);
+        const resultado = (await resposta.json()) as Resultado;
+        if (meu === numeroCalculo) desenhar(resultado);
       } catch {
-        mostrarErro('Não foi possível calcular. Verifique a conexão e tente de novo.');
+        if (meu === numeroCalculo) mostrarErro('Não foi possível calcular. Verifique a conexão e tente de novo.');
       } finally {
-        botaoCalcular.disabled = false;
-        textoStatus.textContent = '';
+        if (meu === numeroCalculo) {
+          botaoCalcular.disabled = false;
+          textoStatus.textContent = '';
+        }
       }
     })();
   });
