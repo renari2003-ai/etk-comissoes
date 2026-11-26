@@ -20,6 +20,19 @@ const ROTULO_CAMPO = {
     ipiPercentual: 'IPI %',
     registro: 'Custo manual',
 };
+/**
+ * Itens que hoje não têm custo médio no Omie, mas aparecem com valor no relatório antigo do Omie
+ * (PA00000001, investigação de 2026-11-25): unitário implícito = total da linha ÷ quantidade.
+ * Nenhum campo da API do Omie bate com esses valores, por isso são SÓ sugestão: o operador confere,
+ * digita (ou usa o botão) e salva. Nunca entram no cálculo sozinhos.
+ */
+const SUGESTOES_RELATORIO_ANTIGO = {
+    MO00000037: 2.46,
+    MO00000067: 0.16,
+    MP00000045: 15.7,
+    MP00000042: 6.99,
+    MO00000038: 5.12,
+};
 const DICA_IPI = {
     INDUSTRIA_NORMAL: 'Vazio = alíquota do NCM no cadastro do componente no Omie. Sem NCM/IPI no cadastro, o item entra sem crédito e o preço fica incompleto.',
     SIMPLES_NACIONAL: 'Simples Nacional não dá crédito de IPI: sempre 0.',
@@ -77,6 +90,9 @@ export function inicializarCustosManuais() {
     const selectTipo = el('precificacao-custo-tipo');
     const inputIpi = el('precificacao-custo-ipi');
     const dicaIpi = el('precificacao-custo-ipi-dica');
+    const blocoSugestao = el('precificacao-custo-sugestao');
+    const textoSugestao = el('precificacao-custo-sugestao-texto');
+    const botaoUsarSugestao = el('precificacao-custo-sugestao-usar');
     const botaoSalvar = el('precificacao-custo-salvar');
     const botaoLimpar = el('precificacao-custo-limpar');
     const textoModo = el('precificacao-custo-modo');
@@ -131,6 +147,15 @@ export function inicializarCustosManuais() {
         tipoAnterior = tipo;
         dicaIpi.textContent = DICA_IPI[tipo] ?? '';
     }
+    /** Mostra a sugestão do relatório antigo do Omie quando o código digitado tem uma. Só mostra: nunca grava. */
+    function mostrarSugestao() {
+        const sugestao = SUGESTOES_RELATORIO_ANTIGO[inputCodigo.value.trim().toUpperCase()];
+        blocoSugestao.hidden = sugestao === undefined;
+        if (sugestao === undefined)
+            return;
+        textoSugestao.textContent = `Sugestão (relatório antigo do Omie): R$ ${numeroBr(sugestao, 2)} por unidade. Confira antes de salvar.`;
+        botaoUsarSugestao.dataset.valor = String(sugestao).replace('.', ',');
+    }
     function limparFormulario() {
         form.reset();
         versaoEmEdicao = null;
@@ -145,6 +170,7 @@ export function inicializarCustosManuais() {
         textoModo.textContent = 'Novo custo manual';
         botaoSalvar.textContent = 'Salvar custo manual';
         ajustarCampos();
+        mostrarSugestao();
     }
     function editar(c) {
         versaoEmEdicao = c.versao;
@@ -161,6 +187,7 @@ export function inicializarCustosManuais() {
         textoModo.textContent = `Alterando ${c.codigo}`;
         botaoSalvar.textContent = 'Salvar alteração';
         ajustarCampos();
+        mostrarSugestao();
         mostrarErro(null);
         mostrarOk(null);
         inputValor.focus();
@@ -287,6 +314,12 @@ export function inicializarCustosManuais() {
     }
     selectUf.addEventListener('change', ajustarCampos);
     selectTipo.addEventListener('change', ajustarCampos);
+    inputCodigo.addEventListener('input', mostrarSugestao);
+    // Só copia o valor para o campo: o operador ainda confere os dados fiscais e clica em Salvar.
+    botaoUsarSugestao.addEventListener('click', () => {
+        inputValor.value = botaoUsarSugestao.dataset.valor ?? '';
+        inputValor.focus();
+    });
     botaoLimpar.addEventListener('click', () => {
         limparFormulario();
         mostrarErro(null);

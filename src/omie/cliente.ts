@@ -843,17 +843,6 @@ export class ClienteOmie {
     const registro = posicao.get(codigoProduto);
     return { listaEstoque: registro !== undefined ? [registro] : [] };
   }
-
-  /**
-   * Resumo do estoque de UM produto (`estoque/resumo` → `ObterEstoqueProduto`), SOMENTE LEITURA,
-   * resposta bruta, sem cache (o diagnóstico precisa do dado atual). Traz, por local de estoque,
-   * `nCMC` e `nPrecoUltComp` (preço da última compra). Pela documentação, os dois vêm 0 quando o
-   * usuário da API não tem permissão de custo médio contábil. Usado só pela rota temporária de
-   * diagnóstico da precificação (investigação de 2026-11-25).
-   */
-  async obterResumoEstoqueProduto(idProduto: number, dia: string): Promise<Record<string, unknown>> {
-    return this.chamar<Record<string, unknown>>('/estoque/resumo/', 'ObterEstoqueProduto', { nIdProduto: idProduto, dDia: dia });
-  }
 }
 
 /** Teto de páginas de `ListarPosEstoque` (500 registros cada → até 30.000 produtos). */

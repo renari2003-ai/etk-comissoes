@@ -71,6 +71,8 @@ Depois escolha:
 
 Se o item tem custo no Omie mas não tem nota de entrada, deixe o **valor da nota vazio** e preencha só UF, "fornecedor de MG com PTA" ou importada, tipo de fornecedor e IPI. O custo do Omie continua valendo, e esses dados ficam guardados para você não ter de informá-los a cada cálculo.
 
+Para alguns itens sem custo médio no Omie (MO00000037, MO00000067, MP00000045, MP00000042 e MO00000038), o formulário mostra, embaixo do valor da nota, uma **sugestão (relatório antigo do Omie)**. É o valor por unidade que o relatório antigo usava. É só sugestão: o botão **Usar sugestão** copia o valor para o campo, mas nada é gravado até você conferir e clicar em **Salvar**.
+
 Se duas pessoas alterarem o mesmo item ao mesmo tempo, quem salvar por último recebe o aviso para recarregar a tela. Nada é desfeito sem aviso.
 
 Se um item tem custo manual salvo e o Omie passar a ter custo para ele, a tela mostra **os dois valores** para você escolher qual usar.
