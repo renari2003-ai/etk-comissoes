@@ -84,7 +84,7 @@ describe.skipIf(!NO_BANCO_ISOLADO)('repositório de custos manuais (PGlite isola
     expect(await listarHistoricoCustosManuais('MP00000045', 50)).toHaveLength(7);
   });
 
-  it('item estimado: guarda só os dados fiscais (valor da nota vazio)', async () => {
+  it('registro antigo sem valor da nota (null) continua sendo lido (vale como "sem custo manual")', async () => {
     const { salvarCustoManual, obterCustosManuais } = await importarRepositorio();
     await salvarCustoManual(custo({ codigo: 'MP1', valorNota: null, ufFornecedor: 'SP', diferimentoPta: false, ipiPercentual: null }), null, OPERADOR);
     const mapa = await obterCustosManuais(['MP1', 'NAO_EXISTE']);

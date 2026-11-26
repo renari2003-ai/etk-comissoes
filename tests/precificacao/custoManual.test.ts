@@ -86,7 +86,7 @@ describe('validação estrita do custo manual (PUT)', () => {
   });
 });
 
-describe('custo da compra sem nota (custo manual ou item estimado) — exemplos da spec', () => {
+describe('créditos do custo manual — exemplos da spec', () => {
   it('V = 112, IPI 12%, MG com PTA → custo líquido 90,75', () => {
     const c = custoDaCompraSemNota(112, manual(), null, PARAMETROS, PIS_COFINS);
     expect(c.custoBrutoUnitario).toBeCloseTo(112, 10);
@@ -146,11 +146,11 @@ describe('prioridade do custo: manual da simulação > manual salvo > Omie > sem
     const r = resolverCustoItem({ codigo: 'MP00000045', custoOmie: 4, manualSalvo: manual({ valorNota: 3.5 }), manualSimulacao: null });
     expect(r).toMatchObject({ origem: 'MANUAL_SALVO', valorUnitario: 3.5, conflito: { valorManual: 3.5, valorOmie: 4, escolhido: 'MANUAL' } });
     expect(r.avisos).toEqual([
-      { nivel: 'AZUL', codigo: 'CUSTO_MANUAL_DIFERENTE_OMIE', item: 'MP00000045', mensagem: 'Item MP00000045: custo manual R$ 3,50 e custo do Omie R$ 4,00. Está valendo o manual (até você escolher).' },
+      { nivel: 'AZUL', codigo: 'CUSTO_MANUAL_DIFERENTE_OMIE', item: 'MP00000045', mensagem: 'Item MP00000045: custo manual R$ 3,50 e custo do Omie R$ 4,00 (já líquido). Está valendo o manual (até você escolher).' },
     ]);
     const omie = resolverCustoItem({ codigo: 'MP00000045', custoOmie: 4, manualSalvo: manual({ valorNota: 3.5 }), manualSimulacao: null, escolhaConflito: 'OMIE' });
     expect(omie).toMatchObject({ origem: 'OMIE', valorUnitario: 4, conflito: { escolhido: 'OMIE' } });
-    expect(omie.avisos[0]!.mensagem).toBe('Item MP00000045: custo manual R$ 3,50 e custo do Omie R$ 4,00. Está valendo o do Omie.');
+    expect(omie.avisos[0]!.mensagem).toBe('Item MP00000045: custo manual R$ 3,50 e custo do Omie R$ 4,00 (já líquido). Está valendo o do Omie.');
   });
 
   it('manual igual ao Omie: sem conflito', () => {
@@ -176,7 +176,7 @@ describe('prioridade do custo: manual da simulação > manual salvo > Omie > sem
       expect.objectContaining({ nivel: 'AMARELO', codigo: 'ITEM_SEM_CUSTO', item: 'MP00000045', mensagem: expect.stringContaining('Digite o custo do item MP00000045') }),
     ]);
     expect(r.avisos[0]!.mensagem).toContain('NÃO foi usado');
-    // Registro só com dados fiscais (valor vazio) também não é custo manual.
+    // Registro antigo sem valor também não é custo manual.
     const soFiscal = resolverCustoItem({ codigo: 'MP00000045', custoOmie: 4, manualSalvo: manual({ valorNota: null }), manualSimulacao: null, escolhaConflito: 'MANUAL' });
     expect(soFiscal.origem).toBe('SEM_CUSTO');
     // Sem custo no Omie também: sem custo, nunca 0.

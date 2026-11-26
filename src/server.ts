@@ -12,6 +12,7 @@ import { criarRotaCache } from './rotas/cache.js';
 import { criarRotaFretes } from './rotas/fretes.js';
 import { criarRotaSaude } from './rotas/saude.js';
 import { criarRotaPrecificacaoDiagnostico } from './rotas/precificacaoDiagnostico.js';
+import { criarRotasCalculo } from './rotas/precificacaoCalculo.js';
 import { criarRotasClientesPta } from './rotas/precificacaoClientesPta.js';
 import { criarRotasConferenciaCadastro } from './rotas/precificacaoConferencia.js';
 import { criarRotasPrecificacao } from './rotas/precificacaoRotas.js';
@@ -70,6 +71,8 @@ app.use(criarRotasPrecificacao());
 app.use(criarRotasClientesPta(cliente));
 // 26/11/2026 — relatório de conferência do cadastro (só admin, Omie só leitura).
 app.use(criarRotasConferenciaCadastro(cliente));
+// 26/11/2026 — etapa 5: cálculo do preço de um produto (Omie só leitura; nada é gravado).
+app.use(criarRotasCalculo(cliente));
 
 // Rota raiz: no Vercel express.static e ignorado, entao GET / nao serve index.html.
 // Este redirect resolve — a CDN do Vercel serve /index.html como arquivo estatico.

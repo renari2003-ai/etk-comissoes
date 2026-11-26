@@ -5,6 +5,7 @@
  * Percentuais em pontos (9,25 = 9,25%), como na API.
  */
 import { obterUsuarioLogado } from './auth.js';
+import { inicializarCalculoPreco } from './calculoPrecoTela.js';
 import { inicializarClientesPta } from './clientesPtaTela.js';
 import { inicializarConferenciaCadastro } from './conferenciaCadastroTela.js';
 import { inicializarCustosManuais } from './custosManuaisTela.js';
@@ -95,6 +96,7 @@ export function inicializarFormacaoPreco() {
     const tarjaStatus = el('precificacao-status-fiscal-tarja');
     let statusAtual = 'PROVISORIO';
     const diagnostico = inicializarDiagnosticoCusto();
+    const calculo = inicializarCalculoPreco();
     const custosManuais = inicializarCustosManuais();
     const clientesPta = inicializarClientesPta();
     const conferencia = inicializarConferenciaCadastro();
@@ -422,6 +424,7 @@ export function inicializarFormacaoPreco() {
     return {
         ativar: () => {
             diagnostico.ativar(obterUsuarioLogado()?.papel === 'administrador');
+            calculo.ativar();
             custosManuais.ativar();
             clientesPta.ativar(obterUsuarioLogado()?.papel === 'administrador');
             conferencia.ativar(obterUsuarioLogado()?.papel === 'administrador');

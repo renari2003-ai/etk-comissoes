@@ -107,7 +107,16 @@ Implementado em 25/11/2026: `somarFolhas` e `calcularCusto` tratam custo 0 como 
 - **Estrutura sem cache próprio por enquanto** (`ConsultarEstrutura` é lido a cada cálculo, para o diagnóstico ver o dado atual); cadastro (60 min) e estoque (10 min) têm cache. Avaliar cache da estrutura na etapa 5.
 - **Contrato da etapa 5:** o resultado do cálculo junta SEMPRE os avisos de `coletarDadosOmie`, `montarCusto` (inclusive `ITEM_SEM_DADOS_FISCAIS`, que não aparece em `calcularCusto`), `clienteParaVenda`, `calcularCusto`, do cenário e da tabela fiscal; "incompleto" = qualquer amarelo da lista inteira.
 - **Revisão de 26/11/2026 (corrigido):** "cliente não encontrado" só quando o Omie diz que não existe (HTTP 5xx ou rede = Omie indisponível, e o "não existe" não fica no cache); o PUT do cliente com PTA confere o cliente no Omie e grava nome e CNPJ de lá; a conferência nunca sai "limpa" sem conferir (produto sem itens = sem estrutura; item sem id, acima do teto, em ciclo ou fundo demais = "não conferido"); kit em ciclo ou com mais de 10 níveis é erro explícito no cálculo.
-- **Fica para a etapa 5 (tela de cálculo):** a rota do cálculo que junta tudo isso, o botão "atualizar custos" (limpa o cache das notas), a escolha da finalidade da venda e os avisos da tabela fiscal em todo cálculo.
+- **Fica para a etapa 5 (tela de cálculo):** a rota do cálculo que junta tudo isso, a escolha da finalidade da venda e os avisos da tabela fiscal em todo cálculo.
+
+### Etapa 5 — como foi implementada (26/11/2026, parte 1)
+
+- **Cálculo completo** (`precificacao/calculoProduto.ts`, função pura): coleta do Omie → `montarCusto` → `calcularCusto` → `determinarCenario` → `calcularPrecos` → modo reverso. Junta os avisos de todas as partes, **inclusive os da tabela fiscal em todo resultado** (teste obrigatório), sem repetir (mesmo código e item = uma tarja), em ordem vermelho → amarelo → azul. Erro de regra (`ErroPrecificacao`: UF sem alíquota, soma ≥ 100%, cliente inconsistente) vira tarja vermelha, nunca preço. A tarja do modo reverso fica no bloco do reverso.
+- **Rota** `POST /api/precificacao/calculo` (`rotas/precificacaoCalculo.ts`): cliente do Omie (`ConsultarCliente` + "cliente com PTA" do app) ou simulação rápida (UF, contribuinte, PTA). Omie fora na consulta do cliente = tarja vermelha `OMIE_INDISPONIVEL`. A data da posição de estoque vai no formato do Omie (dd/mm/aaaa).
+- **Conflito manual × Omie** compara **líquido com líquido** (o manual já sem os créditos), porque o `nCMC` é líquido.
+- **Origem da mercadoria não informada** no cadastro do produto = nacional (sem os 4% de importado).
+- **Tela** (modo Precificação → "Formação de preço"): produto, quantidade, cliente (busca no Omie ou simulação rápida), finalidade, despesas % (lembra o último valor no navegador), comissão 1% a 4%, margem antes do IR/CS ou líquida, preço-alvo. Mostra as tarjas, "INCOMPLETO – não usar em cotação", preço piso e cheio (sem e com IPI, unitário e total, margens), modo reverso, cascata e componentes (origem, créditos, escolha manual × Omie e atalho para o custo manual).
+- **Fica para a parte 2:** custo "só nesta simulação" digitado na própria tela (a API já aceita), salvar a simulação e exportar em PDF, cache da estrutura e botão "atualizar custos".
 
 ## Custo manual
 
@@ -134,11 +143,11 @@ O Omie ainda é novo na ETK e parte dos componentes vem sem custo. Por isso todo
 Os créditos saem pelas regras de "Impostos na compra". O custo do Omie não passa por elas: já vem líquido.
 
 
-**Conflito com o Omie.** Se um item com custo manual salvo passar a ter custo no Omie, a tela mostra os dois valores e o operador escolhe qual usar. Até ele escolher, vale o manual (regra de prioridade).
+**Conflito com o Omie.** Se um item com custo manual salvo passar a ter custo no Omie, a tela mostra os dois valores e o operador escolhe qual usar. Até ele escolher, vale o manual (regra de prioridade). Como o `nCMC` já é líquido, a comparação é **líquido com líquido**: o manual é comparado já sem os créditos, e a tarja mostra "manual R$ X com impostos (R$ Y sem os créditos) e Omie R$ Z (já líquido)" (revisão de 26/11/2026).
 
 **Preço incompleto.** Se algum item continuar sem custo, o preço é calculado mesmo assim (o item entra com custo zero) e a tela mostra em destaque **"Preço incompleto: X itens sem custo"**. A simulação salva registra essa condição.
 
-**Rastreabilidade.** A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, "fornecedor de MG com PTA", o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
+**Rastreabilidade.** Para origem Omie, bruto = líquido = `nCMC` e créditos = 0. A simulação salva guarda, item a item, o custo usado, a origem (Omie, Manual salvo, Manual só da simulação, Sem custo), a UF do fornecedor, "fornecedor de MG com PTA", o tipo de fornecedor, as alíquotas de IPI e ICMS usadas e os créditos retirados, para a conta poder ser reconstruída depois, mesmo que o Omie ou a tabela de custos manuais mudem.
 
 **Tabela de custos manuais.** Código do componente, valor da nota com impostos (obrigatório; registro antigo sem valor vale como "sem custo manual"), UF do fornecedor, fornecedor de MG com PTA (S/N, só MG), mercadoria importada (S/N, só fora de MG), tipo de fornecedor, IPI %, data e usuário. Toda alteração vai para um histórico com data, usuário, valor anterior e valor novo. Fica no banco do app, **nunca** é gravada no Omie.
 
@@ -359,7 +368,7 @@ A tela entra no app existente (Node.js 24 + Express, deploy no Vercel pelo branc
 
 | Método e rota | Faz |
 | --- | --- |
-| `GET /api/preco/:codigo?cliente=&uf=&tipo=&despesas=&comissao=&margem=&alvo=` | Devolve custo, cascata, preços e margens |
+| `POST /api/precificacao/calculo` | Devolve custo, cenário, cascata, preços, modo reverso e todos os avisos (permissão `precificacao`; Omie só leitura; nada é gravado). POST porque leva os custos "só nesta simulação" e as escolhas manual × Omie. Validação estrita (400) |
 | `GET /api/precificacao/parametros-fiscais` | Lê a tabela fiscal (permissão `precificacao`) |
 | `PUT /api/precificacao/parametros-fiscais` | Altera a tabela inteira (só administrador), com a `versao` lida: se outro administrador salvou antes, responde 409 e a tela oferece recarregar. Validação estrita (400), grava histórico |
 | `GET /api/precificacao/parametros-fiscais/historico?limite=` | Histórico de alterações (só administrador) |

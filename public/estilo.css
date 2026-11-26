@@ -2267,3 +2267,30 @@ tfoot tr td:first-child {
 .tarja-azul[hidden] {
   display: none;
 }
+
+/* Tarjas da formação de preço (etapa 5): vermelha bloqueia o preço; amarela = INCOMPLETO. */
+.tarja-vermelha,
+.tarja-amarela {
+  padding: 10px 14px;
+  border-radius: var(--raio-sm);
+  font-size: 13px;
+}
+.tarja-vermelha {
+  background: var(--cor-negativo-fundo);
+  border: 1px solid #f3b4bc;
+  color: #8f1626;
+}
+.tarja-amarela {
+  background: var(--cor-alerta-fundo);
+  border: 1px solid var(--cor-alerta-borda);
+  color: var(--cor-alerta);
+}
+.tarja-vermelha[hidden],
+.tarja-amarela[hidden] {
+  display: none;
+}
+.lista-tarjas {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}

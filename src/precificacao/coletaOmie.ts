@@ -108,10 +108,11 @@ const AVISO_OMIE_INDISPONIVEL = (detalhe: string): Aviso => ({
 });
 
 /**
- * Lê do Omie tudo o que o custo do produto precisa. `hojeIso` (aaaa-mm-dd) é a data do estoque.
+ * Lê do Omie tudo o que o custo do produto precisa. `dataEstoqueOmie` = data da posição de estoque
+ * no formato do Omie (dd/mm/aaaa, `dataDeHojeFormatoOmie`).
  * Aviso vermelho na lista = o resto dos dados não deve ser usado para preço.
  */
-export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecificacao, hojeIso: string): Promise<DadosOmieProduto> {
+export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecificacao, dataEstoqueOmie: string): Promise<DadosOmieProduto> {
   const dados: DadosOmieProduto = { codigo, produto: null, arvore: [], folhas: [], componentes: {}, avisos: [] };
 
   const chamar = async <T>(oQue: string, fn: () => Promise<T>): Promise<T> => {
@@ -203,7 +204,7 @@ export async function coletarDadosOmie(codigo: string, fonte: FonteOmiePrecifica
         // Folha (ou kit sem estrutura): custo médio e NCM.
         const componente: ComponenteOmie = { codigo: cod, idProduto: id, descricao: no.descricao ?? null, ncm: null, custoMedio: null };
         if (id !== null) {
-          const estoque = await chamar(`estoque de ${cod}`, () => fonte.obterEstoqueProduto(id, hojeIso));
+          const estoque = await chamar(`estoque de ${cod}`, () => fonte.obterEstoqueProduto(id, dataEstoqueOmie));
           componente.custoMedio = custoMedioDoEstoque(estoque);
           const cadastro = await chamar(`cadastro de ${cod}`, () => fonte.consultarProduto(id));
           componente.ncm = ncmDoCadastro(cadastro);

@@ -9,7 +9,7 @@ import {
 } from '../../src/precificacao/coletaOmie.js';
 import { somarFolhas } from '../../src/precificacao/estrutura.js';
 
-const HOJE = '2026-11-26';
+const HOJE = '26/11/2026'; // formato do Omie (dd/mm/aaaa), como `dataDeHojeFormatoOmie`
 
 /** Produto PA1 (id 1): MP1 (id 10, 2 un, 5% perda), KIT1 (id 20, tipo 03, 1 un) → MP2 (id 30, 0,5 un) e MP3 (id 40, 1 un). */
 function fonteFalsa(sobrescrever: Partial<FonteOmiePrecificacao> = {}): FonteOmiePrecificacao & { chamadas: string[] } {

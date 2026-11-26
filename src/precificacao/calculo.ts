@@ -172,7 +172,7 @@ export interface CreditosCompra extends ValoresCompra {
 }
 
 /**
- * Créditos da compra (nota de entrada, custo manual ou item estimado — mesma regra):
+ * Créditos da compra do CUSTO MANUAL (o custo do Omie já vem líquido e não passa por aqui):
  * IPI recuperável; PIS/COFINS = alíquota × (vProd − ICMS); ICMS nunca é crédito.
  */
 export function creditosDaCompra(valores: ValoresCompra, aliquotaPisCofins: number): CreditosCompra {
@@ -199,7 +199,10 @@ export function creditosDaCompra(valores: ValoresCompra, aliquotaPisCofins: numb
 export interface ItemCusto {
   codigo: string;
   quantidade: number;
-  /** Custo unitário bruto (com impostos) — `null` = sem custo. */
+  /**
+   * Custo unitário bruto — `null` = sem custo. Custo manual: valor da nota, com impostos. Custo do
+   * Omie: o nCMC, que já é líquido (bruto = líquido, créditos = 0).
+   */
   custoBrutoUnitario: number | null;
   /**
    * Custo unitário líquido (sem os créditos). `null` com bruto preenchido = sem crédito possível

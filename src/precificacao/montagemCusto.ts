@@ -12,7 +12,8 @@
  *      digitados com ele (`custoDaCompraSemNota`); o ICMS fica no custo. Indústria normal sem IPI
  *      informado usa a tabela NCM → IPI; NCM vazio ou fora da tabela = sem crédito (tarja amarela
  *      `ITEM_SEM_NCM_IPI`, gerada por `calcularCusto`);
- *    - custo manual sem UF/tipo de fornecedor (a gravação exige os dois; é só defesa): pelo valor
+ *    - custo manual sem UF/tipo de fornecedor (INALCANÇÁVEL hoje: `resolverCustoItem` sempre devolve
+ *      os dados fiscais do manual, e a gravação exige UF e tipo; fica como defesa): pelo valor
  *      BRUTO, sem crédito, com tarja amarela `ITEM_SEM_DADOS_FISCAIS` (o preço sai alto, nunca baixo).
  */
 
@@ -39,7 +40,7 @@ export interface ItemCustoMontado extends ItemCusto {
   /** Alíquotas usadas nos créditos do custo manual (fração); `null` = sem crédito calculado. */
   aliquotaIpi: number | null;
   aliquotaIcms: number | null;
-  conflito: { valorManual: number; valorOmie: number; escolhido: 'MANUAL' | 'OMIE' } | null;
+  conflito: { valorManual: number; valorManualLiquido: number; valorOmie: number; escolhido: 'MANUAL' | 'OMIE' } | null;
 }
 
 export interface EntradaMontagem {
@@ -67,12 +68,22 @@ export function montarCusto(entrada: EntradaMontagem): ResultadoMontagem {
   for (const folha of dados.folhas) {
     const chave = folha.codigo.toUpperCase();
     const comp = dados.componentes[chave] ?? null;
+    const salvo = entrada.manuaisSalvos.get(chave) ?? null;
+    // O nCMC é líquido: o conflito compara com o manual JÁ SEM os créditos (sem IPI conhecido, sem crédito).
+    const liquidoManualSalvo =
+      salvo === null || salvo.valorNota === null
+        ? null
+        : (() => {
+            const c = custoDaCompraSemNota(salvo.valorNota, salvo, aliquotaIpiDoNcm(tabela, comp?.ncm ?? null), parametros.compra, parametros.pisCofins);
+            return c.custoLiquidoUnitario ?? c.custoBrutoUnitario;
+          })();
     const r = resolverCustoItem({
       codigo: folha.codigo,
       custoOmie: comp?.custoMedio ?? null,
-      manualSalvo: entrada.manuaisSalvos.get(chave) ?? null,
+      manualSalvo: salvo,
       manualSimulacao: entrada.manuaisSimulacao?.get(chave) ?? null,
       escolhaConflito: entrada.escolhas?.[chave] ?? null,
+      liquidoManualSalvo,
     });
     // O mesmo código em vários ramos: os avisos do item uma vez só.
     for (const a of r.avisos) if (!avisos.some((x) => x.codigo === a.codigo && x.item === a.item)) avisos.push(a);

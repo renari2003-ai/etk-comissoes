@@ -78,6 +78,16 @@ describe('montagem do custo (etapa 4): Omie + custo manual + tabela NCM → IPI'
     expect(omie.itens[0]).toMatchObject({ origem: 'OMIE', fonteCreditos: 'OMIE_LIQUIDO', custoBrutoUnitario: 50, custoLiquidoUnitario: 50 });
   });
 
+  it('conflito compara LÍQUIDO com líquido: nota de 112 (líquido 91,86) igual ao nCMC 91,86 não é conflito', () => {
+    const igual = montarCusto({ dados: dados({ MP1: { custoMedio: 91.86 } }), tabela: TABELA, manuaisSalvos: new Map([['MP1', manual('MP1')]]) });
+    expect(igual.itens[0]!.conflito).toBeNull();
+    expect(igual.avisos).toEqual([]);
+    const diferente = montarCusto({ dados: dados({ MP1: { custoMedio: 80 } }), tabela: TABELA, manuaisSalvos: new Map([['MP1', manual('MP1')]]) });
+    expect(diferente.itens[0]!.conflito).toMatchObject({ valorManual: 112, valorOmie: 80, escolhido: 'MANUAL' });
+    expect(diferente.itens[0]!.conflito!.valorManualLiquido).toBeCloseTo(91.86, 10);
+    expect(diferente.avisos[0]!.mensagem).toContain('R$ 112,00 com impostos (R$ 91,86 sem os créditos) e custo do Omie R$ 80,00 (já líquido)');
+  });
+
   it('custo manual de indústria normal sem IPI e NCM fora da tabela: sem crédito, tarja amarela ITEM_SEM_NCM_IPI no calcularCusto', () => {
     const r = montarCusto({
       dados: dados({ MP1: { custoMedio: null, ncm: '99999999' } }),

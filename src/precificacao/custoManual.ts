@@ -217,6 +217,11 @@ export interface EntradaResolucaoCusto {
   manualSimulacao: CustoManual | null;
   /** Escolha do operador quando o manual salvo e o Omie divergem. Sem escolha, vale o manual. */
   escolhaConflito?: 'MANUAL' | 'OMIE' | null;
+  /**
+   * Custo LÍQUIDO do manual salvo (sem os créditos), para comparar com o `nCMC`, que já é líquido
+   * (decisão de 26/11/2026). Ausente = compara o valor da nota (só para chamadas sem tabela fiscal).
+   */
+  liquidoManualSalvo?: number | null;
 }
 
 export interface CustoResolvido {
@@ -226,8 +231,12 @@ export interface CustoResolvido {
   valorUnitario: number | null;
   /** Dados fiscais informados pelo operador (do manual da simulação ou do salvo), se houver. */
   dadosFiscais: DadosFiscaisCompra | null;
-  /** Manual salvo e Omie com valores diferentes: a tela mostra os dois para o operador escolher. */
-  conflito: { valorManual: number; valorOmie: number; escolhido: 'MANUAL' | 'OMIE' } | null;
+  /**
+   * Manual salvo e Omie com valores diferentes (comparando LÍQUIDO com líquido): a tela mostra os
+   * dois para o operador escolher. `valorManual` = valor da nota (com impostos);
+   * `valorManualLiquido` = o mesmo sem os créditos; `valorOmie` = nCMC (já líquido).
+   */
+  conflito: { valorManual: number; valorManualLiquido: number; valorOmie: number; escolhido: 'MANUAL' | 'OMIE' } | null;
   avisos: Aviso[];
 }
 
@@ -261,20 +270,23 @@ export function resolverCustoItem(entrada: EntradaResolucaoCusto): CustoResolvid
   }
 
   const manual = salvo?.valorNota ?? null;
-  if (manual !== null && omie !== null && Math.abs(manual - omie) > TOLERANCIA_CONFLITO) {
+  const manualLiquido = manual === null ? null : (entrada.liquidoManualSalvo ?? manual);
+  if (manual !== null && manualLiquido !== null && omie !== null && Math.abs(manualLiquido - omie) > TOLERANCIA_CONFLITO) {
     const escolhido = escolha ?? 'MANUAL';
+    const textoManual =
+      manualLiquido === manual ? dinheiro(manual) : `${dinheiro(manual)} com impostos (${dinheiro(manualLiquido)} sem os créditos)`;
     return {
       codigo,
       origem: escolhido === 'OMIE' ? 'OMIE' : 'MANUAL_SALVO',
       valorUnitario: escolhido === 'OMIE' ? omie : manual,
       dadosFiscais: fiscais(dadosFiscais),
-      conflito: { valorManual: manual, valorOmie: omie, escolhido },
+      conflito: { valorManual: manual, valorManualLiquido: manualLiquido, valorOmie: omie, escolhido },
       avisos: [
         {
           nivel: 'AZUL',
           codigo: 'CUSTO_MANUAL_DIFERENTE_OMIE',
           item: codigo,
-          mensagem: `Item ${codigo}: custo manual ${dinheiro(manual)} e custo do Omie ${dinheiro(omie)}. Está valendo o ${escolhido === 'OMIE' ? 'do Omie' : 'manual'}${escolha === null ? ' (até você escolher)' : ''}.`,
+          mensagem: `Item ${codigo}: custo manual ${textoManual} e custo do Omie ${dinheiro(omie)} (já líquido). Está valendo o ${escolhido === 'OMIE' ? 'do Omie' : 'manual'}${escolha === null ? ' (até você escolher)' : ''}.`,
         },
       ],
     };

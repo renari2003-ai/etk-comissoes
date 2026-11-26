@@ -1117,6 +1117,192 @@ OBSERVACOES: Entrega em horário comercial.</pre>
         </table>
       </div>
     </section>
+    <section id="precificacao-secao-calculo" class="painel-usuarios">
+      <h2 class="titulo-secao">Formação de preço</h2>
+      <p class="filtro-data-legenda">
+        Digite o produto, escolha o cliente e as condições comerciais. O custo sai da estrutura do Omie (custo médio, já líquido dos impostos
+        recuperáveis) ou do custo manual. Só leitura do Omie: nada é gravado.
+      </p>
+      <form id="precificacao-calculo-form" autocomplete="off" novalidate>
+        <div class="filtros-relatorio">
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-produto">Código do produto</label>
+            <input id="precificacao-calculo-produto" type="text" maxlength="60" required placeholder="ex.: PA00000001" />
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-quantidade">Quantidade</label>
+            <input id="precificacao-calculo-quantidade" type="text" inputmode="decimal" value="1" required />
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-tipo-cliente">Cliente</label>
+            <select id="precificacao-calculo-tipo-cliente">
+              <option value="omie">Cliente do Omie</option>
+              <option value="simulacao">Simulação rápida (UF + tipo)</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-finalidade">Finalidade da venda</label>
+            <select id="precificacao-calculo-finalidade">
+              <option value="REVENDA">Revenda</option>
+              <option value="INDUSTRIALIZACAO">Industrialização</option>
+              <option value="USO_CONSUMO">Uso e consumo</option>
+            </select>
+          </div>
+        </div>
+        <div id="precificacao-calculo-bloco-omie" class="filtros-relatorio">
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-cliente-busca">Buscar cliente no Omie (CNPJ/CPF ou parte da razão social)</label>
+            <input id="precificacao-calculo-cliente-busca" type="text" maxlength="100" />
+          </div>
+          <button type="button" id="precificacao-calculo-cliente-buscar" class="botao-secundario">Buscar</button>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-cliente">Cliente escolhido</label>
+            <select id="precificacao-calculo-cliente">
+              <option value="">— busque o cliente —</option>
+            </select>
+          </div>
+        </div>
+        <div id="precificacao-calculo-bloco-simulacao" class="filtros-relatorio" hidden>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-uf">UF do cliente</label>
+            <select id="precificacao-calculo-uf">
+                <option value="AC">AC</option>
+                <option value="AL">AL</option>
+                <option value="AM">AM</option>
+                <option value="AP">AP</option>
+                <option value="BA">BA</option>
+                <option value="CE">CE</option>
+                <option value="DF">DF</option>
+                <option value="ES">ES</option>
+                <option value="GO">GO</option>
+                <option value="MA">MA</option>
+                <option value="MG">MG</option>
+                <option value="MS">MS</option>
+                <option value="MT">MT</option>
+                <option value="PA">PA</option>
+                <option value="PB">PB</option>
+                <option value="PE">PE</option>
+                <option value="PI">PI</option>
+                <option value="PR">PR</option>
+                <option value="RJ">RJ</option>
+                <option value="RN">RN</option>
+                <option value="RO">RO</option>
+                <option value="RR">RR</option>
+                <option value="RS">RS</option>
+                <option value="SC">SC</option>
+                <option value="SE">SE</option>
+                <option value="SP" selected>SP</option>
+                <option value="TO">TO</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-contribuinte">Contribuinte do ICMS?</label>
+            <select id="precificacao-calculo-contribuinte">
+              <option value="sim">Sim</option>
+              <option value="nao">Não</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-pta">Cliente com PTA (MG)?</label>
+            <select id="precificacao-calculo-pta">
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </div>
+        </div>
+        <div class="filtros-relatorio">
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-despesas">Despesas fixas %</label>
+            <input id="precificacao-calculo-despesas" type="text" inputmode="decimal" required />
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-comissao">Comissão %</label>
+            <select id="precificacao-calculo-comissao">
+              <option value="1">1%</option>
+              <option value="2">2%</option>
+              <option value="3" selected>3%</option>
+              <option value="4">4%</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-margem">Margem desejada %</label>
+            <input id="precificacao-calculo-margem" type="text" inputmode="decimal" required />
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-tipo-margem">A margem é</label>
+            <select id="precificacao-calculo-tipo-margem">
+              <option value="antes">antes do IR/CS</option>
+              <option value="liquida">líquida (depois do IR/CS)</option>
+            </select>
+          </div>
+          <div class="campo-filtro">
+            <label for="precificacao-calculo-alvo">Preço-alvo sem IPI (opcional, modo reverso)</label>
+            <input id="precificacao-calculo-alvo" type="text" inputmode="decimal" placeholder="ex.: 150,00" />
+          </div>
+        </div>
+        <button type="submit" id="precificacao-calculo-calcular">Calcular preço</button>
+      </form>
+      <p id="precificacao-calculo-status" class="filtro-data-legenda" role="status"></p>
+      <p id="precificacao-calculo-erro" class="painel-login-erro" role="alert" hidden></p>
+      <div id="precificacao-calculo-resultado" hidden>
+        <div id="precificacao-calculo-avisos" class="lista-tarjas" aria-live="polite"></div>
+        <p id="precificacao-calculo-incompleto" class="tarja-amarela" role="status" hidden><strong>INCOMPLETO – não usar em cotação.</strong></p>
+        <p id="precificacao-calculo-cabecalho" class="filtro-data-legenda"></p>
+        <div id="precificacao-calculo-precos" class="tabela-rolagem">
+          <table>
+            <caption>Preço sugerido</caption>
+            <thead>
+              <tr>
+                <th scope="col">Preço</th>
+                <th scope="col">Unitário sem IPI</th>
+                <th scope="col">IPI</th>
+                <th scope="col">Unitário com IPI</th>
+                <th scope="col">Total com IPI</th>
+                <th scope="col">Margem antes do IR/CS</th>
+                <th scope="col">Margem depois do IR/CS</th>
+              </tr>
+            </thead>
+            <tbody id="precificacao-calculo-tbody-precos"></tbody>
+          </table>
+        </div>
+        <div id="precificacao-calculo-reverso" hidden>
+          <h3 class="titulo-secao">Modo reverso (preço-alvo)</h3>
+          <div id="precificacao-calculo-reverso-avisos" class="lista-tarjas"></div>
+          <p id="precificacao-calculo-reverso-texto" class="filtro-data-legenda"></p>
+        </div>
+        <div class="tabela-rolagem">
+          <table>
+            <caption>Cascata (valores unitários)</caption>
+            <thead>
+              <tr>
+                <th scope="col">Linha</th>
+                <th scope="col">Piso</th>
+                <th scope="col">Cheio</th>
+              </tr>
+            </thead>
+            <tbody id="precificacao-calculo-tbody-cascata"></tbody>
+          </table>
+        </div>
+        <div class="tabela-rolagem">
+          <table>
+            <caption>Componentes (folhas da estrutura)</caption>
+            <thead>
+              <tr>
+                <th scope="col">Item</th>
+                <th scope="col">Descrição</th>
+                <th scope="col">Quantidade</th>
+                <th scope="col">Origem do custo</th>
+                <th scope="col">Custo unitário</th>
+                <th scope="col">Créditos retirados</th>
+                <th scope="col">Custo líquido unitário</th>
+                <th scope="col" aria-label="Ações"></th>
+              </tr>
+            </thead>
+            <tbody id="precificacao-calculo-tbody-itens"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
     <section class="painel-usuarios">
       <h2 class="titulo-secao">Tabela fiscal da formação de preço</h2>
       <p class="filtro-data-legenda">
